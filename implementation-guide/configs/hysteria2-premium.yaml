@@ -1,0 +1,60 @@
+# /etc/hysteria/premium.yaml
+# Premium Tier: Hysteria2 with Salamander obfuscation + Brutal CC
+# Port: 443/udp (shares with VLESS-REALITY on TCP)
+
+listen: :443
+
+tls:
+  cert: /etc/hysteria/server.crt
+  key: /etc/hysteria/server.key
+
+obfs:
+  type: salamander
+  salamander:
+    password: "REPLACE_ME_SALAMANDER_PASSWORD"  # openssl rand -base64 32
+
+auth:
+  type: password
+  password: "REPLACE_ME_HYSTERIA2_AUTH_PASSWORD"  # openssl rand -base64 32
+
+bandwidth:
+  up: 500 mbps
+  down: 500 mbps
+
+ignoreClientBandwidth: false
+
+congestion:
+  type: brutal
+  brutal:
+    up: 500
+    down: 500
+
+quic:
+  initStreamReceiveWindow: 16777216
+  maxStreamReceiveWindow: 16777216
+  initConnReceiveWindow: 33554432
+  maxConnReceiveWindow: 33554432
+  maxIdleTimeout: 120s
+  keepAlivePeriod: 30s
+  disablePathMTUDiscovery: false
+
+speedTest: false
+
+sniff:
+  enable: true
+  timeout: 2s
+  rewriteDomain: false
+  tcpPorts: 80,443,8080,8443
+  udpPorts: 443,8443,3478,3479,5060,5061,8801-8810
+
+resolver:
+  type: udp
+  udp:
+    addr: 1.1.1.1:53      # Cloudflare DNS (VPS handles own DNS now)
+
+acl:
+  file: /etc/hysteria/acl.json
+
+log:
+  level: warn
+  file: /var/log/hysteria/premium.log

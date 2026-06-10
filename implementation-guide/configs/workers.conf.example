@@ -1,0 +1,28 @@
+# VPN Worker Pool — /opt/load-balancer/workers.conf
+# Format: hostname:port  (one per line, # for comments, blank lines ignored)
+#
+# The collector script reads this file every 60 seconds and polls each
+# worker's load agent at http://<hostname>:<port>/
+#
+# IMPORTANT — DNS resolution notes:
+#   These hostnames must resolve to the worker's DIRECT PUBLIC IP.
+#   Do NOT use Cloudflare-proxied hostnames (orange cloud) — Cloudflare
+#   doesn't proxy port 9099. Create a separate A record with grey cloud
+#   (DNS only) or use raw IP addresses.
+#
+#   Example DNS setup:
+#     worker-a.yourdomain.com  →  A  1.2.3.4   (grey cloud, DNS only)
+#     worker-b.yourdomain.com  →  A  5.6.7.8   (grey cloud, DNS only)
+#
+# The last line (127.0.0.1:9099) polls the orchestrator itself.
+# This ensures the orchestrator considers its own load when deciding
+# where to place new clients. The orchestrator also runs all VPN
+# protocols and handles its own share of traffic.
+
+# ---- Active Workers ----
+
+vps-a.yourdomain.com:9099
+vps-b.yourdomain.com:9099
+# vps-c.yourdomain.com:9099   (temporarily removed for maintenance)
+
+127.0.0.1:9099
