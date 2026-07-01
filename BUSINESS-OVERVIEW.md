@@ -99,7 +99,7 @@ This is a core part of the business. The file `school-vpn-blocking-implementatio
 
 | Plan               | Price     | Protocol                    | Bottleneck / Notes                                                                                  |
 | ------------------ | --------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Warp Lite**      | $2–4/mo   | Cloudflare Warp (via usque) | SOCKS5 proxy, bandwidth throttled server-side, no UDP for gaming, good enough for web browsing only |
+| **Warp Lite**      | $2–4/mo   | Cloudflare Warp (via usque) | SOCKS5 proxy, bandwidth throttled client-side (app-enforced), no UDP for gaming, good enough for web browsing only |
 | **Stealth Browse** | $4–7/mo   | VLESS-REALITY               | TCP-only, browsing/streaming, no gaming optimization, maximum stealth                               |
 | **Gaming Mid**     | $5–8/mo   | Hysteria 2                  | Medium bandwidth cap, moderate congestion control settings, good for casual gaming                  |
 | **Gaming Max**     | $10–13/mo | Hysteria 2 (uncapped)       | Full "Brutal" congestion control, max bandwidth, UDP gaming, priority support                       |
@@ -160,7 +160,7 @@ As stated in `Some random stuff for the agent to read.md`:
 3. **Closed-source** — users must not be able to see what protocols are running or modify behavior
 4. **Activation-code gated** — no self-signup, no exposed API
 5. **Central remote control** — heartbeat-based command system from day one
-6. **Bottlenecks enforced server-side** — users can't override bandwidth limits
+6. **Bottlenecks enforced client-side** — the desktop app throttles based on plan_tier; closed-source binary prevents users from overriding limits
 
 ### Branding direction
 

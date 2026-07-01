@@ -1,10 +1,10 @@
-# VPN Desktop App — Comprehensive Build Plan (v2)
+# VPN Desktop App — Comprehensive Build Plan (v3)
 
 ## Target
 
 Cross-platform VPN app (Windows + macOS) for **school/college students** bypassing WiFi restrictions.
-Supports Hysteria 2 (primary gaming protocol), TUIC v5, VLESS-REALITY, and Cloudflare Warp (via usque MASQUE protocol).
-**Closed-source, activation-code gated, centrally managed** with remote update/telemetry push capability.
+Supports Hysteria 2 (gaming primary) and usque/Warp (fallback, unbottlenecked for Gaming plans).
+**Closed-source, activation-code gated, permanently bound to one hardware-fingerprinted device.** Centrally managed with suspension and SHA256-verified updates. No Ed25519.
 
 > **Full business context:** See `BUSINESS-OVERVIEW.md` — this document covers the *technical* implementation.
 > **Step-by-step implementation:** See `ACTION-PLAN.md`.
@@ -19,14 +19,14 @@ Supports Hysteria 2 (primary gaming protocol), TUIC v5, VLESS-REALITY, and Cloud
 | **Distribution**   | Middlemen hand out physical activation codes for cash. They have no app access.  |
 | **Competition**    | Free VPNs (X-VPN, Psiphon, Lantern) and xVPN                                     |
 | **Differentiator** | Hysteria 2 over QUIC — low-latency gaming on congested WiFi; TUN mode; kill switch |
-| **Pricing**        | $2–13/mo across 4 tiers (Warp Lite → Gaming Max)                                 |
+| **Pricing**        | $2–13/mo across 3 tiers (Warp Lite → Gaming Mid → Gaming Max)                    |
 | **Key constraint** | **No real protocol names in the UI** — use custom brand names                    |
-| **Key constraint** | **Server-side bottlenecks enforced** — users can't override limits               |
-| **Key constraint** | **Middlemen only hand out codes** — they never touch the app or admin panel      |
+| **Key constraint** | **Client-side bottlenecks** enforced by desktop app — users can't override       |
+| **Key constraint** | **Permanent one-code-one-device** via hardware fingerprint; suspension, not deactivation |
 
 ---
 
-## 1. Architecture Overview (v2)
+## 1. Architecture Overview (v3)
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -35,15 +35,15 @@ Supports Hysteria 2 (primary gaming protocol), TUIC v5, VLESS-REALITY, and Cloud
 │                                                              │
 │  ┌──────────┐  ┌───────────┐  ┌─────────────────────────┐  │
 │  │  GUI     │  │  Systray  │  │ Auto-Updater            │  │
-│  │  Window  │  │  (minim.) │  │ (Ed25519-signed,        │  │
+│  │  Window  │  │  (minim.) │  │ (SHA256-verified,       │  │
 │  └────┬─────┘  └───────────┘  │  platform-scoped)       │  │
 │       │                       └─────────────────────────┘  │
 │  ┌────┴─────────────────────────────────────────────────┐  │
 │  │                   CORE CONTROLLER                     │  │
 │  │  ┌──────────┐  ┌──────────────┐  ┌────────────────┐  │  │
 │  │  │Process   │  │  Activation  │  │ Heartbeat      │  │  │
-│  │  │ Manager  │  │  (HMAC-bound │  │ + Cert Pinning │  │  │
-│  │  │(sandbox, │  │   device ID, │  │ + Token Rotate │  │  │
+│  │  │ Manager  │  │  (fingerprint│  │ + Cert Pinning │  │  │
+│  │  │(sandbox, │  │   bound,     │  │ + Token Rotate │  │  │
 │  │  │ renamed) │  │   per-code   │  │ + Grace Period │  │  │
 │  │  │          │  │   limit)     │  │ + Telemetry    │  │  │
 │  │  └──────────┘  └──────────────┘  └────────────────┘  │  │
@@ -105,12 +105,12 @@ Supports Hysteria 2 (primary gaming protocol), TUIC v5, VLESS-REALITY, and Cloud
 
 ### 2.1 Protocol-to-Name Mapping
 
-| Real Protocol   | UI Name      | Binary Name    | Tier           | Phase | Notes                           |
-| --------------- | ------------ | -------------- | -------------- | ----- | ------------------------------- |
-| Hysteria 2      | Speed Mode   | `speedmode`    | Gaming Max     | 1     | QUIC/UDP, low-latency gaming   |
-| usque (Warp)    | Lite Mode    | `litemode`     | Warp Lite      | 1     | Free-tier bandwidth-limited     |
-| VLESS-REALITY   | Stealth Mode | `stealthmode`  | Gaming Max     | 2     | TCP, best DPI evasion           |
-| TUIC v5         | Turbo Mode   | `turbomode`    | Turbo          | 2     | QUIC-based, low overhead        |
+| Real Protocol   | UI Name      | Binary Name    | Tier(s)                        | Phase | Notes                                                      |
+| --------------- | ------------ | -------------- | ------------------------------ | ----- | ---------------------------------------------------------- |
+| Hysteria 2      | Speed Mode   | `speedmode`    | Gaming Mid, Gaming Max         | 1     | QUIC/UDP, low-latency gaming                              |
+| usque (Warp)    | Lite Mode    | `litemode`     | Warp Lite (primary), Gaming (fallback) | 1     | **Warp Lite** = client-side throttled (app-enforced); **Gaming fallback** = unbottlenecked (full speed) |
+| VLESS-REALITY   | Stealth Mode | `stealthmode`  | Gaming Max                     | 2     | TCP, best DPI evasion                                      |
+| TUIC v5         | Turbo Mode   | `turbomode`    | Turbo                          | 2     | QUIC-based, low overhead                                   |
 
 ### 2.2 Protocol Fallback Chain (Heartbeat-Driven)
 
@@ -127,6 +127,12 @@ The server sends a prioritized list of protocol configs in every heartbeat respo
   "commands": []
 }
 ```
+
+> ⚠️ **Bottleneck is plan-driven, enforced client-side.** usque connects directly to Cloudflare (no VPS in the data path), so throttling is applied by the desktop app. The heartbeat response delivers the config, and the app enforces the limits locally:
+> - **`plan: "warp_lite"`** — app throttles usque bandwidth, disables UDP gaming
+> - **`plan: "gaming_mid"` / `plan: "gaming_max"`** — usque (as fallback) runs **unbottlenecked** (full speed, UDP allowed)
+>
+> The server embeds the bandwidth/QoS limits in the `config_json` field of each `ProtocolConfig`. The app reads its own `plan_tier` from local storage and applies the corresponding limits. A closed-source binary prevents users from overriding them.
 
 ### 2.3 Obfuscation Rules
 
@@ -145,54 +151,47 @@ The server sends a prioritized list of protocol configs in every heartbeat respo
 
 ```
 POST /api/collections/activations/records
-  Body:   { "code": "MYVPN-XXXX-XXXX-XXXX" }
-  Headers: X-Device-Proof: <hmac("activation"+code, device_secret)>
+  Body:   { "code": "MYVPN-XXXX-XXXX-XXXX-C" }
+  Headers: X-Device-Fingerprint: <sha256-of-hardware>
   Success: {
     "token": "jwt...",
     "plan": "gaming_max",
-    "expires": "2025-12-31"
+    "message": "Device permanently bound"
   }
-  Failure (code used):  { "code": 409, "message": "Code already activated" }
-  Failure (limit hit):  { "code": 403, "message": "Device limit reached for this code" }
-  Failure (rate):       { "code": 429, "message": "Too many attempts" }
+  Failure (already bound): { "code": 409, "message": "Code already bound to another device" }
+  Failure (suspended):     { "code": 403, "message": "Account suspended. Contact your middleman." }
+  Failure (rate):          { "code": 429, "message": "Too many attempts" }
 ```
 
 **Device binding flow:**
-1. On first launch, the client generates a **random 32-byte device secret** and stores it locally (`~/.myvpn/device_secret`). The server never sees this.
-2. To prove device identity, the client sends `HMAC-SHA256("activation" + code, device_secret)` in the `X-Device-Proof` header. The raw fingerprint never leaves the device.
-3. Server stores this proof as the device binding for the activation code; subsequent requests reuse the same proof.
-4. For deactivation, the client regenerates a new device secret and re-activates (the old proof is invalidated server-side).
-5. Per-code device limit (1–3, set at code creation) is enforced server-side.
+1. On first launch, the client collects **hardware identifiers** (MAC + disk serial + mobo UUID), hashes them with SHA256, and stores the fingerprint locally.
+2. The fingerprint is sent in the `X-Device-Fingerprint` header during activation. The server permanently binds the code to this fingerprint.
+3. If the app is deleted and reinstalled on the same device, the same fingerprint is re-computed → same code works again (unless suspended).
+4. There is no deactivation. Admin suspends a device; the binding is never destroyed. One code = one device.
 
-**Pragmatic tradeoff:** If activation happens over school WiFi with an SSL inspection proxy, a MITM can see the activation code and device proof. Recommend activating over a trusted network (home WiFi, phone hotspot) where no MITM is present. The code is single-use anyway.
+**Pragmatic tradeoff:** Activate over a trusted network. The fingerprint is hashed before transmission, but a school MITM could intercept the code itself. Since codes are single-use per device, the marginal risk is low.
 
 **Activation code format:**
 ```
-Format:  MYVPN-XXXX-XXXX-XXXX
-Parts:   4 groups of 4 uppercase alphanumeric characters (A-Z, 0-9, excluding I,O,0,1 for readability)
-Checksum: Last character is a Luhn-mod-N check digit (detects single-character typos)
-Expiry:   Optional expires_at field in PocketBase (default 90 days, configurable per code)
+Format:  MYVPN-XXXX-XXXX-XXXX-C  (the trailing -C is the Luhn check digit)
+Parts:   4 groups of 4 uppercase alphanumeric characters (A-Z, 2-9, excluding I,O,0,1)
+Checksum: Last character is a Luhn-mod-N check digit
+Expiry:   Optional expires field in PocketBase (default 90 days)
 Example:  MYVPN-A3X9-K7M2-Q5P1-C
 ```
 
 ### 3.2 Deactivation
 
-```
-POST /api/collections/activations/deactivate
-  Headers: Authorization: Bearer <token>
-  Success: { "status": "deactivated" }
-```
-
-Frees a device slot on the activation code so the user can move to a new device.
+**Not supported.** Codes are permanently bound to one device. To block a device, the admin sets `suspended = true` on the activation code record in PocketBase. The binding is preserved — unsuspending the code allows the same device to reconnect.
 
 ### 3.3 Heartbeat (with expanded telemetry + token rotation)
 
 ```
 POST /api/heartbeat
   Headers: Authorization: Bearer <token>
-           X-Device-Proof: <hmac-device-proof>
+           X-Device-Fingerprint: <sha256-of-hardware>
   Body: {
-    "device_proof": "<hmac-device-proof>",
+    "device_fingerprint": "<sha256-of-hardware>",
     "app_version": "1.0.0",
     "os_platform": "windows_amd64",
     "protocol_id": "hysteria2",
@@ -232,34 +231,34 @@ POST /api/heartbeat
 
 ## 4. Security Architecture
 
-### 4.1 Update Signing (Platform-Scoped, Downgrade-Protected)
+### 4.1 Update Verification (SHA256, No Signing)
 
-**Signed message format:**
+**No Ed25519 signing.** Updates are verified by SHA256 hash only. The admin hub publishes the SHA256 alongside the binary URL. The client downloads, hashes, and compares.
 
+**Reasons:**
+- No key generation, no offline storage, no key rotation, no risk of losing the signing key
+- Certificate pinning (§4.3) protects the hub connection itself from MITM
+- Platform check (`windows_amd64` vs `darwin_arm64`) prevents cross-platform serving
+
+**Update payload format:**
+```json
+{
+  "platform": "windows_amd64",
+  "version": "1.0.1",
+  "sha256": "abcdef1234...",
+  "url": "https://api.yourdomain.com/files/updates/myvpn.exe"
+}
 ```
-signedMessage = platform + "|" + minVersion + "|" + version + "|" + sha256 + "|" + keyID
-```
 
-Where:
-- `platform` = `"windows_amd64"` or `"darwin_arm64"` etc. — prevents serving a Windows binary to macOS.
-- `minVersion` = minimum app version that can apply this update — prevents downgrade attacks.
-- `keyID` = `"key1"` — allows rotating the embedded public key without breaking old clients (ship a `"key2"` signed update that teaches clients the new key).
+### 4.2 Activation Device Binding (Permanent One-Code-One-Device)
 
-**Key management:**
-- Generate a keypair at build time: `scripts/generate_signing_key.sh`
-- Embedded public key in `internal/updatekeys/public_key.go` (generated file).
-- Private key stored offline (USB drive, never on the VPS).
-- To rotate: embed both `key1` and `key2` public keys in a future update. Old clients accept `key1`, new clients accept both. Revoke `key1` later.
-
-### 4.2 Activation Device Binding (Replay-Resistant)
-
-- **Client-held device secret:** On first launch, the client generates a random 32-byte device secret and stores it locally. The server never sees the raw secret or any hardware fingerprint.
-- **Device proof:** To prove device identity, the client sends `HMAC-SHA256("activation" + code, device_secret)` in the `X-Device-Proof` header. This is deterministic per (device, code) pair, so the server can store it as the binding, but it cannot be replayed for a different code.
-- **No raw fingerprint on wire:** The server never receives the hostname, MAC address, or motherboard serial. A MITM or compromised hub sees only the HMAC proof, which cannot be used to impersonate the device on a different activation code.
-- **Every API request** includes the device proof; server rejects requests where the proof doesn't match the stored binding for that token.
-- **Per-code device limit** (1–3) enforced server-side.
-- **Deactivation:** Client regenerates a new device secret and re-activates. The old device proof is invalidated server-side.
-- **Pragmatic recommendation:** Activation should happen over a trusted network (home WiFi, phone hotspot) rather than school WiFi where MITM is present. This is a documented tradeoff — the code is single-use anyway, so the marginal risk is low.
+- **Hardware fingerprint:** Client collects MAC address + disk serial + motherboard UUID, hashes them with SHA256. This fingerprint survives app deletion — same device always produces the same fingerprint.
+- **Permanent binding:** On first activation, the code is permanently bound to the device fingerprint. The code can never be unbound or reused on a different device.
+- **Re-activation after reinstall:** Same device enters same code → server matches fingerprint → allows re-activation. Suspended devices are blocked with a message but keep their binding.
+- **Suspension, not deactivation:** Admin can set `suspended = true` on an activation code to block connections. The binding is never destroyed. When unsuspended, the same code works on the same device again.
+- **No multi-device codes:** One code = one device. Middlemen sell one code per student.
+- **Token generation:** Server generates an HMAC-SHA256 signed token (or proper JWT) so tokens cannot be forged client-side. The PocketBase hook uses a server-side `TOKEN_SECRET` env var.
+- **Pragmatic recommendation:** Activation should happen over a trusted network (home WiFi, phone hotspot) rather than school WiFi where MITM is present. The hardware fingerprint is hashed before transmission.
 
 ### 4.3 Certificate Pinning
 
@@ -361,10 +360,10 @@ myvpn/
 ├── go.mod
 ├── go.sum
 ├── Makefile                       # Cross-compile targets
-├── BUILD_KEY_GEN.sh               # Generate Ed25519 keypair for update signing
+├── BUILD_KEY_GEN.sh               # (REMOVED — no signing keys; use scripts/publish_update.sh)
 ├── internal/
 │   ├── activation/
-│   │   ├── activate.go            # Code validation, HMAC device ID, token storage
+│   │   ├── activate.go            # Code validation, hardware fingerprint, token storage
 │   │   └── deactivate.go          # Deactivation endpoint call
 │   ├── branding/
 │   │   └── names.go               # Protocol name obfuscation mapping
@@ -380,23 +379,25 @@ myvpn/
 │   │   ├── process_windows.go     # Job object sandboxing + hide window
 │   │   ├── process_darwin.go      # macOS sandboxing (home dir isolation)
 │   │   └── config.go              # Generate engine config from server payload
+│   ├── activation/
+│   │   ├── activate.go            # Code validation + activation + fingerprint collection
+│   │   ├── fingerprint_windows.go # Hardware fingerprint (win: getmac + wmic + disk serial)
+│   │   └── fingerprint_darwin.go  # Hardware fingerprint (mac: ifconfig + system_profiler + ioreg)
 │   ├── heartbeat/
-│   │   ├── heartbeat.go           # Periodic API + cert pinning + grace period + token rotation
+│   │   ├── heartbeat.go           # Periodic API + cert pinning + grace period + suspension handling
 │   │   └── telemetry.go           # Engine log capture, crash marker, error report
 │   ├── health/
 │   │   └── health.go              # Tunnel health check (15s probe, 3-failure threshold)
 │   ├── throttle/
-│   │   └── throttle.go            # Bandwidth limiting (Lite tier)
+│   │   └── throttle.go            # Client-side bandwidth limiter — throttles usque for warp_lite plan; gaming plans pass through unbottlenecked
 │   ├── updater/
-│   │   ├── update.go              # Download, Ed25519 verify (platform-scoped), apply
+│   │   ├── update.go              # Download + SHA256 verify (no signing) + apply
 │   │   ├── update_windows.go      # Spawn helper to replace running .exe
 │   │   └── update_unix.go         # Rename-in-place & relaunch
-│   ├── updatekeys/
-│   │   └── public_key.go          # GENERATED — embedded Ed25519 public key(s)
 │   ├── enginedl/
 │   │   └── download.go            # Download engine binaries from admin hub at runtime
 │   └── storage/
-│       └── storage.go             # Token, HMAC device ID, config, engine cache, logs
+│       └── storage.go             # Token, hardware fingerprint, config, engine cache, logs
 ├── ui/                            # GUI package (Phase 2)
 │   ├── main_window.go             # Fyne/Wails main window setup
 │   ├── dashboard.go               # Connection status, health, stats, plan
@@ -405,14 +406,13 @@ myvpn/
 ├── scripts/
 │   ├── build.sh                   # Cross-compile all platforms
 │   ├── download_binaries.sh       # Fetch latest engine releases (for manual preload)
-│   ├── sign_update.sh             # Sign an update payload with offline key
-│   ├── generate_signing_key.sh    # Generate Ed25519 keypair + public_key.go
+│   ├── publish_update.sh          # Compute SHA256 and output update payload JSON
 │   └── setup_server.sh            # Deploy everything to VPS
 └── assets/
     └── icon.ico                   # App icon (also .png for macOS)
 ```
 
-### 5.2 MVP Lifecycle (v2)
+### 5.2 MVP Lifecycle (v3)
 
 ```
 App Launch
@@ -424,10 +424,12 @@ Setup autostart (scheduled task / LaunchAgent) BEFORE activation prompt
 Check if activated
     │
     ├── No → Show activation prompt
-    │         ├── Collect machine fingerprint (hostname + MAC + serial)
-    │         ├── POST to server → server computes HMAC device ID
-    │         ├── Server binds token to device ID, enforces per-code limit
-    │         └── Store token + HMAC device ID locally
+    │         ├── Collect hardware fingerprint (MAC + disk serial + mobo UUID SHA256)
+    │         ├── POST to server → server permanently binds code to fingerprint
+    │         │   ├── Fresh code → bind and return token
+    │         │   ├── Same device re-activating → return token (unless suspended)
+    │         │   └── Different device → reject (code already bound)
+    │         └── Store token + fingerprint locally
     │
     ▼
 Start systray (with branded plan name + grace days if applicable)
@@ -440,9 +442,10 @@ Download engine binaries from admin hub (if not cached or version mismatch)
     │
     ▼
 Start heartbeat loop (every 60s):
-    ├── POST heartbeat (cert-pinned TLS, HMAC device ID header)
+    ├── POST heartbeat (cert-pinned TLS, device fingerprint header)
     │   ├── Success → Reset grace timer
     │   │             ├── Store new rotated token
+    │   │             ├── Check for suspension → if "suspended", stop engine, show message
     │   │             ├── Process remote commands (update, disable, etc.)
     │   │             └── Update protocol priority list from response
     │   │
@@ -542,7 +545,7 @@ When in CONNECTED_PRIMARY or CONNECTED_FALLBACK, the auto-reconnect loop runs:
 App Launch
     │
     ▼  [State: IDLE]
-Generate 32-byte device secret (persisted in ~/.myvpn/device_secret)
+Collect hardware fingerprint (MAC + disk serial + mobo UUID SHA256, stored locally)
     │
     ▼
 Setup autostart (scheduled task / LaunchAgent) BEFORE activation
@@ -551,11 +554,9 @@ Setup autostart (scheduled task / LaunchAgent) BEFORE activation
 Check if activated
     │
     ├── No → Show activation prompt  [State: ACTIVATING]
-    │         ├── Generate device proof:
-    │         │   HMAC-SHA256("activation" + code, device_secret)
-    │         ├── POST to server (device proof in header, no raw fingerprint)
-    │         ├── Server stores proof, enforces per-code device limit
-    │         └── Store token locally
+    │         ├── POST to server (fingerprint in header)
+    │         ├── Server permanently binds code to fingerprint
+    │         └── Store token + fingerprint locally
     │
     ▼  [State: ACTIVE]
 Start systray (branded plan name + grace days if in grace mode)
@@ -569,7 +570,7 @@ Check for engine binaries in cache → download if missing
     │
     ▼
 Start heartbeat loop (every 60s):
-    ├── POST heartbeat (cert-pinned TLS, device proof in header)
+     ├── POST heartbeat (cert-pinned TLS, device fingerprint in header)
     │   ├── Success → Reset grace timer
     │   │             ├── Store new rotated token (grace overrides expiry)
     │   │             ├── Process remote commands (update, disable, etc.)
@@ -616,7 +617,7 @@ User clicks "Disconnect":
 
 | Field | Example | Note |
 |-------|---------|------|
-| `device_proof` | `hmac...` | Opaque device identifier — cannot be linked to hardware |
+| `device_fingerprint` | `sha256...` | Hardware-derived device identifier — survives app reinstall |
 | `app_version` | `1.0.0` | For update targeting |
 | `os_platform` | `windows_amd64` | For update targeting + support |
 | `protocol_id` | `hysteria2` | Which engine is active |
@@ -685,16 +686,15 @@ type HeartbeatRequest struct {
 
 | Risk                                                     | Severity  | Mitigation                                                                                  |
 | -------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------- |
-| Activation code sharing (one code → many devices)        | **Critical** | **HMAC device proof** using client-held 32-byte secret. No raw fingerprint on wire. Per-code device limit (1-3). |
+| Activation code sharing (one code → many devices)        | **Critical** | **Permanent hardware fingerprint binding.** One code = one device forever. Suspension blocks without unbinding. |
 | Raw device fingerprint sent over wire (MITM replay)      | **Critical** | **Client-held secret.** Server never sees raw fingerprint. Device proof is HMAC-SHA256("activation"+code, secret). |
 | TUN mode requires admin/root on every launch             | **Critical** | **Privileged helper service** (Windows: SYSTEM service via named pipe). macOS: launchd daemon. One-time admin on install. |
 | Engine crashes at 3AM → user stays disconnected          | **Critical** | **Auto-reconnect loop:** 3 health fails → try fallback → all fail → wait 30s → retry primary (×5) → give up with "tap to retry". |
 | Proxy model leaks traffic (games ignore HTTP proxy)      | **Critical** | **TUN mode** (full tunnel for MVP). Kill switch: delete default TUN route on health failure. |
 | No connection health monitoring → false "Connected"      | **Critical** | **15-second health probe** through tunnel. 3 fails = Degraded → fallback → Disconnected. |
-| Admin hub VPS compromised                                | **Critical** | **Ed25519-signed updates** with offline key. No signing key on server. Cert-pinned clients. Minimal attack surface. |
+| Admin hub VPS compromised                                | **Critical** | **Cert-pinned clients** + SHA256-verified updates. Admin can remotely disable devices via heartbeat. |
 | School IT SSL proxy intercepts traffic                   | **Critical** | **Certificate pinning** prevents MITM even with forced CA installation.                    |
-| Update serves wrong platform binary                      | **High**    | **Platform field in signed message.** `windows_amd64` update rejected on `darwin_arm64`.   |
-| Downgrade attack (roll back to old vulnerable version)   | **High**    | **MinVersion field in signed message.** Client rejects update if current version < minVersion. |
+| Update serves wrong platform binary                      | **High**    | **Platform field in update payload.** `windows_amd64` update rejected on `darwin_arm64`.   |
 | usque stops working (Cloudflare API changes)             | **High**    | Protocol fallback chain — switch to Hysteria 2 or VLESS-REALITY via heartbeat command.      |
 | Admin hub goes down / domain taken                        | **High**    | **7-day heartbeat grace period** (grace overrides token expiry). Offsite backups.           |
 | Bootstrap chicken-and-egg (can't download engine on blocked WiFi) | **High** | **Bundle Hysteria 2 in installer.** Runtime download only for updates. |
@@ -705,7 +705,7 @@ type HeartbeatRequest struct {
 | No log rotation → disk fills up on busy client           | **Medium**  | **Auto-rotate at 10MB**, keep last 3 files. Background goroutine in storage.Init().          |
 | Antivirus flags disguised process names                  | **Medium**  | Submit renamed binaries to AV vendors. Avoid UPX.                                          |
 | macOS notarization                                       | **Low**     | Targeted devices won't have Gatekeeper enforced in school labs.                            |
-| Key compromise (signing private key leaks)               | **Low**     | Key rotation via keyID in signed message. Revoke old key by shipping key2-signed update.   |
+| Malicious update pushed to the hub                       | **Low**     | Cert-pinned TLS connection + SHA256 verification. Admin can push hotfix by heartbeat.     |
 
 ---
 
@@ -774,7 +774,7 @@ Middlemen **only hand out physical activation codes**. They have no app access, 
 | Fyne (Go GUI)             | https://fyne.io                       | Cross-platform GUI toolkit (Phase 2) |
 | PocketBase                | https://pocketbase.io                 | Admin hub backend                    |
 | Backblaze B2              | https://www.backblaze.com/b2/         | Offsite backup storage               |
-| Ed25519 (Go stdlib)       | `crypto/ed25519`                      | Update signing (no external deps)    |
+| SHA256 (Go stdlib)        | `crypto/sha256`                       | Update verification (no external deps) |
 
 ---
 
@@ -782,19 +782,19 @@ Middlemen **only hand out physical activation codes**. They have no app access, 
 
 | Phase       | Timeline     | Deliverable                                                                                                                                                     |
 | ----------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase 1** | Days 1-4     | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Systray app with HMAC-bound activation (per-code device limit), cert-pinned heartbeat with token rotation + telemetry + grace period, Ed25519-signed platform-scoped updates, TUN mode with split tunnel + kill switch + DNS guard, 15s health check, process sandboxing + binary renaming, runtime engine download. Windows + macOS. |
+| **Phase 1** | Days 1-4     | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Systray app with permanent hardware-fingerprint activation (one code = one device), suspension support, cert-pinned heartbeat with token rotation + telemetry + grace period, SHA256-verified platform-scoped updates, TUN mode with split tunnel + kill switch + DNS guard, 15s health check, process sandboxing + binary renaming, runtime download. Windows + macOS. |
 | **Phase 2** | Week 2-3     | GUI window (Fyne/Wails), add VLESS-REALITY + TUIC v5. Bandwidth throttling for Lite tier. Telemetry analytics dashboard.                                      |
 | **Phase 3** | Week 4+      | Gaming protocol optimization, fallback chain tuning, dual-admin-hub failover, key rotation mechanism.                                                          |
 
 Phase 1 is **genuinely shippable to real users** because:
-- **Activation can't be replayed** — client-held device secret, no raw fingerprint on wire
+- **Activation survives reinstall** — hardware fingerprint; same device always re-recognized
 - **No admin prompts on every launch** — privileged helper service (Windows: SYSTEM via named pipe, macOS: launchd daemon) installed once
 - **Engine crashes don't leave you stranded** — auto-reconnect loop retries all engines, then retries primary 5 times with 30s delay before giving up
 - **Traffic actually flows** — TUN mode (not HTTP proxy that games ignore), full tunnel with RFC 1918 exclusions
 - **You know when it breaks** — 15s health probe, degraded state reported in heartbeat telemetry
 - **It survives hub failure** — 7-day grace period (overrides token expiry), offsite backups, uptime monitoring
 - **Bootstrap isn't chicken-and-egg** — primary engine (Hysteria 2) bundled in installer; runtime download only for updates
-- **Compromised hub can't push malware** — offline Ed25519-signed updates, platform-scoped, downgrade-protected
+- **Compromised hub can't push malware** — cert-pinned TLS + SHA256-verified updates, platform-scoped
 - **School IT can't spy on heartbeat** — cert pinning defeats SSL inspection proxies
 - **Task Manager shows `speedmode.exe`** not `hysteria.exe`
 - **Logs won't fill your disk** — auto-rotated at 10MB, last 3 kept

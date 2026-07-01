@@ -1,6 +1,6 @@
 # VPN App — Action Plan (v3 Hardened)
 
-**Goal:** Cross-platform VPN app (Windows + macOS) with Hysteria 2 (gaming primary) and usque/Warp (fallback), secured with replay-resistant client-held device secret, TUN mode via privileged helper service, auto-reconnect loop, Ed25519-signed platform-scoped updates, certificate pinning, heartbeat grace period, process sandboxing, and tunnel health checks.
+**Goal:** Cross-platform VPN app (Windows + macOS) with Hysteria 2 (gaming primary) and usque/Warp (fallback — unbottlenecked for Gaming plans). Activation codes are permanently bound to a single hardware-fingerprinted device with server-side suspension capability. Features: TUN mode via privileged helper service, auto-reconnect loop, certificate pinning, heartbeat grace period, process sandboxing, and tunnel health checks.
 
 **Stack:** Go + systray + Hysteria 2 + usque + PocketBase + Caddy  
 **Prerequisite:** VPS (Ubuntu 22.04, 2GB RAM), domain pointing to it
@@ -8,9 +8,10 @@
 > 📘 **Business context:** `BUSINESS-OVERVIEW.md`  
 > 📘 **Full architecture:** `PLAN.md`
 
-**Key design decisions (v3 changes from v2):**
+**Key design decisions (v4 changes from v3):**
 
-- ✅ **Client-held device secret** — 32-byte random secret generated on first launch. Server never sees raw fingerprint. Device proof is `HMAC-SHA256("activation"+code, secret)`. MITM replay-resistant.
+- ✅ **Hardware-fingerprinted device binding** — permanent one-device-per-code binding. Device identity is a SHA256 hash of MAC address + disk serial + motherboard UUID. Survives app deletion/reinstall. Server can suspend connections without destroying the binding.
+- ✅ **No update signing** — updates are SHA256-verified direct downloads from the admin hub. No Ed25519 key management, no offline signing ceremony, no key rotation headaches.
 - ✅ **Privileged helper service** (Windows: SYSTEM service via named pipe, macOS: launchd daemon) — TUN creation requires admin on install only, not on every launch
 - ✅ **Auto-reconnect loop** — 3 health fails → try fallback → all dead → wait 30s → retry primary ×5 → give up with "tap to retry"
 - ✅ **Full tunnel for MVP** — all traffic through VPN except RFC 1918 local. Kill switch: delete default TUN route. Split tunnel is Phase 2.
@@ -20,6 +21,7 @@
 - ✅ **Privacy notice + opt-out toggle** — telemetry fields documented, no browsing history collected
 - ✅ **Log rotation** — auto-rotate at 10MB, keep last 3 files
 - ✅ **Activation code format** — `MYVPN-XXXX-XXXX-XXXX-C` with Luhn-mod-N checksum
+- ✅ **Suspension, not deactivation** — admin can suspend a device from connecting. Binding is never destroyed; code can never be reused on a different device.
 - ❌ Middlemen have no app or panel access — they hand out paper codes, that's all
 
 **Estimated total time: 4-5 days** (the helper service and auto-reconnect loop add ~1 day, but they're the difference between "works in a demo" and "actually works for real users").
@@ -29,11 +31,11 @@
 ## Contents
 
 - [Phase 1.1: VPS + Admin Hub Hardening](#phase-11-vps--admin-hub-hardening)
-- [Phase 1.2: Project Scaffolding & Signing Keys](#phase-12-project-scaffolding--signing-keys)
+- [Phase 1.2: Project Scaffolding](#phase-12-project-scaffolding)
 - [Phase 1.3: Core Modules — Storage, Activation, Branding](#phase-13-core-modules--storage-activation-branding)
 - [Phase 1.4: Protocol Engine Manager + Sandboxing + Binary Rename](#phase-14-protocol-engine-manager--sandboxing--binary-rename)
-- [Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry + Token Rotation](#phase-15-heartbeat-with-cert-pinning--grace--telemetry--token-rotation)
-- [Phase 1.6: Auto-Updater with Platform-Scoped Ed25519 Verification](#phase-16-auto-updater-with-platform-scoped-ed25519-verification)
+- [Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry](#phase-15-heartbeat-with-cert-pinning--grace--telemetry)
+- [Phase 1.6: Auto-Updater with SHA256 Verification](#phase-16-auto-updater-with-sha256-verification)
 - [Phase 1.7: TUN Mode + Split Tunnel + Kill Switch + DNS Guard + Health Check](#phase-17-tun-mode--split-tunnel--kill-switch--dns-guard--health-check)
 - [Phase 1.8: Runtime Engine Download](#phase-18-runtime-engine-download)
 - [Phase 1.9: Build System + Main Entrypoint](#phase-19-build-system--main-entrypoint)
@@ -240,19 +242,25 @@ routerAdd("POST", "/api/collections/activations/records", (c) => {
 
 Create the `activation_attempts` collection in PocketBase admin (simple: `ip` text + `created` autodate).
 
-### 10. Device binding hook (CRITICAL — validates X-Device-Proof server-side)
+### 10. Device binding hook (CRITICAL — permanent one-code-one-device binding)
 
 Create `/opt/pocketbase/pb_hooks/device_binding.pb.js`:
 
 ```javascript
-// Validates HMAC device proof and enforces per-code device limits.
-// Called before every activation and every heartbeat.
+// Permanent device binding — one code, one device, forever.
+// If the app is deleted and reinstalled on the same device,
+// the same code works again because the hardware fingerprint is identical.
+// A different device with the same code → rejected.
+//
+// Server can suspend a binding without destroying it.
+// Suspended devices get "suspended" status in heartbeat → client disconnects
+// but can re-activate (receive a new token) at any time when unsuspended.
 routerAdd("POST", "/api/collections/activations/records", (c) => {
     const code = c.requestInfo().body.code;
-    const proof = c.requestHeader("X-Device-Proof");
+    const fingerprint = c.requestHeader("X-Device-Fingerprint");
     
-    if (!code || !proof) {
-        return c.json(400, { "code": 400, "message": "Missing code or device proof" });
+    if (!code || !fingerprint) {
+        return c.json(400, { "code": 400, "message": "Missing code or device fingerprint" });
     }
     
     // Look up the activation code
@@ -263,80 +271,49 @@ routerAdd("POST", "/api/collections/activations/records", (c) => {
     }
     
     // Check expiry
-    const expires = record.get("expires_at");
+    const expires = record.get("expires");
     if (expires && new Date(expires) < new Date()) {
         return c.json(410, { "code": 410, "message": "Code expired" });
     }
     
-    // Get bound devices array
-    let devices = record.get("devices") || [];
-    const maxDevices = record.get("max_devices") || 2;
+    const boundDevice = record.get("bound_device_id");
     
-    // Check if this proof is already bound (same device re-activating)
-    const existingIndex = devices.indexOf(proof);
-    if (existingIndex === -1) {
-        // New device — check limit
-        if (devices.length >= maxDevices) {
-            return c.json(403, { "code": 403, "message": "Device limit reached for this code" });
-        }
-        devices.push(proof);
-        record.set("devices", devices);
+    if (!boundDevice || boundDevice === "") {
+        // Code is fresh — permanently bind to this device
+        record.set("bound_device_id", fingerprint);
         $app.dao().saveRecord(record);
+    } else if (boundDevice === fingerprint) {
+        // Same device re-activating (e.g. after app reinstall)
+        // Check suspension status
+        const suspended = record.get("suspended");
+        if (suspended) {
+            const reason = record.get("suspended_reason") || "Your account has been suspended. Contact your middleman.";
+            return c.json(403, { "code": 403, "message": reason });
+        }
+        // Device is recognized — allow re-activation
+    } else {
+        // Different device — reject permanently
+        return c.json(403, { "code": 403, "message": "This code is already bound to another device" });
     }
     
-    // Generate a short-lived token (24h)
-    const token = btoa(JSON.stringify({
-        proof: proof,
+    // Generate a token (24h expiry, server-side HMAC so it can't be forged)
+    const secret = $os.getenv("TOKEN_SECRET") || "change-me-in-production";
+    const tokenPayload = JSON.stringify({
+        fingerprint: fingerprint,
+        code: code,
         exp: Date.now() + 24 * 60 * 60 * 1000
-    }));
+    });
+    const token = btoa(tokenPayload) + "." + $security.hmacSHA256(tokenPayload, secret);
     
-    // Set the response token
     c.set("token", token);
+    c.set("plan", record.get("plan"));
     return c.next();
 });
 ```
 
-Also create the deactivation endpoint with rate limiting at `/opt/pocketbase/pb_hooks/deactivation.pb.js`:
+> ⚠️ Set `TOKEN_SECRET` to a random 64-char hex string in the PocketBase environment. Without this, tokens are trivially forgeable (base64 only, no signature). The HMAC suffix lets the heartbeat endpoint verify the token wasn't tampered with. In production, consider using proper JWT with `$security.jwtEncode()` if your PocketBase version supports it.
 
-```javascript
-// Deactivation with rate limiting — max 1 deactivation per code per 24 hours.
-routerAdd("POST", "/api/collections/activations/deactivate", (c) => {
-    const proof = c.requestHeader("X-Device-Proof");
-    if (!proof) {
-        return c.json(400, { "code": 400, "message": "Missing device proof" });
-    }
-    
-    // Look up the activation code bound to this proof
-    const records = $app.dao().findRecordsByFilter("activation_codes",
-        `devices ~ {:proof}`, { proof });
-    if (records.length === 0) {
-        return c.json(404, { "code": 404, "message": "No activation found for this device" });
-    }
-    
-    const record = records[0];
-    const lastDeactivated = record.get("last_deactivated_at");
-    
-    // Rate limit: max 1 deactivation per 24 hours
-    if (lastDeactivated) {
-        const hoursSince = (Date.now() - new Date(lastDeactivated).getTime()) / 3600000;
-        if (hoursSince < 24) {
-            return c.json(429, { "code": 429,
-                "message": "Max 1 deactivation per 24 hours. Try again later." });
-        }
-    }
-    
-    // Remove this device proof from the bound list
-    let devices = record.get("devices") || [];
-    devices = devices.filter(d => d !== proof);
-    record.set("devices", devices);
-    record.set("last_deactivated_at", new Date().toISOString());
-    $app.dao().saveRecord(record);
-    
-    return c.json(200, { "status": "deactivated" });
-});
-```
-
-Add `last_deactivated_at` (datetime, optional) and `devices` (JSON array of strings) fields to the `activation_codes` collection in PocketBase admin.
+**No deactivation endpoint.** Codes cannot be unbound. The admin suspends a device (toggle `suspended = true` in PocketBase admin) to block connections. When unsuspended, the same code works on the same device — no re-binding needed.
 
 ### 11. Activation code format
 
@@ -350,8 +327,8 @@ MYVPN-A3X9-K7M2-Q5P1-C
 - 4 groups of 4 characters each: uppercase A-Z + digits 2-9 **(excludes I, O, 0, 1 for readability)**
 - Last character is a **Luhn-mod-N check digit** — catches single-character typos at input time
 - Case-insensitive on input (normalize to uppercase before validation)
-- `expires_at` date in PocketBase (default 90 days, configurable per code)
-- `max_devices` integer (default 2, configurable)
+- `expires` date in PocketBase (default 90 days, configurable per code)
+- **Permanently bound to one device** on first activation — cannot be unbound or reused on a different device
 
 **Luhn-mod-N check digit (JavaScript for PocketBase hook):**
 
@@ -392,29 +369,24 @@ function validateCode(code) {
 In the PocketBase admin UI (`https://api.yourdomain.com/_/`), create these collections:
 
 **`activation_codes`** — the codes middlemen hand out:
-- `code` (text, unique) — e.g. `A7X3-K9M2-Q5P1`
-- `plan` (text) — `warp_lite`, `gaming_max`, `turbo`
-- `max_devices` (number, default 2) — how many devices can use this code
-- `used_devices` (number, default 0) — incremented each activation
+- `code` (text, unique) — e.g. `MYVPN-A7X3-K9M2-Q5P1-C`
+- `plan` (text) — `warp_lite`, `gaming_mid`, `gaming_max`
+- `bound_device_id` (text, unique, nullable) — SHA256 hardware fingerprint of the permanently bound device; `null` when code is fresh/unused
+- `suspended` (bool, default false) — server can suspend connections without breaking the permanent binding
+- `suspended_reason` (text, optional) — admin note (e.g. "reported stolen")
 - `created_by` (text) — who created it (admin reference)
 - `expires` (datetime) — optional expiry
-- `active` (bool, default true) — soft-deactivate codes
-
-**`devices`** — bound activations:
-- `activation_code` (relation to activation_codes)
-- `device_proof` (text, unique) — client-provided HMAC proof, stored at activation
-- `token` (text, unique) — JWT or random token
-- `plan` (text) — copied from code at activation time
-- `last_heartbeat` (datetime)
-- `last_ip` (text)
+- `active` (bool, default true) — soft-deactivate codes before they're claimed
 
 **`activation_attempts`** — rate limit tracking:
 - `ip` (text)
 - `created` (autodate)
 
+> **No `devices` collection.** The device binding is embedded in `activation_codes` via `bound_device_id`. A code is permanently bound to one device. There is no deactivation, no re-use on different devices, and no multi-device codes. Middlemen sell one code = one device.
+
 ---
 
-## Phase 1.2: Project Scaffolding & Signing Keys
+## Phase 1.2: Project Scaffolding
 
 ### 1. Initialize the Go module
 
@@ -423,147 +395,42 @@ mkdir -p myvpn && cd myvpn
 go mod init myvpn
 ```
 
-### 2. Generate Ed25519 signing keypair
+### 2. Create publish script for updates
 
 ```bash
 mkdir -p scripts
 
-cat > scripts/generate_signing_key.sh << 'GENEOF'
+cat > scripts/publish_update.sh << 'PUBEOF'
 #!/bin/bash
-# Generate Ed25519 keypair for update signing
-# Run ONCE when setting up the project.
-# The PRIVATE KEY must NEVER be committed or stored on the VPS.
-
-KEY_DIR="$(dirname "$0")/../internal/updatekeys"
-mkdir -p "$KEY_DIR"
-
-# Generate private key
-openssl genpkey -algorithm ed25519 -out "$KEY_DIR/signing-key1-private.pem"
-chmod 600 "$KEY_DIR/signing-key1-private.pem"
-
-# Extract public key
-openssl pkey -in "$KEY_DIR/signing-key1-private.pem" -pubout -out "$KEY_DIR/signing-key1-public.pem"
-
-# Generate Go source with embedded public key
-PUBKEY_B64=$(openssl pkey -in "$KEY_DIR/signing-key1-private.pem" -pubout | tail -n +2 | head -n -1 | tr -d '\n')
-
-cat > "$KEY_DIR/public_key.go" << GOEOF
-// Code generated by generate_signing_key.sh. DO NOT EDIT.
-package updatekeys
-
-import (
-    "encoding/base64"
-    "crypto/ed25519"
-    "fmt"
-)
-
-// KeyID identifies which signing key was used.
-// Used for key rotation — new clients can embed both key1 and key2.
-const KeyID = "key1"
-
-// PublicKey is the Ed25519 public key used to verify update signatures.
-var PublicKey ed25519.PublicKey
-
-// ExtraPublicKeys is a map of key ID -> public key for key rotation.
-// Populate this when rotating keys so old clients still trust old signatures.
-var ExtraPublicKeys = map[string]ed25519.PublicKey{}
-
-func init() {
-    const b64 = "${PUBKEY_B64}"
-    raw, err := base64.StdEncoding.DecodeString(b64)
-    if err != nil {
-        panic("updatekeys: failed to decode embedded public key: " + err.Error())
-    }
-    PublicKey = ed25519.PublicKey(raw)
-}
-
-// Verify checks a message against any trusted public key.
-func Verify(keyID string, message []byte, signature []byte) error {
-    pub := PublicKey
-    if keyID != KeyID {
-        extra, ok := ExtraPublicKeys[keyID]
-        if !ok {
-            return fmt.Errorf("unknown key ID: %s", keyID)
-        }
-        pub = extra
-    }
-    if !ed25519.Verify(pub, message, signature) {
-        return fmt.Errorf("invalid signature for key %s", keyID)
-    }
-    return nil
-}
-GOEOF
-
-echo "Generated Ed25519 keypair and embedded public key at $KEY_DIR/"
-echo ""
-echo "*** IMPORTANT ***"
-echo "Back up signing-key1-private.pem to a secure offline location."
-echo "Never store it on the VPS or in version control."
-echo "Without this key, you cannot sign updates."
-GENEOF
-
-chmod +x scripts/generate_signing_key.sh
-./scripts/generate_signing_key.sh
-```
-
-This creates:
-- `internal/updatekeys/signing-key1-private.pem` — **NEVER COMMIT**
-- `internal/updatekeys/signing-key1-public.pem` — can be committed
-- `internal/updatekeys/public_key.go` — embedded public key with key rotation support
-
-> ⚠️ **Back up `signing-key1-private.pem` to a USB drive or offline password manager immediately.** Lose it = lose the ability to sign updates. Leak it = anyone can sign fake updates.
-
-### 3. Create signing script for update publishing
-
-```bash
-cat > scripts/sign_update.sh << 'SIGNEOF'
-#!/bin/bash
-# sign_update.sh <binary> <version> <min_version> <platform> <private_key_file> [key_id]
-# Produces the signed update payload to upload to the admin hub.
+# publish_update.sh <binary> <version> <platform>
+# Computes SHA256 and outputs the JSON payload to upload to the admin hub.
+# No signing keys needed — updates are verified by SHA256 only.
 set -euo pipefail
 
 BINARY="$1"
 VERSION="$2"
-MIN_VERSION="$3"
-PLATFORM="$4"
-PRIVKEY="$5"
-KEY_ID="${6:-key1}"
+PLATFORM="$3"
 
-if [ -z "$BINARY" ] || [ -z "$VERSION" ] || [ -z "$MIN_VERSION" ] || [ -z "$PLATFORM" ] || [ -z "$PRIVKEY" ]; then
-    echo "Usage: $0 <binary> <version> <min_version> <platform> <private_key> [key_id]"
-    echo "Example:"
-    echo "  $0 myvpn.exe 1.0.1 1.0.0 windows_amd64 ./signing-key1-private.pem"
-    echo "  $0 myvpn_darwin_amd64 1.0.1 1.0.0 darwin_amd64 ./signing-key1-private.pem"
+if [ -z "$BINARY" ] || [ -z "$VERSION" ] || [ -z "$PLATFORM" ]; then
+    echo "Usage: $0 <binary> <version> <platform>"
+    echo "Example: $0 myvpn.exe 1.0.1 windows_amd64"
     exit 1
 fi
 
-# Compute SHA256
 SHA256=$(sha256sum "$BINARY" | cut -d' ' -f1)
-
-# Get just the filename for the URL
 FILENAME=$(basename "$BINARY")
 
-# Build signed message: platform|minVersion|version|sha256|keyID
-MSG="${PLATFORM}|${MIN_VERSION}|${VERSION}|${SHA256}|${KEY_ID}"
-
-# Sign with Ed25519
-SIGNATURE=$(echo -n "$MSG" | openssl pkeyutl -sign -inkey "$PRIVKEY" -rawin | base64 -w0)
-
-# Output JSON payload
 cat << JSONEOF
 {
     "platform": "$PLATFORM",
-    "min_version": "$MIN_VERSION",
     "version": "$VERSION",
     "sha256": "$SHA256",
-    "url": "https://api.yourdomain.com/files/updates/$FILENAME",
-    "key_id": "$KEY_ID",
-    "signature": "$SIGNATURE"
+    "url": "https://api.yourdomain.com/files/updates/$FILENAME"
 }
 JSONEOF
-SIGNEOF
+PUBEOF
 
-chmod +x scripts/sign_update.sh
+chmod +x scripts/publish_update.sh
 ```
 
 ---
@@ -594,13 +461,13 @@ type Storage struct {
 }
 
 type AppData struct {
-    Token       string            `json:"token"`
-    DeviceProof string            `json:"device_proof"`
-    PlanTier    string            `json:"plan_tier"`
-    Protocols   []ProtocolConfig  `json:"protocols"`
-    ActiveConn  string            `json:"active_conn"`
-    TelemetryOptOut bool          `json:"telemetry_opt_out"`
-    EngineCache map[string]string `json:"engine_cache"` // protocol ID → cached binary path
+    Token             string            `json:"token"`
+    DeviceFingerprint string            `json:"device_fingerprint"` // SHA256 of hardware fingerprint (MAC+disk+MoboUUID)
+    PlanTier          string            `json:"plan_tier"`
+    Protocols         []ProtocolConfig  `json:"protocols"`
+    ActiveConn        string            `json:"active_conn"`
+    TelemetryOptOut   bool              `json:"telemetry_opt_out"`
+    EngineCache       map[string]string `json:"engine_cache"` // protocol ID → cached binary path
 }
 
 type ProtocolConfig struct {
@@ -743,15 +610,15 @@ func SaveToken(newToken string) {
     instance.save()
 }
 
-func SaveDeviceProof(proof string) {
+func SaveDeviceFingerprint(fp string) {
     instance.mu.Lock(); defer instance.mu.Unlock()
-    instance.data.DeviceProof = proof
+    instance.data.DeviceFingerprint = fp
     instance.save()
 }
 
-func LoadDeviceProof() string {
+func LoadDeviceFingerprint() string {
     instance.mu.RLock(); defer instance.mu.RUnlock()
-    return instance.data.DeviceProof
+    return instance.data.DeviceFingerprint
 }
 
 func LoadPlanTier() string {
@@ -820,37 +687,40 @@ type ActivationResponse struct {
     Plan  string `json:"plan"`
 }
 
-// ── Device Secret Management ──
+// ── Device Fingerprint (hardware-derived, survives app deletion) ──
 
-// EnsureDeviceSecret generates a random 32-byte device secret on first launch
-// and persists it. The server never sees this value.
-func EnsureDeviceSecret() []byte {
-    secretPath := filepath.Join(storage.LogDir(), "..", ".device_secret")
-    // Clean the path
-    secretPath = filepath.Clean(secretPath)
-
-    // Check if secret already exists
-    existing, err := os.ReadFile(secretPath)
-    if err == nil && len(existing) == 32 {
-        return existing
+// CollectFingerprint gathers hardware identifiers and returns a SHA256 fingerprint.
+// Survives app deletion — same device always produces the same fingerprint.
+func CollectFingerprint() string {
+    // Gather hardware identifiers
+    identifiers := []string{}
+    // MAC address of first active network interface
+    if mac := getMACAddress(); mac != "" {
+        identifiers = append(identifiers, mac)
+    }
+    // Disk serial (system drive)
+    if diskSerial := getDiskSerial(); diskSerial != "" {
+        identifiers = append(identifiers, diskSerial)
+    }
+    // Motherboard UUID
+    if moboUUID := getMoboUUID(); moboUUID != "" {
+        identifiers = append(identifiers, moboUUID)
+    }
+    // If nothing is available, fall back to hostname (fragile but better than nothing)
+    if len(identifiers) == 0 {
+        hostname, _ := os.Hostname()
+        identifiers = append(identifiers, hostname)
     }
 
-    // Generate new 32-byte secret
-    secret := make([]byte, 32)
-    rand.Read(secret)
-    os.WriteFile(secretPath, secret, 0600)
-    return secret
+    combined := strings.Join(identifiers, "|")
+    hash := sha256.Sum256([]byte(combined))
+    return hex.EncodeToString(hash[:])
 }
 
-// DeviceProof computes HMAC-SHA256("activation" + code, device_secret).
-// This proves device identity without sending raw hardware identifiers over the wire.
-// The proof is deterministic per (device, code) pair but unusable for any other code.
-func DeviceProof(secret []byte, code string) string {
-    mac := hmac.New(sha256.New, secret)
-    mac.Write([]byte("activation"))
-    mac.Write([]byte(code))
-    return hex.EncodeToString(mac.Sum(nil))
-}
+// Platform-specific helpers implemented in fingerprint_windows.go / fingerprint_darwin.go
+func getMACAddress() string   { return getMAC() }  // platform-specific
+func getDiskSerial() string   { return getDisk() }  // platform-specific
+func getMoboUUID() string     { return getMobo() }  // platform-specific
 
 // ── Activation ──
 
@@ -901,8 +771,7 @@ func Validate(apiBase, code string) (*ActivationResponse, error) {
         return nil, fmt.Errorf("invalid activation code format — check for typos")
     }
     
-    secret := EnsureDeviceSecret()
-    proof := DeviceProof(secret, code)
+    fingerprint := CollectFingerprint()
 
     body := ActivationRequest{Code: code}
     payload, _ := json.Marshal(body)
@@ -913,7 +782,7 @@ func Validate(apiBase, code string) (*ActivationResponse, error) {
         return nil, fmt.Errorf("activation request failed: %w", err)
     }
     req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("X-Device-Proof", proof)
+    req.Header.Set("X-Device-Fingerprint", fingerprint)
 
     resp, err := http.DefaultClient.Do(req)
     if err != nil {
@@ -932,13 +801,20 @@ func Validate(apiBase, code string) (*ActivationResponse, error) {
         if result.Token == "" {
             return nil, fmt.Errorf("activation rejected — invalid response")
         }
-        // Store the device proof as the persistent device identifier
-        storage.SaveDeviceProof(proof)
+        // Store the hardware fingerprint locally (for heartbeat header matching)
+        storage.SaveDeviceFingerprint(fingerprint)
         return &result, nil
     case 409:
-        return nil, fmt.Errorf("this activation code has already been used")
+        return nil, fmt.Errorf("this activation code is already bound to another device")
     case 403:
-        return nil, fmt.Errorf("device limit reached for this code")
+        var body403 struct {
+            Message string `json:"message"`
+        }
+        json.Unmarshal(bodyBytes, &body403)
+        if body403.Message != "" {
+            return nil, fmt.Errorf("%s", body403.Message)
+        }
+        return nil, fmt.Errorf("activation rejected")
     case 429:
         return nil, fmt.Errorf("too many activation attempts — wait a few minutes")
     default:
@@ -946,28 +822,9 @@ func Validate(apiBase, code string) (*ActivationResponse, error) {
     }
 }
 
-func Deactivate(apiBase string) error {
-    // Regenerate device secret so old proof is invalidated
-    secretPath := filepath.Join(storage.LogDir(), "..", ".device_secret")
-    secretPath = filepath.Clean(secretPath)
-    newSecret := make([]byte, 32)
-    rand.Read(newSecret)
-    os.WriteFile(secretPath, newSecret, 0600)
-
-    req, _ := http.NewRequest("POST", apiBase+"/api/collections/activations/deactivate", nil)
-    req.Header.Set("Authorization", "Bearer "+storage.LoadToken())
-    req.Header.Set("X-Device-Proof", storage.LoadDeviceProof())
-
-    resp, err := http.DefaultClient.Do(req)
-    if err != nil {
-        return fmt.Errorf("deactivation request failed: %w", err)
-    }
-    defer resp.Body.Close()
-    if resp.StatusCode != 200 {
-        return fmt.Errorf("deactivation failed (status %d)", resp.StatusCode)
-    }
-    return nil
-}
+// Deactivation is not supported — codes are permanently bound to one device.
+// To block a device, the admin sets suspended=true on the activation_code record.
+// The binding is never destroyed; the code can never be re-used on a different device.
 
 func ShowPrompt(apiBase string) {
     // MVP: command-line prompt. Phase 2: GUI dialog.
@@ -986,25 +843,126 @@ func ShowPrompt(apiBase string) {
     fmt.Printf("Activated! Plan: %s\n", result.Plan)
 }
 
-func ShowPrompt(apiBase string) {
-    // MVP: command-line prompt. Phase 2: GUI dialog.
-    fmt.Println("=== MyVPN Activation ===")
-    fmt.Println("Enter your activation code (format: XXXX-XXXX-XXXX):")
-    var code string
-    fmt.Scanln(&code)
+### 3. `internal/activation/fingerprint_windows.go`
 
-    result, err := Validate(apiBase, code)
+```go
+//go:build windows
+
+package activation
+
+import (
+    "os/exec"
+    "strings"
+)
+
+func getMAC() string {
+    out, err := exec.Command("getmac", "/fo", "csv", "/nh").Output()
     if err != nil {
-        fmt.Printf("Activation failed: %v\n", err)
-        os.Exit(1)
+        return ""
     }
+    lines := strings.Split(string(out), "\n")
+    for _, line := range lines {
+        parts := strings.Split(line, ",")
+        if len(parts) >= 3 {
+            mac := strings.Trim(parts[1], `"`)
+            mac = strings.ReplaceAll(mac, "-", ":")
+            if mac != "" && mac != "Disabled" {
+                return mac
+            }
+        }
+    }
+    return ""
+}
 
-    storage.SaveActivation(result.Token, result.Plan, result.DeviceBound)
-    fmt.Printf("Activated! Plan: %s\n", result.Plan)
+func getDisk() string {
+    out, err := exec.Command("wmic", "diskdrive", "get", "SerialNumber").Output()
+    if err != nil {
+        return ""
+    }
+    lines := strings.Split(string(out), "\n")
+    if len(lines) >= 2 {
+        return strings.TrimSpace(lines[1])
+    }
+    return ""
+}
+
+func getMobo() string {
+    out, err := exec.Command("wmic", "baseboard", "get", "SerialNumber").Output()
+    if err != nil {
+        return ""
+    }
+    lines := strings.Split(string(out), "\n")
+    if len(lines) >= 2 {
+        return strings.TrimSpace(lines[1])
+    }
+    return ""
 }
 ```
 
-### 3. `internal/branding/names.go`
+### 4. `internal/activation/fingerprint_darwin.go`
+
+```go
+//go:build darwin
+
+package activation
+
+import (
+    "os/exec"
+    "strings"
+)
+
+func getMAC() string {
+    out, err := exec.Command("ifconfig", "en0").Output()
+    if err != nil {
+        return ""
+    }
+    for _, line := range strings.Split(string(out), "\n") {
+        if strings.Contains(line, "ether ") {
+            parts := strings.Fields(line)
+            if len(parts) >= 2 {
+                return parts[1]
+            }
+        }
+    }
+    return ""
+}
+
+func getDisk() string {
+    out, err := exec.Command("system_profiler", "SPHardwareDataType").Output()
+    if err != nil {
+        return ""
+    }
+    for _, line := range strings.Split(string(out), "\n") {
+        if strings.Contains(line, "Serial Number") {
+            parts := strings.SplitN(line, ":", 2)
+            if len(parts) == 2 {
+                return strings.TrimSpace(parts[1])
+            }
+        }
+    }
+    return ""
+}
+
+func getMobo() string {
+    out, err := exec.Command("ioreg", "-l").Output()
+    if err != nil {
+        return ""
+    }
+    for _, line := range strings.Split(string(out), "\n") {
+        if strings.Contains(line, "IOPlatformUUID") {
+            parts := strings.Split(line, `"`)
+            for i, p := range parts {
+                if strings.TrimSpace(p) == "IOPlatformUUID" && i+2 < len(parts) {
+                    return strings.TrimSpace(parts[i+2])
+                }
+            }
+        }
+    }
+    return ""
+}
+```
+
+### 5. `internal/branding/names.go`
 
 ```go
 package branding
@@ -1013,6 +971,11 @@ import "sync"
 
 var (
     mu     sync.RWMutex
+    // Display names are obfuscated — users never see real protocol names.
+    // "Lite Mode" = usque/Warp. Bandwidth limits are NOT tied to this name;
+    // they're enforced client-side by the app based on plan_tier
+    // (warp_lite = throttled, gaming_mid/gaming_max fallback = unbottlenecked).
+    // usque connects directly to Cloudflare — no VPS in the data path to throttle.
     names  = map[string]string{
         "hysteria2": "Speed Mode",
         "usque":     "Lite Mode",
@@ -1350,7 +1313,7 @@ func SandboxRunning(cmd *exec.Cmd) {
 
 ---
 
-## Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry + Token Rotation
+## Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry + Suspension
 
 ### `internal/heartbeat/heartbeat.go`
 
@@ -1367,7 +1330,6 @@ import (
     "fmt"
     "myvpn/internal/manager"
     "myvpn/internal/storage"
-    "myvpn/internal/updater"
     "myvpn/internal/health"
     "net/http"
     "runtime"
@@ -1436,11 +1398,12 @@ type HeartbeatRequest struct {
 }
 
 type HeartbeatResponse struct {
-    Status    string                    `json:"status"`
+    Status    string                    `json:"status"`     // "active" | "suspended" | "disabled"
     Plan      string                    `json:"plan"`
     Token     string                    `json:"token"`     // ROTATED
     Protocols []storage.ProtocolConfig  `json:"protocols"`
     Commands  []RemoteCommand           `json:"commands"`
+    Message   string                    `json:"message"`    // Human-readable status message (e.g. suspension reason)
 }
 
 type RemoteCommand struct {
@@ -1523,7 +1486,7 @@ func doHeartbeat() {
 
     req := HeartbeatRequest{
         Token:          storage.LoadToken(),
-        DeviceID:       storage.LoadDeviceProof(),
+        DeviceID:       storage.LoadDeviceFingerprint(),
         AppVersion:     "1.0.0",
         OSPlatform:     runtime.GOOS + "_" + runtime.GOARCH,
         ProtocolID:     manager.RunningProtocolID(),
@@ -1541,7 +1504,7 @@ func doHeartbeat() {
     httpReq, _ := http.NewRequest("POST", apiBase+"/api/heartbeat", bytes.NewReader(body))
     httpReq.Header.Set("Content-Type", "application/json")
     httpReq.Header.Set("Authorization", "Bearer "+storage.LoadToken())
-    httpReq.Header.Set("X-Device-Proof", storage.LoadDeviceProof())
+    httpReq.Header.Set("X-Device-Fingerprint", storage.LoadDeviceFingerprint())
 
     resp, err := client.Do(httpReq)
 
@@ -1580,6 +1543,18 @@ func doHeartbeat() {
         storage.SaveProtocols(result.Protocols)
     }
 
+    // Handle suspension
+    if result.Status == "suspended" {
+        manager.StopEngine()
+        if result.Message != "" {
+            SetLastError(result.Message)
+        }
+        // Don't clear activation — the binding is preserved.
+        // The systray shows the suspension message. Heartbeat continues
+        // checking — when status returns to "active", auto-reconnect.
+        return
+    }
+
     // Process remote commands
     for _, cmd := range result.Commands {
         processCommand(cmd, result.Plan)
@@ -1589,7 +1564,7 @@ func doHeartbeat() {
 func processCommand(cmd RemoteCommand, newPlan string) {
     switch cmd.Action {
     case "update":
-        var payload updater.SignedUpdate
+        var payload updater.UpdatePayload
         if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
             return
         }
@@ -1683,9 +1658,11 @@ func HadCrash() bool {
 
 ---
 
-## Phase 1.6: Auto-Updater with Platform-Scoped Ed25519 Verification
+## Phase 1.6: Auto-Updater with SHA256 Verification
 
 ### `internal/updater/update.go`
+
+> ⚠️ **No Ed25519 signing.** Updates are verified by SHA256 hash only. The admin hub publishes the SHA256 alongside the binary URL. The client downloads, hashes, and compares. This trades cryptographic authenticity for operational simplicity — no key management, no offline signing ceremony, no risk of losing the only key that can sign updates. A compromised hub could serve a malicious binary, but cert pinning prevents MITM of the hub connection itself.
 
 ```go
 package updater
@@ -1696,60 +1673,33 @@ import (
     "encoding/json"
     "fmt"
     "io"
-    "myvpn/internal/updatekeys"
     "net/http"
     "os"
     "runtime"
     "strings"
 )
 
-type SignedUpdate struct {
-    Platform   string `json:"platform"`    // e.g. "windows_amd64"
-    MinVersion string `json:"min_version"` // minimum app version allowed to apply
-    Version    string `json:"version"`
-    SHA256     string `json:"sha256"`
-    URL        string `json:"url"`
-    KeyID      string `json:"key_id"`      // "key1", "key2" for rotation
-    Signature  string `json:"signature"`   // base64-encoded Ed25519 sig
+type UpdatePayload struct {
+    Platform string `json:"platform"` // e.g. "windows_amd64"
+    Version  string `json:"version"`
+    SHA256   string `json:"sha256"`
+    URL      string `json:"url"`
 }
 
-func Apply(su SignedUpdate) error {
+func Apply(payload UpdatePayload) error {
     // 1. Platform check — prevent cross-platform attacks
     ourPlatform := runtime.GOOS + "_" + runtime.GOARCH
-    if su.Platform != "" && su.Platform != ourPlatform {
-        return fmt.Errorf("update platform %s does not match %s", su.Platform, ourPlatform)
+    if payload.Platform != "" && payload.Platform != ourPlatform {
+        return fmt.Errorf("update platform %s does not match %s", payload.Platform, ourPlatform)
     }
 
-    // 1b. HTTPS enforcement — reject http:// update URLs
-    if !strings.HasPrefix(su.URL, "https://") {
-        return fmt.Errorf("update URL must use HTTPS, got: %s", su.URL)
+    // 2. HTTPS enforcement — reject http:// update URLs
+    if !strings.HasPrefix(payload.URL, "https://") {
+        return fmt.Errorf("update URL must use HTTPS, got: %s", payload.URL)
     }
 
-    // 2. Decode signature
-    sig, err := base64.StdEncoding.DecodeString(su.Signature)
-    if err != nil {
-        return fmt.Errorf("invalid signature encoding: %w", err)
-    }
-
-    // 3. Build signed message: platform|minVersion|version|sha256|keyID
-    //    (minVersion defaults to "0.0.0" if empty to prevent downgrades)
-    minVer := su.MinVersion
-    if minVer == "" {
-        minVer = "0.0.0"
-    }
-    keyID := su.KeyID
-    if keyID == "" {
-        keyID = "key1"
-    }
-    msg := []byte(su.Platform + "|" + minVer + "|" + su.Version + "|" + su.SHA256 + "|" + keyID)
-
-    // 4. Verify signature against trusted public key(s)
-    if err := updatekeys.Verify(keyID, msg, sig); err != nil {
-        return fmt.Errorf("update signature invalid: %w", err)
-    }
-
-    // 5. Download the binary
-    resp, err := http.Get(su.URL)
+    // 3. Download the binary
+    resp, err := http.Get(payload.URL)
     if err != nil {
         return fmt.Errorf("download failed: %w", err)
     }
@@ -1773,14 +1723,14 @@ func Apply(su SignedUpdate) error {
         return fmt.Errorf("downloaded file too small (%d bytes)", written)
     }
 
-    // 6. Verify SHA256
+    // 4. Verify SHA256
     gotHash := hex.EncodeToString(hash.Sum(nil))
-    if gotHash != su.SHA256 {
-        return fmt.Errorf("SHA256 mismatch: got %s, expected %s", gotHash, su.SHA256)
+    if gotHash != payload.SHA256 {
+        return fmt.Errorf("SHA256 mismatch: got %s, expected %s", gotHash, payload.SHA256)
     }
 
-    // 7. Apply (platform-specific swap)
-    return applySwap(tmpFile.Name(), su.Version)
+    // 5. Apply (platform-specific swap)
+    return applySwap(tmpFile.Name(), payload.Version)
 }
 
 // applySwap implemented in update_windows.go and update_unix.go
@@ -2553,43 +2503,33 @@ func verifyHash(path, expected string) bool {
 ### 1. `Makefile`
 
 ```makefile
-.PHONY: all build clean sign run
+.PHONY: all build clean run
 
 APP_NAME = myvpn
 VERSION ?= 1.0.0
 
 all: build
 
-# Generate signing key if not present
-internal/updatekeys/public_key.go:
-	@echo "Generating signing keys..."
-	@scripts/generate_signing_key.sh
-
 # Build for current platform
-build: internal/updatekeys/public_key.go
+build:
 	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME) .
 
 # Build for Windows amd64
-build-windows: internal/updatekeys/public_key.go
+build-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
 	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME).exe .
 
 # Build for macOS (Intel + Apple Silicon)
-build-macos-intel: internal/updatekeys/public_key.go
+build-macos-intel:
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
 	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_amd64 .
 
-build-macos-arm: internal/updatekeys/public_key.go
+build-macos-arm:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
 	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_arm64 .
 
 # Build all platforms
 build-all: build-windows build-macos-intel build-macos-arm
-
-# Sign an update payload for a built binary
-sign:
-	@echo "Usage: make sign BINARY=<file> VERSION=<ver> MIN_VERSION=<ver> PLATFORM=<plat> KEY=<pem>"
-	@scripts/sign_update.sh "$(BINARY)" "$(VERSION)" "$(MIN_VERSION)" "$(PLATFORM)" "$(KEY)"
 
 clean:
 	rm -f $(APP_NAME) $(APP_NAME).exe $(APP_NAME)_darwin_*
@@ -2929,22 +2869,21 @@ func setupAutostart() {
 - [ ] Uptime monitor configured and reporting green
 - [ ] Ports 22/80/443 only (`ufw status`)
 
-### Build & Signing
+### Build & Publish
 
-- [ ] Ed25519 keypair generated, private key backed up offline
-- [ ] `internal/updatekeys/public_key.go` committed
 - [ ] App compiles on all platforms (`make build-all`)
-- [ ] Signed update payload generated for testing (`make sign BINARY=...`)
+- [ ] SHA256 hashes computed for published binaries (`scripts/publish_update.sh`)
 
 ### Client Verification (test on Windows + macOS)
 
 - [ ] App launches and shows systray icon
 - [ ] Autostart is configured (check Task Scheduler / LaunchAgent)
 - [ ] Activation: wrong code (typo) → Luhn check detects it before sending to server
-- [ ] Activation: valid code → token stored, device proof computed from client-held secret
-- [ ] Activation: same code on second device → rejected (device limit, 403)
-- [ ] Activation: MITM test — sniff traffic, verify no raw hardware fingerprint appears in the clear
-- [ ] Deactivation: frees device slot, regenerates device secret
+- [ ] Activation: valid code on fresh device → permanently bound, fingerprint + token stored
+- [ ] Activation: same code on different device → rejected ("already bound to another device")
+- [ ] Activation: same code on same device after app reinstall → works (fingerprint matches)
+- [ ] Activation: same code on same device when suspended → rejected with suspension message
+- [ ] Activation: code unsuspended → same device can re-activate (binding preserved)
 - [ ] Privileged helper service installed (Windows: `sc query MyVPNHelper` → RUNNING)
 - [ ] "Connect" succeeds without UAC prompt (helper service handles TUN creation)
 - [ ] Bundle engine: `speedmode.exe` exists in installer directory, used on first connect
@@ -2959,10 +2898,9 @@ func setupAutostart() {
 - [ ] K illing the VPS → app shows grace countdown (7 days), continues working over grace period
 - [ ] Grace vs token: after 24h without hub, token expires but grace keeps VPN running
 - [ ] Certificate pinning: deploying a fake cert → connection refused
-- [ ] Update (platform match): serve signed update → client applies it
-- [ ] Update (wrong platform): serve signed update for different platform → rejected
-- [ ] Update (downgrade): serve signed update with version < min_version → rejected
-- [ ] Update (bad signature): serve update with tampered payload → rejected
+- [ ] Update (platform match): serve update with correct SHA256 → client applies it
+- [ ] Update (wrong platform): serve update for different platform → rejected
+- [ ] Update (SHA256 mismatch): serve update with wrong SHA256 → rejected
 - [ ] Privacy opt-out: toggle telemetry off → heartbeat still runs, telemetry fields zeroed
 - [ ] Log rotation: fill engine log past 10MB → rotates, keeps last 3 files
 - [ ] State machine: systray shows correct state through IDLE→ACTIVE→CONNECTING→CONNECTED→DEGRADED→DISCONNECTED cycle
@@ -2974,13 +2912,13 @@ func setupAutostart() {
 | Problem                                     | Fix                                                                                              |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | Engine not found at connect                 | Check `~/.myvpn/engines/` has the renamed binary. Run `enginedl.EnsureEngine()` manually.        |
-| Activation fails with 409                   | That code is already activated on another device. Use deactivation first or create a new code.   |
-| Activation fails with 403                   | Device limit reached for that code. Create a new code with higher `max_devices`.                 |
+| Activation fails with 409                   | That code is already bound to another device. Code cannot be transferred — issue a new code.     |
+| Activation fails with 403                   | Device is suspended. Check PocketBase for `suspended` flag and `suspended_reason`.               |
 | TUN device not created                      | Ensure wintun.dll is installed (auto-downloaded). Run engine manually to check for errors.       |
 | Health check shows "dead" but engine runs   | Tunnel misconfigured — check routes and firewall. Try direct ping through TUN IP.                |
 | Kill switch active, can't restore           | Run `netsh advfirewall delete rule name=MyVPN_KillSwitch` manually.                              |
 | Certificate pinning blocks connection       | You updated your VPS TLS cert. Generate a new pinned hash and ship an update.                    |
-| Update signature verification fails         | Wrong platform, wrong key, or downgrade attempt. Check `sign_update.sh` arguments.               |
+| SHA256 mismatch on update                   | Wrong binary uploaded or corrupted download. Re-publish and verify the SHA256 hash.              |
 | Heartbeat grace period expired              | VPS has been down for 7+ days. Fix the VPS. Re-activate clients.                                 |
 | macOS engine crash on connect               | Check `~/Library/Application Support/MyVPN/logs/` for engine logs. Run engine manually from CLI. |
 | Windows SmartScreen blocks the app          | Click "More info" → "Run anyway". (Trade-off for no code signing.)                               |
