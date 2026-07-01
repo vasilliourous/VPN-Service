@@ -34,7 +34,7 @@ Supports Hysteria 2 (gaming primary) and usque/Warp (fallback, unbottlenecked fo
 │  ~15-25 MB, single .exe / Mach-O                            │
 │                                                              │
 │  ┌──────────┐  ┌───────────┐  ┌─────────────────────────┐  │
-│  │  GUI     │  │  Systray  │  │ Auto-Updater            │  │
+│  │  GUI     │  │  Fyne     │  │ Auto-Updater            │  │
 │  │  Window  │  │  (minim.) │  │ (SHA256-verified,       │  │
 │  └────┬─────┘  └───────────┘  │  platform-scoped)       │  │
 │       │                       └─────────────────────────┘  │
@@ -269,7 +269,7 @@ POST /api/heartbeat
 ### 4.4 Heartbeat Grace Period
 
 - After 3 consecutive heartbeat failures, client enters **grace mode** (7 days).
-- VPN continues to work, systray shows "X days remaining" tooltip.
+- VPN continues to work, GUI shows "X days remaining" in status area.
 - Each successful heartbeat resets the timer.
 - When grace expires, VPN disconnects with "Cannot verify subscription" notification.
 
@@ -301,11 +301,11 @@ POST /api/heartbeat
 
 **Privilege elevation strategy (CRITICAL):**
 
-TUN device creation requires admin/root privileges. The systray app runs as the user. There must be an elevation strategy:
+TUN device creation requires admin/root privileges. The client app runs as the user. There must be an elevation strategy:
 
 | Platform | MVP Approach | Tradeoff |
 |----------|-------------|----------|
-| **Windows** | Install a **privileged helper Windows service** (runs as SYSTEM) that creates/manages the TUN interface. The systray app communicates with the service via a **named pipe** (`\\.\pipe\MyVPNHelper`). The service is installed once (requires admin on install) and auto-starts on boot. | Requires admin password on install. After that, users never see a UAC prompt. ~2 days of extra work. |
+| **Windows** | Install a **privileged helper Windows service** (runs as SYSTEM) that creates/manages the TUN interface. The client app communicates with the service via a **named pipe** (`\\.\pipe\MyVPNHelper`). The service is installed once (requires admin on install) and auto-starts on boot. | Requires admin password on install. After that, users never see a UAC prompt. ~2 days of extra work. |
 | **Windows (lazy MVP)** | Ship a batch file that the user runs once as admin to install the TUN adapter. On every connect, prompt for admin via a scheduled task that runs the engine elevated. | **UX debt:** User sees UAC prompt on every connect. Document this clearly — it's viable for technical users but kills adoption. |
 | **macOS** | Use a `launchd` privileged daemon that creates the TUN interface. Installed via a PKG or a one-time `sudo` command. | Same model as Windows helper service. Without a paid Apple Developer account, you cannot ship a setuid helper easily. |
 
@@ -356,7 +356,7 @@ MYVPN-A3X9-K7M2-Q5P1-C
 
 ```
 myvpn/
-├── main.go                        # Entry point, systray + GUI setup
+├── main.go                        # Entry point — thin launcher, hands off to GUI
 ├── go.mod
 ├── go.sum
 ├── Makefile                       # Cross-compile targets
@@ -432,7 +432,7 @@ Check if activated
     │         └── Store token + fingerprint locally
     │
     ▼
-Start systray (with branded plan name + grace days if applicable)
+Launch GUI (with branded plan name + grace days if applicable)
     │
     ▼
 Download engine binaries from admin hub (if not cached or version mismatch)
@@ -473,12 +473,12 @@ User clicks "Disconnect":
     ├── Remove TUN device
     ├── Remove split-tunnel routes
     ├── Disable kill switch (restore normal connectivity)
-    └── Update systray status
+    └── Update GUI status
 ```
 
 ### 5.2 Connection State Machine
 
-The app tracks six explicit states. The systray icon and tooltip reflect the current state:
+The app tracks six explicit states. The GUI reflects the current state:
 
 ```
                     ┌──────────────────────────────────────┐
@@ -489,7 +489,7 @@ The app tracks six explicit states. The systray icon and tooltip reflect the cur
                                  ▼
               ┌──────────────────────────────────────┐
               │           ACTIVE (idle)                │
-              │  Systray: "Disconnected"               │
+              │  GUI: "Disconnected"               │
               │  Heartbeat running, waiting for user   │
               └────────────┬──────────────────────────┘
                            │ user clicks Connect
@@ -503,14 +503,14 @@ The app tracks six explicit states. The systray icon and tooltip reflect the cur
                            ▼
      ┌─────────────────────────────────────────────────────────┐
      │                  CONNECTED_PRIMARY                       │
-     │  Systray: "Connected (Speed Mode)"                      │
+     │  GUI: "Connected — Gaming Mode"                      │
      │  Health checks every 15s, heartbeat every 60s           │
      └──┬─────────────────────────────────────────────────┬────┘
         │ 3 health fails                                   │ 3 health fails
         ▼                                                  ▼
  ┌─────────────────────┐                    ┌──────────────────────────┐
  │  CONNECTED_FALLBACK  │                   │      DEGRADED             │
- │  Systray: "Connected │                    │  Systray: "Degraded —    │
+ │  GUI: "Connected (Fallback)"         │                    │  GUI: "Degraded —    │
  │  (Lite Mode —        │                    │  reconnecting..."        │
  │  fallback)"          │                    │  Auto-retry loop starts  │
  └────────┬────────────┘                    └───────────┬──────────────┘
@@ -529,7 +529,7 @@ The app tracks six explicit states. The systray icon and tooltip reflect the cur
 
 **Additional states (orthogonal — can overlap with above):**
 
-| State | Trigger | Systray |
+| State | Trigger | GUI |
 |-------|---------|---------|
 | **GRACE** | 3+ heartbeat failures | "X days remaining" tooltip added |
 | **GRACE_EXPIRED** | Grace period over without recovery | "Cannot verify subscription" — VPN disconnects, must re-activate |
@@ -559,7 +559,7 @@ Check if activated
     │         └── Store token + fingerprint locally
     │
     ▼  [State: ACTIVE]
-Start systray (branded plan name + grace days if in grace mode)
+Launch GUI (branded plan name + grace days if in grace mode)
     │
     ▼
 Check for engine binaries in cache → download if missing
@@ -629,7 +629,7 @@ User clicks "Disconnect":
 **What's NOT collected:** browsing history, destination IPs, DNS queries, website URLs, or any user content.
 
 **Privacy controls:**
-- Opt-out toggle in systray menu: "Send anonymous usage data" (default: on for MVP)
+- Opt-out toggle in Settings panel: "Send anonymous usage data" (default: on for MVP)
 - When off: heartbeat still runs (required for activation/remote commands) but telemetry fields (uptime, health, errors) are zeroed
 - Store the preference in `storage.AppData`
 - Phase 2: make telemetry opt-in instead of opt-out
@@ -770,7 +770,7 @@ Middlemen **only hand out physical activation codes**. They have no app access, 
 | Xray-core (VLESS-REALITY) | https://github.com/XTLS/Xray-core     | Stealth protocol (REALITY + uTLS)    |
 | tuic-go (TUIC v5)         | https://github.com/iyear/tuic-go      | QUIC-based low-overhead (MIT)        |
 | wintun                     | https://www.wintun.net                | TUN driver for Windows               |
-| systray (Go)              | https://github.com/getlantern/systray | Cross-platform system tray           |
+| Fyne (Go)                 | https://fyne.io                        | Cross-platform minimal GUI            |
 | Fyne (Go GUI)             | https://fyne.io                       | Cross-platform GUI toolkit (Phase 2) |
 | PocketBase                | https://pocketbase.io                 | Admin hub backend                    |
 | Backblaze B2              | https://www.backblaze.com/b2/         | Offsite backup storage               |
@@ -782,8 +782,8 @@ Middlemen **only hand out physical activation codes**. They have no app access, 
 
 | Phase       | Timeline     | Deliverable                                                                                                                                                     |
 | ----------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase 1** | Days 1-4     | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Systray app with permanent hardware-fingerprint activation (one code = one device), suspension support, cert-pinned heartbeat with token rotation + telemetry + grace period, SHA256-verified platform-scoped updates, TUN mode with split tunnel + kill switch + DNS guard, 15s health check, process sandboxing + binary renaming, runtime download. Windows + macOS. |
-| **Phase 2** | Week 2-3     | GUI window (Fyne/Wails), add VLESS-REALITY + TUIC v5. Bandwidth throttling for Lite tier. Telemetry analytics dashboard.                                      |
+| **Phase 1** | —            | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Minimal Fyne GUI with permanent hardware-fingerprint activation (one code = one device), suspension support, cert-pinned heartbeat with token rotation + telemetry + grace period, SHA256-verified platform-scoped updates, TUN mode with kill switch (route deletion) + DNS guard + IPv6 blocking, bandwidth probing + client-side throttling, 15s health check, process sandboxing + binary renaming, runtime download. Windows + macOS. |
+| **Phase 2** | —            | Split tunnel, WFP/pf kill switch, add VLESS-REALITY + TUIC v5, systray minimize-to-tray, telemetry analytics dashboard.                                      |
 | **Phase 3** | Week 4+      | Gaming protocol optimization, fallback chain tuning, dual-admin-hub failover, key rotation mechanism.                                                          |
 
 Phase 1 is **genuinely shippable to real users** because:

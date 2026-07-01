@@ -2,7 +2,7 @@
 
 **Goal:** Cross-platform VPN app (Windows + macOS) with Hysteria 2 (gaming primary) and usque/Warp (fallback — unbottlenecked for Gaming plans). Activation codes are permanently bound to a single hardware-fingerprinted device with server-side suspension capability. Features: TUN mode via privileged helper service, auto-reconnect loop, certificate pinning, heartbeat grace period, process sandboxing, and tunnel health checks.
 
-**Stack:** Go + systray + Hysteria 2 + usque + PocketBase + Caddy  
+**Stack:** Go + Fyne (minimal GUI) + Hysteria 2 + usque + PocketBase + Caddy  
 **Prerequisite:** VPS (Ubuntu 22.04, 2GB RAM), domain pointing to it
 
 > 📘 **Business context:** `BUSINESS-OVERVIEW.md`  
@@ -14,7 +14,7 @@
 - ✅ **No update signing** — updates are SHA256-verified direct downloads from the admin hub. No Ed25519 key management, no offline signing ceremony, no key rotation headaches.
 - ✅ **Privileged helper service** (Windows: SYSTEM service via named pipe, macOS: launchd daemon) — TUN creation requires admin on install only, not on every launch
 - ✅ **Auto-reconnect loop** — 3 health fails → try fallback → all dead → wait 30s → retry primary ×5 → give up with "tap to retry"
-- ✅ **Full tunnel for MVP** — all traffic through VPN except RFC 1918 local. Kill switch: delete default TUN route. Split tunnel is Phase 2.
+- ✅ **Full tunnel for MVP** — all IPv4 traffic through VPN except RFC 1918 local. IPv6 blocked entirely (no leak risk). Kill switch: delete default TUN route. Split tunnel is Phase 2.
 - ✅ **Grace period overrides token expiry** — during heartbeat failure, last valid token continues working until 7-day grace expires
 - ✅ **Primary engine (Hysteria 2) bundled in installer** — bootstrap chicken-and-egg solved. Runtime download only for updates.
 - ✅ **Explicit 6-state connection machine** — IDLE → ACTIVE → CONNECTING → CONNECTED_PRIMARY → CONNECTED_FALLBACK → DEGRADED → DISCONNECTED, with GRACE orthogonal
@@ -22,9 +22,11 @@
 - ✅ **Log rotation** — auto-rotate at 10MB, keep last 3 files
 - ✅ **Activation code format** — `MYVPN-XXXX-XXXX-XXXX-C` with Luhn-mod-N checksum
 - ✅ **Suspension, not deactivation** — admin can suspend a device from connecting. Binding is never destroyed; code can never be reused on a different device.
+- ✅ **Minimal proper GUI** (not systray) — small window with connection status, tier name, speed indicator, time connected. No technical protocol names exposed. Intransparency by design.
+- ✅ **Client-side bandwidth throttling** — usque: hardcoded per-tier caps; Hysteria 2: dynamic bandwidth probing to infer max usable throughput on congested school WiFi
+- ✅ **MVP protocol scope: Hysteria 2 + usque only** — no VLESS-REALITY, TUIC v5, or Xray in initial release. Added in Phase 2 per market demand.
+- ✅ **IPv6: blocked entirely on TUN interface** — prevents IPv6 leaks. Documented as known limitation.
 - ❌ Middlemen have no app or panel access — they hand out paper codes, that's all
-
-**Estimated total time: 4-5 days** (the helper service and auto-reconnect loop add ~1 day, but they're the difference between "works in a demo" and "actually works for real users").
 
 ---
 
@@ -36,10 +38,13 @@
 - [Phase 1.4: Protocol Engine Manager + Sandboxing + Binary Rename](#phase-14-protocol-engine-manager--sandboxing--binary-rename)
 - [Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry](#phase-15-heartbeat-with-cert-pinning--grace--telemetry)
 - [Phase 1.6: Auto-Updater with SHA256 Verification](#phase-16-auto-updater-with-sha256-verification)
-- [Phase 1.7: TUN Mode + Split Tunnel + Kill Switch + DNS Guard + Health Check](#phase-17-tun-mode--split-tunnel--kill-switch--dns-guard--health-check)
-- [Phase 1.8: Runtime Engine Download](#phase-18-runtime-engine-download)
-- [Phase 1.9: Build System + Main Entrypoint](#phase-19-build-system--main-entrypoint)
-- [Phase 1.10: Deploy & Verify Checklist](#phase-110-deploy--verify-checklist)
+- [Phase 1.7: TUN Mode + Kill Switch + DNS Guard + IPv6 Blocking + Health Check](#phase-17-tun-mode--kill-switch--dns-guard--ipv6-blocking--health-check)
+- [Phase 1.8: Bandwidth Probing + Client-Side Throttling](#phase-18-bandwidth-probing--client-side-throttling)
+- [Phase 1.9: Runtime Engine Download](#phase-19-runtime-engine-download)
+- [Phase 1.10: Minimal GUI (Fyne)](#phase-110-minimal-gui-fyne)
+- [Phase 1.11: Build System + Main Entrypoint](#phase-111-build-system--main-entrypoint)
+- [Phase 1.12: Testing & QA](#phase-112-testing--qa)
+- [Phase 1.13: Deploy & Verify Checklist](#phase-113-deploy--verify-checklist)
 
 ---
 
@@ -1550,7 +1555,7 @@ func doHeartbeat() {
             SetLastError(result.Message)
         }
         // Don't clear activation — the binding is preserved.
-        // The systray shows the suspension message. Heartbeat continues
+        // The GUI shows the suspension message. Heartbeat continues
         // checking — when status returns to "active", auto-reconnect.
         return
     }
@@ -1834,19 +1839,133 @@ func applySwap(newBinaryPath, version string) error {
 
 ---
 
-## Phase 1.7: TUN Mode + Split Tunnel + Kill Switch + DNS Guard + Health Check
+## Phase 1.7: TUN Mode + Kill Switch + DNS Guard + IPv6 Blocking + Health Check
 
-### 1. `internal/tunnel/tun.go` — Interface
+> **Scope clarified:** MVP = Hysteria 2 (primary) + usque (fallback). Full tunnel (all traffic through VPN except RFC 1918 local). IPv6 blocked entirely. Kill switch via route deletion (simple but effective for casual leaks). Split tunnel is Phase 2.
+
+### 1. TUN Interface Lifecycle
+
+The TUN interface goes through a strict lifecycle managed by the privileged helper service:
+
+```
+                    ┌──────────────────────┐
+                    │     NOT_CREATED      │
+                    └─────────┬────────────┘
+                              │ CreateTUN(engineConfig)
+                              ▼
+                    ┌──────────────────────┐
+                    │     CREATING         │
+                    │  (wintun/tun clone)  │
+                    └─────────┬────────────┘
+                              │ TUN fd ready + routes added
+                              ▼
+                    ┌──────────────────────┐
+                    │     ACTIVE           │◄──── Health check passes
+                    │  routes + DNS set    │────► Health check fails ×3
+                    └─────────┬────────────┘
+                              │ DestroyTUN()
+                              ▼
+                    ┌──────────────────────┐
+                    │     DESTROYED        │
+                    │  routes removed      │
+                    │  DNS restored        │
+                    └──────────────────────┘
+```
+
+**States:**
+| State | Meaning | User sees |
+|-------|---------|-----------|
+| `NOT_CREATED` | No TUN interface exists. Normal pre-connect state. | "Disconnected" |
+| `CREATING` | wintun adapter or macOS utun interface being created. Transient. | "Connecting..." |
+| `ACTIVE` | TUN is up, routes are in place, DNS is set, traffic is flowing. | "Connected — Gaming Mode" |
+| `DESTROYED` | TUN torn down, routes removed, original DNS restored. | "Disconnected" |
+
+### 2. Route Table Management
+
+When the TUN goes ACTIVE, the helper service modifies the system route table. When it goes DESTROYED, it restores the original state.
+
+**Routes added on connect:**
+
+| Destination | Action | Purpose |
+|---|---|---|
+| `0.0.0.0/1` and `128.0.0.0/1` | Route via TUN gateway | Split the IPv4 default into two /1 routes (more specific than 0.0.0.0/0, so they take priority over existing default route). Keeps the original default route intact for restoration. |
+| Engine server IP (`<VPS_PUBLIC_IP>/32`) | Route via original gateway | **Bypass route:** engine traffic must go direct to the VPS, not into its own tunnel (would create a routing loop). |
+| RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) | Route via original gateway | Local network bypass — printing, file shares, LAN games still work. |
+
+**Routes removed on disconnect:**
+- All routes added above are deleted
+- Original DNS servers are restored via `networksetup -setdnsservers` (macOS) or `netsh interface ip set dns` (Windows)
+
+**Race condition note:** There is a brief window (~100ms) between TUN creation and route application where traffic could leak. This is acceptable for MVP — the WFP/pf-based kill switch (Phase 2) eliminates this window entirely.
+
+### 3. Kill Switch Implementation
+
+**Approach: Route deletion on health failure (simple, MVP).**
+
+When the health checker detects the tunnel is dead (3 consecutive probe failures), it:
+1. Sends `DestroyTUN()` to the helper service
+2. The helper removes the two /1 routes, restoring the original default route
+3. User traffic resumes over the normal (blocked) school WiFi — effectively "dead" but no traffic goes through a broken tunnel
+
+**Platform commands issued by helper:**
+
+```
+Windows (as SYSTEM):
+  netsh interface ip delete route 0.0.0.0/1 <TUN_IF_INDEX>
+  netsh interface ip delete route 128.0.0.0/1 <TUN_IF_INDEX>
+
+macOS (as root via launchd):
+  /sbin/route delete 0.0.0.0/1 -interface utunX
+  /sbin/route delete 128.0.0.0/1 -interface utunX
+```
+
+**Limitations (documented):**
+- Not bulletproof — a crashing engine process with a stuck TUN could leave routes in place
+- No outbound firewall block; apps could briefly leak between health checks (15s interval)
+- Phase 2 upgrade path: WFP callout driver (Windows) / pf anchor (macOS) for true leak blocking
+
+### 4. DNS Guard — Leak Prevention
+
+Without DNS guard, DNS queries could go to the school's DNS servers (bypassing the VPN tunnel), revealing browsing destinations. The fix: force all DNS through the tunnel.
+
+**Implementation:**
+1. On connect: set system DNS to the VPN's internal DNS resolver (runs on the TUN gateway, e.g., `10.0.0.1`)
+2. On disconnect: restore original DNS servers (saved before connect)
+3. The engine's embedded DNS resolver forwards queries through the tunnel to Cloudflare (`1.1.1.1`) or Quad9 (`9.9.9.9`)
+
+**Platform commands:**
+```
+Windows:
+  netsh interface ip set dns name="<TUN_IF_NAME>" static 10.0.0.1
+  netsh interface ip add dns name="<TUN_IF_NAME>" 1.0.0.1 index=2
+
+macOS:
+  networksetup -setdnsservers "<TUN_IF_NAME>" 10.0.0.1 1.0.0.1
+```
+
+**Backup DNS guard (belt-and-suspenders):** If the system DNS set fails, the engine's TUN packet filter drops all outbound UDP:53 and TCP:53 not destined for the VPN DNS resolver. This is a secondary defense — it means "DNS breaks" rather than "DNS leaks."
+
+### 5. IPv6 Blocking
+
+IPv6 is blocked entirely on the TUN interface to prevent IPv6 leaks. The school WiFi may have IPv6 connectivity while the VPN tunnel is IPv4-only. Without this, apps could make IPv6 connections that bypass the tunnel entirely.
+
+**Implementation:**
+1. On Windows: disable IPv6 on the TUN adapter via `netsh interface ipv6 set interface <IF_INDEX> disabled`
+2. On macOS: remove any IPv6 address from the TUN interface; do not add an IPv6 default route
+3. The helper service checks that `ipv6.google.com` is unreachable after TUN setup (smoke test, logged at debug level)
+4. Document as known limitation: IPv6-capable services will fall back to IPv4 through the tunnel (happy eyeballs). Most school WiFi blocks IPv6 anyway.
+
+### 6. `internal/tunnel/tun.go` — Interface
 
 ## Privileged Helper Service (TUN Elevation Strategy)
 
-TUN device creation requires admin/root privileges. The systray app runs as the user. The solution is a **privileged helper service** installed once (requires admin on install) that creates and manages the TUN interface. After install, users never see a UAC/sudo prompt.
+TUN device creation requires admin/root privileges. The client app runs as the user. The solution is a **privileged helper service** installed once (requires admin on install) that creates and manages the TUN interface. After install, users never see a UAC/sudo prompt.
 
 ### Windows: SYSTEM Service via Named Pipe
 
 ```
 ┌─────────────────┐     named pipe      ┌──────────────────────┐
-│  Systray App     │ ──────────────────► │  MyVPN Helper Service │
+│  Client App      │ ──────────────────► │  MyVPN Helper Service │
 │  (user account)  │  \\.\pipe\MyVPN     │  (LOCAL SYSTEM)      │
 │                   │                     │                       │
 │  Commands:        │                     │  Creates wintun TUN   │
@@ -1865,7 +1984,7 @@ sc create MyVPNHelper binPath= "C:\Program Files\MyVPN\myvpn-helper.exe"
 sc start MyVPNHelper
 ```
 
-The service listens on a named pipe `\\.\pipe\MyVPN` for JSON commands from the systray app. **Protocol: newline-delimited JSON.** The client writes a single JSON object followed by `\n`. The helper reads lines via `bufio.Scanner` and parses each line as a JSON command. This prevents partial-read bugs. Each command includes:
+The service listens on a named pipe `\\.\pipe\MyVPN` for JSON commands from the client app. **Protocol: newline-delimited JSON.** The client writes a single JSON object followed by `\n`. The helper reads lines via `bufio.Scanner` and parses each line as a JSON command. This prevents partial-read bugs. Each command includes:
 ```json
 { "action": "create_tun", "tun_ip": "10.0.0.2", "tun_gateway": "10.0.0.1" }
 { "action": "add_route", "dest": "0.0.0.0/0", "gateway": "10.0.0.1" }
@@ -1942,7 +2061,7 @@ On service install, generate a random 32-byte secret and write it to a file read
 - Windows: `%PROGRAMDATA%\MyVPN\helper.secret` (ACL: user + SYSTEM only)
 - macOS: `/var/run/myvpn-helper.secret` (owned by root:wheel, mode 0640)
 
-The systray app reads the secret from this file and includes it in every command:
+The client app reads the secret from this file and includes it in every command:
 ```json
 { "action": "create_tun", "tun_ip": "...", "auth": "<hex-secret>" }
 ```
@@ -2362,7 +2481,188 @@ func probe(tunGateway string) error {
 
 ---
 
-## Phase 1.8: Runtime Engine Download
+## Phase 1.8: Bandwidth Probing + Client-Side Throttling
+
+> **Why:** School WiFi is congested. Hysteria 2's "Brutal" congestion control aggressively grabs bandwidth, which can saturate the network and get the VPN blocked. We need to infer the maximum usable bandwidth and cap the engine accordingly. usque has hardcoded per-tier caps (cheap tier = throttled, gaming tier = uncapped).
+
+### 1. The Problem
+
+On a congested school WiFi network (50-500 students sharing limited AP bandwidth), an uncapped Hysteria 2 connection using Brutal CC would:
+- Saturate the AP's airtime, degrading WiFi for everyone
+- Likely trigger the school IT's bandwidth anomaly alerts
+- Get the VPN server IP blocked faster
+
+**Solution:** Client-side bandwidth probing that runs before the engine starts, measures real available throughput, and caps the engine at a "polite" fraction of that.
+
+### 2. Bandwidth Probing Algorithm
+
+```
+┌──────────────────────────────────────────────────┐
+│  1. Quick test: download 1MB from VPS /speedtest │
+│     endpoint (pre-generated random data).         │
+│     Time it. If <2s, network is fast → skip cap.  │
+│                                                   │
+│  2. If >2s (congested): run a 3-stage ramp test   │
+│     Stage 1: 500KB @ 500KB/s cap — measure loss   │
+│     Stage 2: 500KB @ 1MB/s cap — measure loss     │
+│     Stage 3: 500KB @ 2MB/s cap — measure loss     │
+│                                                   │
+│  3. Pick the highest cap with <1% packet loss.    │
+│     Cap is stored and reused for 30 minutes.       │
+│     After 30 min, re-probe (network may change).   │
+│                                                   │
+│  4. Floor: 500KB/s (even if network is terrible).  │
+│     Ceiling: 15MB/s (don't bother probing above).  │
+└──────────────────────────────────────────────────┘
+```
+
+### 3. `internal/throttle/probe.go`
+
+```go
+package throttle
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "net/http"
+    "sync"
+    "time"
+)
+
+// ProbeResult holds the inferred bandwidth cap for Hysteria 2.
+type ProbeResult struct {
+    MaxThroughputKBps int       // inferred cap in KB/s; 0 = uncapped
+    PacketLoss        float64   // at that cap
+    ProbedAt          time.Time
+    NetworkCondition  string    // "fast", "congested", "degraded"
+}
+
+const (
+    probeFloorKBps     = 500    // never cap below 500 KB/s
+    probeCeilingKBps   = 15000  // never probe above 15 MB/s
+    probeCacheTTL      = 30 * time.Minute
+    quickTestThreshold = 2 * time.Second
+    quickTestSize      = 1 * 1024 * 1024 // 1MB
+    stageSize          = 500 * 1024      // 500KB per stage
+)
+
+var (
+    cachedResult *ProbeResult
+    cacheMu      sync.Mutex
+)
+
+// Probe runs a bandwidth test against the VPS and returns
+// the recommended throttle cap for Hysteria 2.
+// Results are cached for 30 minutes.
+func Probe(apiBase, tier string) (*ProbeResult, error) {
+    cacheMu.Lock()
+    if cachedResult != nil && time.Since(cachedResult.ProbedAt) < probeCacheTTL {
+        defer cacheMu.Unlock()
+        return cachedResult, nil
+    }
+    cacheMu.Unlock()
+
+    // Quick test first
+    start := time.Now()
+    if err := downloadChunk(apiBase+"/speedtest/1mb.bin", quickTestSize, 0); err != nil {
+        return nil, fmt.Errorf("probe failed: %w", err)
+    }
+    elapsed := time.Since(start)
+
+    var result ProbeResult
+    result.ProbedAt = time.Now()
+
+    if elapsed < quickTestThreshold {
+        // Network is fast — no cap needed
+        result.MaxThroughputKBps = 0 // 0 = uncapped
+        result.NetworkCondition = "fast"
+        result.PacketLoss = 0
+    } else {
+        // Congested — run staged ramp test
+        caps := []int{500, 1000, 2000, 5000, 10000}
+        bestCap := probeFloorKBps
+
+        for _, capKBps := range caps {
+            loss, err := measureLoss(apiBase+"/speedtest/500kb.bin", stageSize, capKBps)
+            if err != nil {
+                continue
+            }
+            if loss < 0.01 { // <1% packet loss
+                bestCap = capKBps
+            } else {
+                break // loss increasing, stop probing higher
+            }
+        }
+
+        result.MaxThroughputKBps = bestCap
+        if bestCap <= 1000 {
+            result.NetworkCondition = "degraded"
+        } else {
+            result.NetworkCondition = "congested"
+        }
+    }
+
+    cacheMu.Lock()
+    cachedResult = &result
+    cacheMu.Unlock()
+
+    return &result, nil
+}
+
+// downloadChunk downloads size bytes with an optional rate limit (0 = no limit).
+func downloadChunk(url string, size int, rateLimitKBps int) error {
+    // HTTP GET with optional token-bucket rate limiter
+    // Returns error if download fails or is too slow
+    return nil
+}
+
+// measureLoss downloads a chunk with rate limiting and measures
+// application-level loss (bytes requested vs bytes received).
+func measureLoss(url string, size int, rateLimitKBps int) (float64, error) {
+    // download with token-bucket limiter, return loss ratio
+    return 0, nil
+}
+```
+
+### 4. Hardcoded usque Throttles (Per Tier)
+
+Unlike Hysteria 2 (dynamically probed), usque has **hardcoded bandwidth caps** that match the plan tier. These are compiled into the binary and cannot be changed without a client update:
+
+| Tier | usque Cap | Rationale |
+|------|----------|-----------|
+| Warp Lite | 1 MB/s (8 Mbps) | Good enough for web browsing. Costs $0 (Cloudflare free tier) — pure margin. |
+| Gaming Mid | 5 MB/s (40 Mbps) | Sufficient for casual gaming + streaming. |
+| Gaming Max | Uncapped | Full speed. User paid for premium. |
+
+**Implementation:** The engine manager passes a `--bandwidth-limit <KBps>` flag to the usque binary on launch. The usque SOCKS5 connection is throttled at that rate. The value is hardcoded in `internal/throttle/usque.go` as a `map[string]int` keyed by plan tier.
+
+### 5. VPS Speedtest Endpoint
+
+The admin hub (Caddy/PocketBase) needs two static files served at:
+- `GET /speedtest/1mb.bin` — 1MB of random data (quick test)
+- `GET /speedtest/500kb.bin` — 500KB of random data (stage test)
+
+Generate once on VPS setup:
+```bash
+dd if=/dev/urandom of=/opt/speedtest/1mb.bin bs=1M count=1
+dd if=/dev/urandom of=/opt/speedtest/500kb.bin bs=500K count=1
+```
+
+Caddy serves them with `Cache-Control: no-store` (don't let intermediate caches skew results).
+
+### 6. UI Integration
+
+After probing, the GUI shows a traffic-light indicator:
+- **Green "Fast"** — Hysteria 2 uncapped
+- **Yellow "Congested"** — Hysteria 2 capped at X MB/s
+- **Orange "Slow"** — consider switching to usque fallback
+
+The user never sees raw probe numbers — just a color + label.
+
+---
+
+## Phase 1.9: Runtime Engine Download
 
 ### Bootstrap Engine Bundling (Solves Chicken-and-Egg)
 
@@ -2498,7 +2798,276 @@ func verifyHash(path, expected string) bool {
 
 ---
 
-## Phase 1.9: Build System + Main Entrypoint
+## Phase 1.10: Minimal GUI (Fyne)
+
+> **Requirement:** The user rejected systray-only — they want a proper GUI window, but minimalistic. The business relies on intransparency: no real protocol names, no technical details exposed. Users see only: connection status, tier name, speed indicator, time connected.
+
+### 1. Framework Choice: Fyne
+
+**Why Fyne over alternatives:**
+
+| Framework | Pros | Cons | Verdict |
+|-----------|------|------|---------|
+| **Fyne** | Cross-platform (Win/Mac/Linux), native look, built-in systray (Phase 2), MIT license | Requires CGO for graphics (~5MB binary overhead) | ✅ Best fit |
+| Wails | Web-based (HTML/CSS/JS), flexible UI | Requires WebView2 (Windows) / WKWebView (macOS), heavier dependency chain, CGO required | ❌ Too heavy |
+| walk | Windows-only | No macOS support | ❌ Non-starter |
+
+**Fyne import:** `fyne.io/fyne/v2`
+
+### 2. Window Design
+
+```
+┌─────────────────────────────────┐
+│  MyVPN                          │
+│                                 │
+│         ● Connected             │
+│         Gaming Mode             │
+│         00:14:32                │
+│                                 │
+│  Network: 🟢 Fast               │
+│  Speed:   ↗12.4 MB/s           │
+│                                 │
+│  ┌───────────────────────────┐  │
+│  │       Disconnect          │  │
+│  └───────────────────────────┘  │
+│                                 │
+│  ▸ Settings                     │
+│     ☐ Send anonymous usage data │
+│     Activation: MYVPN-XXXX-XXXX │
+│     Plan: Gaming Max            │
+│     Device: Bound ✓             │
+│                                 │
+│  ─────────────────────────────  │
+│  v1.0.0  |  Build abc1234      │
+└─────────────────────────────────┘
+```
+
+**Design rules:**
+- Window is **300×400 pixels**, non-resizable (MVP)
+- **No protocol names** — uses tier labels: "Warp Lite", "Stealth Browse", "Gaming Mid", "Gaming Max"
+- **No IP addresses, server locations, or protocol details** visible anywhere
+- **Connection status** uses a colored dot: green = connected, yellow = degraded/fallback, red = disconnected
+- **Speed indicator** shows current throughput (sampled every 2s, smoothed over 10s)
+- **"Settings"** expandable section hides activation code and device binding info
+- **No minimize-to-tray** for MVP (window stays open); Phase 2 adds systray minimize
+
+### 3. `internal/gui/app.go` — GUI Controller
+
+```go
+package gui
+
+import (
+    "fyne.io/fyne/v2"
+    "fyne.io/fyne/v2/app"
+    "fyne.io/fyne/v2/container"
+    "fyne.io/fyne/v2/widget"
+    "myvpn/internal/activation"
+    "myvpn/internal/health"
+    "myvpn/internal/manager"
+    "myvpn/internal/storage"
+    "myvpn/internal/throttle"
+    "time"
+)
+
+type GUIState struct {
+    Window          fyne.Window
+    StatusLabel     *widget.Label
+    StatusDot       *widget.CanvasObject // colored circle
+    TierLabel       *widget.Label
+    TimeLabel       *widget.Label
+    NetworkLabel    *widget.Label
+    SpeedLabel      *widget.Label
+    ConnectBtn      *widget.Button
+    SettingsAccordion *widget.Accordion
+}
+
+var state GUIState
+
+// Launch creates the Fyne window and starts the UI loop.
+// Called from main() — blocks until window closes.
+func Launch(activationCode, planTier string) {
+    a := app.New()
+    state.Window = a.NewWindow("MyVPN")
+
+    // Status section
+    state.StatusDot = newStatusDot("red") // starts disconnected
+    state.StatusLabel = widget.NewLabel("Disconnected")
+    state.TierLabel = widget.NewLabel(planDisplayName(planTier))
+    state.TimeLabel = widget.NewLabel("--:--:--")
+
+    // Network indicators
+    state.NetworkLabel = widget.NewLabel("Network: --")
+    state.SpeedLabel = widget.NewLabel("Speed: --")
+
+    // Connect/Disconnect button
+    state.ConnectBtn = widget.NewButton("Connect", onConnect)
+    state.ConnectBtn.Importance = widget.HighImportance
+
+    // Settings accordion (collapsed by default)
+    privacyCheck := widget.NewCheck("Send anonymous usage data", onPrivacyToggle)
+    privacyCheck.SetChecked(storage.GetPrivacyOptIn())
+
+    actLabel := widget.NewLabel("Activation: " + maskCode(activationCode))
+    planLabel := widget.NewLabel("Plan: " + planDisplayName(planTier))
+    deviceLabel := widget.NewLabel("Device: Bound ✓")
+
+    settingsContent := container.NewVBox(
+        privacyCheck,
+        actLabel,
+        planLabel,
+        deviceLabel,
+    )
+
+    settingsAccordion := widget.NewAccordion(
+        widget.NewAccordionItem("Settings", settingsContent),
+    )
+    settingsAccordion.MultiOpen = false
+
+    // Layout
+    content := container.NewVBox(
+        state.StatusDot,
+        state.StatusLabel,
+        state.TierLabel,
+        state.TimeLabel,
+        widget.NewSeparator(),
+        state.NetworkLabel,
+        state.SpeedLabel,
+        widget.NewSeparator(),
+        state.ConnectBtn,
+        settingsAccordion,
+    )
+
+    state.Window.SetContent(content)
+    state.Window.Resize(fyne.NewSize(300, 400))
+    state.Window.SetFixedSize(true)
+
+    // Start health/status update loop
+    go statusLoop()
+
+    state.Window.ShowAndRun()
+}
+
+// statusLoop polls connection state and updates the GUI every second.
+func statusLoop() {
+    ticker := time.NewTicker(1 * time.Second)
+    for range ticker.C {
+        updateStatus()
+    }
+}
+
+func updateStatus() {
+    connState := manager.CurrentState()
+    switch connState {
+    case "IDLE", "DISCONNECTED":
+        setStatusDot("red")
+        state.StatusLabel.SetText("Disconnected")
+        state.ConnectBtn.SetText("Connect")
+        state.ConnectBtn.Enable()
+    case "CONNECTING":
+        setStatusDot("yellow")
+        state.StatusLabel.SetText("Connecting...")
+        state.ConnectBtn.SetText("Cancel")
+    case "CONNECTED_PRIMARY":
+        setStatusDot("green")
+        proto := manager.RunningProtocol()
+        state.StatusLabel.SetText("Connected")
+        state.TierLabel.SetText(planDisplayName(storage.LoadPlanTier()))
+        state.ConnectBtn.SetText("Disconnect")
+        // Update speed
+        state.SpeedLabel.SetText(manager.CurrentSpeed())
+    case "CONNECTED_FALLBACK":
+        setStatusDot("yellow")
+        state.StatusLabel.SetText("Connected (Fallback)")
+        state.TierLabel.SetText(planDisplayName(storage.LoadPlanTier()))
+        state.ConnectBtn.SetText("Disconnect")
+    case "DEGRADED":
+        setStatusDot("orange")
+        state.StatusLabel.SetText("Reconnecting...")
+        state.ConnectBtn.SetText("Cancel")
+    }
+
+    // Update network condition from throttle probe
+    if result := throttle.CachedResult(); result != nil {
+        state.NetworkLabel.SetText("Network: " + result.NetworkCondition)
+    }
+
+    // Update connection time
+    if manager.IsConnected() {
+        state.TimeLabel.SetText(manager.ConnectionDuration().Truncate(time.Second).String())
+    } else {
+        state.TimeLabel.SetText("--:--:--")
+    }
+}
+
+func onConnect() {
+    if manager.IsConnected() {
+        manager.Disconnect()
+        return
+    }
+    // Run bandwidth probe before connecting
+    go func() {
+        result, err := throttle.Probe(storage.LoadAPIBase(), storage.LoadPlanTier())
+        if err != nil {
+            state.NetworkLabel.SetText("Network: Probe failed")
+        } else {
+            state.NetworkLabel.SetText("Network: " + result.NetworkCondition)
+        }
+        manager.Connect()
+    }()
+}
+
+func onPrivacyToggle(checked bool) {
+    storage.SetPrivacyOptIn(checked)
+}
+
+func planDisplayName(tier string) string {
+    names := map[string]string{
+        "warp_lite":     "Warp Lite",
+        "stealth_browse": "Stealth Browse",
+        "gaming_mid":    "Gaming Mid",
+        "gaming_max":    "Gaming Max",
+    }
+    if n, ok := names[tier]; ok {
+        return n
+    }
+    return tier
+}
+
+func maskCode(code string) string {
+    if len(code) <= 8 {
+        return code
+    }
+    return code[:9] + "-XXXX"
+}
+```
+
+### 4. Fyne Dependencies
+
+Add to `go.mod`:
+```
+require (
+    fyne.io/fyne/v2 v2.5.1
+)
+```
+
+**Build note:** Fyne requires a C compiler for some backends on Linux. For Windows cross-compilation, use `CGO_ENABLED=1` with MinGW. For macOS, use Xcode command-line tools. Pre-built Fyne binaries are statically linked and ~5MB overhead.
+
+### 5. What the GUI Never Shows
+
+Per BUSINESS-OVERVIEW.md requirements, the GUI must **never** expose:
+- Real protocol names ("Hysteria 2", "usque", "TUIC v5", "VLESS-REALITY")
+- Server IP addresses or hostnames
+- Port numbers
+- Engine binary names ("speedmode.exe", "litemode.exe")
+- Packet loss percentages or raw probe data
+- Build signature details
+- Any debug/developer information
+
+The "Settings" accordion can show activation code (masked) and plan tier name — nothing more.
+
+---
+
+## Phase 1.11: Build System + Main Entrypoint
 
 ### 1. `Makefile`
 
@@ -2514,109 +3083,74 @@ all: build
 build:
 	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME) .
 
-# Build for Windows amd64
+# Build for Windows amd64 (Fyne requires CGO + MinGW for cross-compilation)
+# Prerequisite: sudo apt install gcc-mingw-w64-x86-64
 build-windows:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME).exe .
+	CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
+	    go build -trimpath -ldflags="-s -w -X main.version=$(VERSION) -H windowsgui" -o $(APP_NAME).exe .
 
-# Build for macOS (Intel + Apple Silicon)
+# Build for macOS Intel (requires osxcross or native macOS)
 build-macos-intel:
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_amd64 .
+	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 \
+	    go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_amd64 .
 
+# Build for macOS Apple Silicon (requires osxcross or native macOS)
 build-macos-arm:
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath \
-	    -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_arm64 .
+	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+	    go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME)_darwin_arm64 .
 
-# Build all platforms
+# Build on native platform (Linux dev machine → Linux binary for testing)
+build-native:
+	CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o $(APP_NAME) .
+
+# Build all platforms (requires cross-compilation toolchains)
 build-all: build-windows build-macos-intel build-macos-arm
+
+# Cross-compilation notes:
+# - Fyne requires CGO for graphics backends; CGO_ENABLED=0 builds will fail
+# - Windows: install mingw-w64 (sudo apt install gcc-mingw-w64-x86-64 on Ubuntu)
+# - macOS: requires osxcross or native macOS build machine (Apple SDK licensing)
+# - CI/CD recommendation: GitHub Actions with macos-latest + windows-latest runners
+#   avoids cross-compilation toolchain pain; build natively on each OS runner
 
 clean:
 	rm -f $(APP_NAME) $(APP_NAME).exe $(APP_NAME)_darwin_*
 
-# Run unit tests for core logic packages
+# Run unit tests for all core logic packages
+# See Phase 1.12 for the full testing strategy
 test:
-	go test -v -race ./internal/activation/...
-	go test -v -race ./internal/updater/...
-	go test -v -race ./internal/branding/...
-	go test -v -race ./internal/storage/...
-	go test -v -race ./internal/health/...
-
-# Run all tests (note: tunnel and manager tests require root/admin)
-test-all: test
-	go test -v -race ./internal/tunnel/... 2>/dev/null || echo "tunnel tests skipped (need root)"
-	go test -v -race ./internal/manager/... 2>/dev/null || echo "manager tests skipped (need root)"
-
-run: build
-	./$(APP_NAME)
+	go test -v -race ./internal/...
 ```
 
-### 2. `main.go` — Entrypoint with full lifecycle
+### 2. `main.go` — Entrypoint with Fyne GUI
+
+> **Note:** The UI is now handled by `internal/gui/app.go` (see Phase 1.10). `main.go` is a thin launcher that initializes storage, checks activation, starts the heartbeat, and hands control to the GUI.
 
 ```go
 package main
 
 import (
     "flag"
-    "myvpn/internal/activation"
-    "myvpn/internal/branding"
-    "myvpn/internal/enginedl"
-    "myvpn/internal/health"
-    "myvpn/internal/heartbeat"
-    "myvpn/internal/manager"
-    "myvpn/internal/storage"
-    "myvpn/internal/tunnel"
-    "fmt"
     "log"
     "os"
-    "sync"
-    "sync/atomic"
-    "time"
 
-    "github.com/getlantern/systray"
+    "myvpn/internal/activation"
+    "myvpn/internal/branding"
+    "myvpn/internal/gui"
+    "myvpn/internal/heartbeat"
+    "myvpn/internal/storage"
 )
 
-// Typed connection state machine — atomic to prevent data races.
-// See PLAN.md §5.2 for the full state transition diagram.
-type ConnState int32
-const (
-    StateIdle              ConnState = 0
-    StateActive            ConnState = 1
-    StateConnecting        ConnState = 2
-    StateConnectedPrimary  ConnState = 3
-    StateConnectedFallback ConnState = 4
-    StateDegraded          ConnState = 5
-    StateDisconnected      ConnState = 6
-)
-
-var (
-    version   string // set via ldflags
-    connState ConnState // atomic — use loadState/storeState accessors
-    mu        sync.Mutex // protects connect/disconnect transitions
-    apiBase   string
-    healthCh  <-chan string
-)
-
-func loadState() ConnState {
-    return ConnState(atomic.LoadInt32((*int32)(&connState)))
-}
-
-func storeState(s ConnState) {
-    atomic.StoreInt32((*int32)(&connState), int32(s))
-}
-
-func compareAndSwapState(old, new ConnState) bool {
-    return atomic.CompareAndSwapInt32((*int32)(&connState), int32(old), int32(new))
-}
+var version string // set via ldflags
 
 func main() {
-    flag.StringVar(&apiBase, "api", "https://api.yourdomain.com", "Admin hub URL")
+    apiBase := flag.String("api", "https://api.yourdomain.com", "Admin hub URL")
     flag.Parse()
 
     storage.Init()
     branding.Init()
 
-    // Check for crash from previous run
+    // Crash marker for telemetry
     if heartbeat.HadCrash() {
         heartbeat.SetLastError("previous_run_crashed")
     }
@@ -2624,222 +3158,22 @@ func main() {
     heartbeat.SetCrashMarker()
     defer heartbeat.ClearCrashMarker()
 
-    // Set up autostart BEFORE activation prompt
+    // Autostart (platform-specific: scheduled task / LaunchAgent)
     setupAutostart()
 
-    // Check activation
+    // Activation check — blocks until activated
     if !storage.IsActivated() {
-        activation.ShowPrompt(apiBase)
-    }
-
-    systray.Run(onReady, onExit)
-}
-
-func onReady() {
-    systray.SetTitle("MyVPN")
-    systray.SetTooltip("MyVPN — Disconnected")
-
-    planDisplayName := branding.PlanDisplayName(storage.LoadPlanTier())
-
-    mConnect := systray.AddMenuItem("Connect", "Connect VPN")
-    mDisconnect := systray.AddMenuItem("Disconnect", "Disconnect VPN")
-    mStatus := systray.AddMenuItem("Status: Disconnected", "")
-    mStatus.Disable()
-    mPlan := systray.AddMenuItem("Plan: "+planDisplayName, "")
-    mPlan.Disable()
-
-    // Grace period indicator (hidden by default)
-    mGrace := systray.AddMenuItem("", "")
-    mGrace.Disable()
-    mGrace.Hide()
-
-    systray.AddSeparator()
-
-    // Privacy toggle
-    mPrivacy := systray.AddMenuItem("Send anonymous usage data", "")
-    if storage.TelemetryOptOut() {
-        mPrivacy.Uncheck()
-    } else {
-        mPrivacy.Check()
-    }
-
-    systray.AddSeparator()
-    mQuit := systray.AddMenuItem("Quit", "Exit MyVPN")
-
-    // Start heartbeat background loop
-    go heartbeat.Start(apiBase)
-
-    // Update grace period display — check every 60s when in grace, hourly otherwise
-    go func() {
-        for {
-            days := heartbeat.GraceRemaining()
-            if days > 0 && days < 7 {
-                mGrace.SetTitle(fmt.Sprintf("%d days until re-authentication required", days))
-                mGrace.Show()
-                time.Sleep(60 * time.Second) // frequent check when in grace
-            } else {
-                mGrace.Hide()
-                time.Sleep(1 * time.Hour)
-            }
-        }
-    }()
-
-    // UI event loop
-    go func() {
-        for {
-            select {
-
-            // ── Connect ──
-            case <-mConnect.ClickedCh:
-                if compareAndSwapState(StateActive, StateConnecting) {
-                    mStatus.SetTitle("Status: Connecting...")
-                    systray.SetTooltip("MyVPN — Connecting")
-                    go connect()
-                }
-
-            // ── Disconnect ──
-            case <-mDisconnect.ClickedCh:
-                s := loadState()
-                if s == StateConnectedPrimary || s == StateConnectedFallback || s == StateDegraded {
-                    // Signal the auto-reconnect loop to stop immediately
-                    select {
-                    case health.StopChan <- struct{}{}:
-                    default:
-                    }
-                    disconnect()
-                    mStatus.SetTitle("Status: Disconnected")
-                    systray.SetTooltip("MyVPN — Disconnected")
-                }
-
-            // ── Health State Changes ──
-            case state := <-healthCh:
-                switch state {
-                case "healthy":
-                    mStatus.SetTitle("Status: Connected")
-                    systray.SetTooltip("MyVPN — Connected ✓")
-                case "recovered":
-                    mStatus.SetTitle("Status: Connected (recovered)")
-                    systray.SetTooltip("MyVPN — Recovered ✓")
-                case "degraded":
-                    mStatus.SetTitle("Status: Degraded — switching engine...")
-                    systray.SetTooltip("MyVPN — Degraded")
-                    go tryFallback()
-                case "dead":
-                    storeState(StateDisconnected)
-                    // Auto-reconnect loop
-                    mStatus.SetTitle("Status: Reconnecting...")
-                    systray.SetTooltip("MyVPN — Reconnecting...")
-                    go func() {
-                        if health.AutoReconnect() {
-                            storeState(StateConnectedFallback)
-                            mStatus.SetTitle("Status: Connected (auto-recovered)")
-                            systray.SetTooltip("MyVPN — Auto-recovered ✓")
-                        } else {
-                            disconnect()
-                            tunnel.Engage()
-                            storeState(StateDisconnected)
-                            mStatus.SetTitle("Status: Disconnected — tap Connect to retry")
-                            systray.SetTooltip("MyVPN — Connection Lost")
-                        }
-                    }()
-                }
-
-            // ── Privacy Toggle ──
-            case <-mPrivacy.ClickedCh:
-                optOut := !storage.TelemetryOptOut()
-                storage.SetTelemetryOptOut(optOut)
-                if optOut {
-                    mPrivacy.Uncheck()
-                } else {
-                    mPrivacy.Check()
-                }
-
-            // ── Quit ──
-            case <-mQuit.ClickedCh:
-                disconnect()
-                systray.Quit()
-                return
-            }
-        }
-    }()
-}
-
-func connect() {
-    // State guard: only connect if we're in ACTIVE state
-    if !compareAndSwapState(StateActive, StateConnecting) {
-        return
-    }
-
-    protocols := storage.LoadProtocols()
-    if len(protocols) == 0 {
-        storeState(StateActive)
-        return
-    }
-
-    // Try protocols in priority order
-    for _, proto := range protocols {
-        err := manager.StartEngine(proto, storage.LoadPlanTier())
-        if err != nil {
-            continue
-        }
-
-        // Engine started — set up TUN, routes, DNS, kill switch
-        if err := tunnel.Setup(); err != nil {
-            // Helper service not available — show clear error, roll back engine
-            manager.StopEngine()
-            storeState(StateActive)
-            systray.SetTooltip("MyVPN — Setup failed: " + err.Error())
-            log.Printf("[connect] tunnel setup failed: %v", err)
-            return
-        }
-        if err := tunnel.ProtectDNS(); err != nil {
-            log.Printf("[connect] DNS setup failed (non-fatal): %v", err)
-        }
-
-        // Start health check
-        healthCh = health.Start("10.0.0.1")
-
-        storeState(StateConnectedPrimary)
-        systray.SetTitle("MyVPN — " + proto.DisplayName)
-        systray.SetTooltip("Connected — " + proto.DisplayName)
-        return
-    }
-
-    // All engines failed
-    storeState(StateActive)
-    systray.SetTitle("MyVPN")
-    systray.SetTooltip("MyVPN — All engines failed. Check logs.")
-}
-
-func disconnect() {
-    // Signal auto-reconnect loop to stop
-    select {
-    case health.StopChan <- struct{}{}:
-    default:
-    }
-
-    manager.StopEngine()
-    tunnel.Disengage()
-    tunnel.RestoreDNS()
-    tunnel.Teardown()
-
-    storeState(StateActive)
-    systray.SetTitle("MyVPN")
-    systray.SetTooltip("MyVPN — Disconnected")
-}
-
-func tryFallback() {
-    protocols := storage.LoadProtocols()
-    for _, proto := range protocols {
-        if proto.ID != manager.RunningProtocolID() {
-            manager.StopEngine()
-            err := manager.StartEngine(proto, storage.LoadPlanTier())
-            if err == nil {
-                systray.SetTitle("MyVPN — " + proto.DisplayName + " (fallback)")
-                return
-            }
+        activation.ShowPrompt(*apiBase)
+        if !storage.IsActivated() {
+            log.Fatal("Activation required to continue")
         }
     }
+
+    // Start heartbeat in background
+    go heartbeat.Start(*apiBase)
+
+    // Launch the minimal GUI — blocks until window closed
+    gui.Launch(storage.LoadActivationCode(), storage.LoadPlanTier())
 }
 
 func setupAutostart() {
@@ -2848,13 +3182,68 @@ func setupAutostart() {
         return
     }
     // Platform-specific autostart (scheduled task on Windows, LaunchAgent on macOS)
-    // See persistence package in Phase 1.7 of the original plan
+    _ = exe
 }
 ```
 
 ---
 
-## Phase 1.10: Deploy & Verify Checklist
+## Phase 1.12: Testing & QA
+
+> **CRITIQUE.md flagged this as the weakest dimension (1/10).** This section establishes the minimum viable testing strategy.
+
+### 1. Unit Tests (Required — Run in CI)
+
+| Package | What to test | Mock strategy |
+|---------|-------------|---------------|
+| `internal/activation` | Luhn-mod-N checksum validation, code format parsing, fingerprint hashing, device binding request/response | Mock HTTP transport; test valid/invalid/edge-case codes |
+| `internal/storage` | Token persistence, protocol list CRUD, plan tier read/write, privacy opt-out toggle | In-memory temp dir; no real filesystem |
+| `internal/branding` | Protocol name → display name mapping, tier label lookup | Pure function tests |
+| `internal/updater` | SHA256 verification (valid hash, wrong hash, empty file), version comparison, platform matching | Mock HTTP downloads; use known test files |
+| `internal/heartbeat` | Token expiry logic, grace period calculation, telemetry field sanitization, cert pin hash comparison | Mock HTTP with custom TLS certs |
+| `internal/throttle` | Probe cache TTL, cap floor/ceiling, hardcoded usque tier caps | Mock HTTP with known-speed responses |
+| `internal/health` | Consecutive fail counter, state transition (healthy→degraded→dead), auto-reconnect sequence | No real TUN needed; mock the probe function |
+
+**Run:** `go test -v -race ./internal/...`
+
+### 2. Integration Tests (Manual — Pre-Release Checklist)
+
+These require a real VPS and at least one test device per platform:
+
+| Test | Platform | Steps |
+|------|----------|-------|
+| **Fresh activation** | Both | Delete all local state, enter valid code → device bound, token stored |
+| **Re-activation after reinstall** | Both | Delete app, reinstall → fingerprint matches → auto-activated (no code prompt) |
+| **Wrong code rejection** | Both | Enter invalid code → Luhn check catches it before server call |
+| **Already-bound code** | Both | Try code on second device → 409 rejected with clear message |
+| **Suspended device** | Both | Admin suspends device → next heartbeat returns 403 → GUI shows suspension message |
+| **TUN creation + traffic flow** | Windows | Connect → wintun adapter appears in `ipconfig` → `traceroute 8.8.8.8` goes through TUN gateway |
+| **TUN creation + traffic flow** | macOS | Connect → `ifconfig` shows utun interface → `traceroute 8.8.8.8` goes through TUN gateway |
+| **Kill switch (route deletion)** | Both | Connect → kill engine process → default route restored → `traceroute 8.8.8.8` goes via school WiFi (blocked) |
+| **DNS leak check** | Both | Connect → `nslookup google.com` → resolves via 1.0.0.1/1.1.1.1, NOT school DNS |
+| **IPv6 leak check** | Both | Connect → `ping -6 ipv6.google.com` → fails (IPv6 blocked) |
+| **Fallback engine switch** | Both | Connect primary → block primary server IP → health fails 3× → fallback engine starts → GUI shows yellow dot |
+| **Auto-reconnect exhausted** | Both | Block all engines → health retries 5× → GUI shows "Connection Lost — tap to retry" |
+| **Grace period** | Both | Connect → kill VPS → app continues working → GUI shows grace countdown (7→6→...→1 days) |
+| **Grace expiry** | Both | Let grace expire (or mock) → GUI shows "Re-authentication required" |
+| **Bandwidth probe (fast network)** | Both | Connect on fast WiFi → GUI shows green "Fast" → Hysteria 2 uncapped |
+| **Bandwidth probe (congested)** | Both | Throttle VPS to 2MB/s → GUI shows yellow "Congested" → Hysteria 2 capped |
+| **Update (valid)** | Both | Serve new binary with correct SHA256 → client downloads, verifies, applies |
+| **Update (tampered)** | Both | Serve binary with wrong SHA256 → client rejects, keeps current version |
+| **Privacy toggle** | Both | Toggle off → next heartbeat has telemetry fields zeroed |
+
+### 3. What Is NOT Tested (Documented Limitations)
+
+- **Concurrent activation attacks** — rate limiting is server-side (PocketBase hook), tested manually
+- **WFP/pf kill switch** — Phase 2 feature, not in MVP
+- **Split tunnel routing** — Phase 2 feature, not in MVP
+- **IPv6 routing through tunnel** — blocked entirely; no IPv6 path to test
+- **100+ concurrent clients** — load test deferred; PocketBase + Hysteria 2 scale is well-documented
+- **DPI evasion effectiveness** — this is a cat-and-mouse game; cannot be "tested" in a lab
+
+---
+
+## Phase 1.13: Deploy & Verify Checklist
 
 ### On the VPS
 
@@ -2876,7 +3265,7 @@ func setupAutostart() {
 
 ### Client Verification (test on Windows + macOS)
 
-- [ ] App launches and shows systray icon
+- [ ] App launches and shows minimal GUI window (300×400, non-resizable)
 - [ ] Autostart is configured (check Task Scheduler / LaunchAgent)
 - [ ] Activation: wrong code (typo) → Luhn check detects it before sending to server
 - [ ] Activation: valid code on fresh device → permanently bound, fingerprint + token stored
@@ -2903,7 +3292,13 @@ func setupAutostart() {
 - [ ] Update (SHA256 mismatch): serve update with wrong SHA256 → rejected
 - [ ] Privacy opt-out: toggle telemetry off → heartbeat still runs, telemetry fields zeroed
 - [ ] Log rotation: fill engine log past 10MB → rotates, keeps last 3 files
-- [ ] State machine: systray shows correct state through IDLE→ACTIVE→CONNECTING→CONNECTED→DEGRADED→DISCONNECTED cycle
+- [ ] State machine: GUI shows correct state through IDLE→ACTIVE→CONNECTING→CONNECTED→DEGRADED→DISCONNECTED cycle
+- [ ] Bandwidth probe: on throttled network → GUI shows "Congested" → Hysteria 2 capped at probed rate
+- [ ] Bandwidth probe: on fast network → GUI shows "Fast" → Hysteria 2 uncapped
+- [ ] usque fallback: hardcoded cap applied per tier (1 MB/s Warp Lite, 5 MB/s Gaming Mid)
+- [ ] IPv6 blocked: `ping -6 ipv6.google.com` fails when connected
+- [ ] GUI never shows real protocol names, IPs, ports, or engine binary names
+- [ ] Settings accordion: collapsed by default, shows activation code (masked) and plan name
 
 ---
 
@@ -2916,11 +3311,14 @@ func setupAutostart() {
 | Activation fails with 403                   | Device is suspended. Check PocketBase for `suspended` flag and `suspended_reason`.               |
 | TUN device not created                      | Ensure wintun.dll is installed (auto-downloaded). Run engine manually to check for errors.       |
 | Health check shows "dead" but engine runs   | Tunnel misconfigured — check routes and firewall. Try direct ping through TUN IP.                |
-| Kill switch active, can't restore           | Run `netsh advfirewall delete rule name=MyVPN_KillSwitch` manually.                              |
+| Kill switch route deletion failed            | Run `netsh interface ip delete route 0.0.0.0/1 <IF_INDEX>` (Windows) or `route delete 0.0.0.0/1` (macOS) manually. |
+| Fyne build fails with CGO errors             | Fyne requires CGO. Install gcc/mingw. On Ubuntu: `sudo apt install build-essential libgl1-mesa-dev xorg-dev`. |
+| Bandwidth probe always shows "Fast"          | Check VPS `/speedtest/1mb.bin` is reachable. Verify Caddy serves it without caching.              |
+| GUI window is blank/white                    | Fyne OpenGL backend issue. Try `FYNE_RENDERER=software` env var. Or install GPU drivers.          |
+| IPv6 leak detected (IPv6 traffic bypasses tunnel) | Ensure helper service ran `netsh interface ipv6 set interface <IF> disabled` (Win) or no IPv6 route added (macOS). |
 | Certificate pinning blocks connection       | You updated your VPS TLS cert. Generate a new pinned hash and ship an update.                    |
 | SHA256 mismatch on update                   | Wrong binary uploaded or corrupted download. Re-publish and verify the SHA256 hash.              |
 | Heartbeat grace period expired              | VPS has been down for 7+ days. Fix the VPS. Re-activate clients.                                 |
 | macOS engine crash on connect               | Check `~/Library/Application Support/MyVPN/logs/` for engine logs. Run engine manually from CLI. |
 | Windows SmartScreen blocks the app          | Click "More info" → "Run anyway". (Trade-off for no code signing.)                               |
-| `go:embed` fails during build               | (No longer used — engines downloaded at runtime.)                                                |
 | Offsite backup fails                        | Check B2 credentials. Run `b2 authorize-account` again.                                          |
