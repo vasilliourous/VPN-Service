@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "App Implementation.md",
+                "file": "BUSINESS-OVERVIEW.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "App Implementation"
+              "title": "BUSINESS-OVERVIEW"
             }
           }
         ]
@@ -185,6 +185,8 @@
   },
   "active": "186525157d3cb461",
   "lastOpenFiles": [
+    "school-vpn-blocking-implementation.md",
+    "basic-startup.md",
     "App Implementation.md",
     "Untitled",
     "Objective-and-Business-Model.md",
@@ -204,7 +206,6 @@
     "implementation-guide/02-MASTER-IMPLEMENTATION-PART2.md",
     "implementation-guide/01-MASTER-IMPLEMENTATION.md",
     "implementation-guide/00-ARCHITECTURE-OVERVIEW.md",
-    "school-vpn-blocking-implementation.md",
     "vpn-obfuscation-analysis-and-recommendation.md"
   ]
 }
