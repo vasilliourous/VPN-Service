@@ -26,6 +26,9 @@
 - ✅ **Client-side bandwidth throttling** — usque: hardcoded per-tier caps; Hysteria 2: dynamic bandwidth probing to infer max usable throughput on congested school WiFi
 - ✅ **MVP protocol scope: Hysteria 2 + usque only** — no VLESS-REALITY, TUIC v5, or Xray in initial release. Added in Phase 2 per market demand.
 - ✅ **IPv6: blocked entirely on TUN interface** — prevents IPv6 leaks. Documented as known limitation.
+- ✅ **Rollback safety** — previous binary kept as `myvpn.prev`, two-phase sentinel handshake auto-reverts on crash after update, manual `--revert` flag as backup
+- ❌ **macOS notarization & codesigning** — skipped intentionally. Target users are on school-managed Macs where Gatekeeper is often disabled or bypassable via "Open Anyway." Apple Developer Program ($99/yr) deferred until revenue covers it.
+- ❌ **Mobile (iOS/Android)** — deferred. MVP is Windows + macOS desktop only. Mobile requires separate TUN framework, different distribution model, and platform-specific development effort.
 - ❌ Middlemen have no app or panel access — they hand out paper codes, that's all
 
 ---
@@ -42,6 +45,7 @@
 - [Phase 1.8: Bandwidth Probing + Client-Side Throttling](#phase-18-bandwidth-probing--client-side-throttling)
 - [Phase 1.9: Runtime Engine Download](#phase-19-runtime-engine-download)
 - [Phase 1.10: Minimal GUI (Fyne)](#phase-110-minimal-gui-fyne)
+   - [Custom Theme — Black + Purple Branding](#5-custom-theme--black--purple-branding)
 - [Phase 1.11: Build System + Main Entrypoint](#phase-111-build-system--main-entrypoint)
 - [Phase 1.12: Testing & QA](#phase-112-testing--qa)
 - [Phase 1.13: Deploy & Verify Checklist](#phase-113-deploy--verify-checklist)
@@ -1761,15 +1765,21 @@ func applySwap(newBinaryPath, version string) error {
     }
 
     exeDir := filepath.Dir(exe)
-    oldPath := filepath.Join(exeDir, "myvpn.old")
+    prevPath := filepath.Join(exeDir, "myvpn.prev")
     newPath := filepath.Join(exeDir, "myvpn.exe")
 
-    os.Rename(exe, oldPath)
-    os.Rename(newBinaryPath, newPath)
+    // Keep the old binary as .prev for rollback safety
+    os.Remove(prevPath)             // Remove old backup if any
+    os.Rename(exe, prevPath)         // Current → backup
+    os.Rename(newBinaryPath, newPath) // New → live
 
-    // Spawn helper to delete .old and launch new version
+    // Write crash-detection sentinel
+    sentinelPath := filepath.Join(exeDir, ".update-pending")
+    os.WriteFile(sentinelPath, []byte(version), 0644)
+
+    // Spawn launcher: wait 3s, then start new version (don't delete .prev)
     cmd := exec.Command("cmd", "/c",
-        "timeout /t 2 /nobreak > nul && del \""+oldPath+"\" && start \"\" \""+newPath+"\"")
+        "timeout /t 3 /nobreak > nul && start \"\" \""+newPath+"\"")
     cmd.Start()
 
     os.Exit(0)
@@ -1799,29 +1809,41 @@ func applySwap(newBinaryPath, version string) error {
 
     exeDir := filepath.Dir(exe)
     newPath := filepath.Join(exeDir, "myvpn")
+    prevPath := filepath.Join(exeDir, "myvpn.prev")
 
-    // Copy-and-verify approach — eliminates the crash window between two renames.
-    // 1. Write new binary to myvpn.new (already done — newBinaryPath is the temp file)
-    // 2. Verify it can start (quick sanity check)
-    // 3. Copy over the existing binary (overwrite, not rename)
-    // 4. Delete the temp file
-    
-    // Verify: try to exec the new binary with --version flag
+    // 1. Save current binary as .prev for rollback safety
+    os.Remove(prevPath)
+    input, err := os.ReadFile(exe)
+    if err == nil {
+        os.WriteFile(prevPath, input, 0755)
+    }
+
+    // 2. Verify new binary can start (quick sanity check)
     versionCmd := exec.Command(newBinaryPath, "--version")
     if err := versionCmd.Run(); err != nil {
+        // Verification failed — remove the .prev we just saved; don't swap
+        os.Remove(prevPath)
         return fmt.Errorf("new binary verification failed: %w", err)
     }
-    
-    // Copy new binary over the old one (in-place overwrite)
-    input, err := os.ReadFile(newBinaryPath)
+
+    // 3. Write crash-detection sentinel before swapping
+    sentinelPath := filepath.Join(exeDir, ".update-pending")
+    os.WriteFile(sentinelPath, []byte(version), 0644)
+
+    // 4. Overwrite the live binary
+    newData, err := os.ReadFile(newBinaryPath)
     if err != nil {
+        os.Remove(sentinelPath)
+        os.Remove(prevPath)
         return fmt.Errorf("cannot read new binary: %w", err)
     }
-    if err := os.WriteFile(newPath, input, 0755); err != nil {
+    if err := os.WriteFile(newPath, newData, 0755); err != nil {
+        os.Remove(sentinelPath)
+        os.Remove(prevPath)
         return fmt.Errorf("cannot write new binary: %w", err)
     }
-    
-    // Clean up the temp file
+
+    // 5. Clean up the temp file
     os.Remove(newBinaryPath)
 
     // Fork child that execs the new binary
@@ -1836,6 +1858,209 @@ func applySwap(newBinaryPath, version string) error {
     return nil
 }
 ```
+
+---
+
+### Rollback Safety
+
+> 🛡️ **CRITIQUE.md flagged the lack of rollback as a serious risk.** This section adds crash-detection auto-revert and manual recovery. The strategy: keep the previous binary as `myvpn.prev`, write a sentinel file before swapping, and check it on startup. If the new binary crashes before clearing the sentinel, the next launch auto-reverts.
+
+**How it works (two-phase handshake):**
+
+```
+applySwap:
+  save current binary as .prev
+  write .update-pending sentinel    ─── Phase 1
+  swap new binary in
+  restart
+
+First launch after update:
+  .update-pending EXISTS + .prev EXISTS → this is the first launch after update
+  rename .update-pending → .update-confirmed  ─── Phase 2
+  .prev preserved as safety net
+  continue normally ✓
+
+Second launch (if previous was successful):
+  .update-confirmed EXISTS + .prev EXISTS → app ran fine last time
+  delete .update-confirmed + .prev ✓
+  clean state
+
+Crash on first launch:
+  .update-pending EXISTS + .prev EXISTS → app crashed before it could rename the sentinel
+  AUTO-REVERT: restore .prev, delete .update-pending
+  previous version starts fresh
+
+Manual revert (user holds Ctrl):
+  force-revert to .prev immediately, regardless of sentinel state
+```
+
+#### `internal/updater/recover.go`
+
+```go
+package updater
+
+import (
+    "fmt"
+    "os"
+    "path/filepath"
+)
+
+const (
+    sentinelPending   = ".update-pending"
+    sentinelConfirmed = ".update-confirmed"
+)
+
+// CheckOnStartup runs at the very beginning of main().
+// Returns true if a rollback occurred (for logging).
+func CheckOnStartup(holdRevertKey bool) (bool, error) {
+    exe, err := os.Executable()
+    if err != nil {
+        return false, fmt.Errorf("cannot determine executable path: %w", err)
+    }
+
+    exeDir := filepath.Dir(exe)
+    pendingPath := filepath.Join(exeDir, sentinelPending)
+    confirmedPath := filepath.Join(exeDir, sentinelConfirmed)
+    prevPath := filepath.Join(exeDir, "myvpn.prev")
+
+    // --- Manual revert ---
+    if holdRevertKey {
+        if _, err := os.Stat(prevPath); err == nil {
+            return performRevert(exe, prevPath, pendingPath, confirmedPath)
+        }
+        // No .prev to revert to — clean up stale sentinels and continue
+        os.Remove(pendingPath)
+        os.Remove(confirmedPath)
+        return false, nil
+    }
+
+    // --- Phase 2: update-confirmed exists → previous first launch was successful ---
+    if _, err := os.Stat(confirmedPath); err == nil {
+        // The first launch after update ran successfully (it renamed pending→confirmed).
+        // Now the second launch proves stability → safe to delete backup.
+        os.Remove(confirmedPath)
+        os.Remove(prevPath)
+        return false, nil
+    }
+
+    // --- Phase 1: update-pending exists → first launch after update (or crash) ---
+    if _, err := os.Stat(pendingPath); err == nil {
+        if _, err := os.Stat(prevPath); os.IsNotExist(err) {
+            // .prev is gone but sentinel remains — stale sentinel from interrupted flow
+            os.Remove(pendingPath)
+            return false, nil
+        }
+        // .prev exists AND .update-pending exists:
+        // The app was updated but never completed its first clean launch.
+        // This could be:
+        //   a) Genuine first launch (we're running now for the first time)
+        //   b) Crash on first launch (user restarted manually)
+        // Either way: advance to Phase 2 (don't revert yet).
+        // If we crash NOW, the sentinel will still be .update-pending on next launch → revert.
+        os.Rename(pendingPath, confirmedPath)
+        return false, nil
+    }
+
+    // --- No sentinels → normal startup ---
+    // Clean up any stale .prev from an interrupted previous cycle
+    os.Remove(prevPath)
+    return false, nil
+}
+
+// performRevert swaps the current binary back to .prev.
+func performRevert(exePath, prevPath, pendingPath, confirmedPath string) (bool, error) {
+    // Save the (possibly bad) current binary as .bad for debugging
+    badPath := filepath.Join(filepath.Dir(exePath), "myvpn.bad")
+    os.Remove(badPath)
+    os.Rename(exePath, badPath)
+
+    // Restore the previous binary
+    input, err := os.ReadFile(prevPath)
+    if err != nil {
+        return false, fmt.Errorf("cannot read previous binary for rollback: %w", err)
+    }
+
+    mode := os.FileMode(0755)
+    if filepath.Ext(exePath) == ".exe" {
+        mode = 0644
+    }
+    if err := os.WriteFile(exePath, input, mode); err != nil {
+        return false, fmt.Errorf("cannot restore previous binary: %w", err)
+    }
+
+    // Clean up all sentinels and .prev
+    os.Remove(prevPath)
+    os.Remove(pendingPath)
+    os.Remove(confirmedPath)
+
+    return true, nil
+}
+
+    // Restore the previous binary
+    input, err := os.ReadFile(prevPath)
+    if err != nil {
+        return false, fmt.Errorf("cannot read previous binary for rollback: %w", err)
+    }
+
+    mode := os.FileMode(0755)
+    if filepath.Ext(exePath) == ".exe" {
+        mode = 0644
+    }
+    if err := os.WriteFile(exePath, input, mode); err != nil {
+        return false, fmt.Errorf("cannot restore previous binary: %w", err)
+    }
+
+    // Clean up
+    os.Remove(prevPath)
+    os.Remove(sentinelPath)
+
+    return true, nil
+}
+```
+
+#### Update `main.go` — Call Recovery Check on Startup
+
+Add this as the **very first thing** in `main()`, before anything else (before storage init, before GUI):
+
+```go
+func main() {
+    // --- Rollback safety: must run before any other initialization ---
+    // Hold Ctrl key during launch to force-revert to the previous version
+    revertHeld := false
+    // Platform-specific: check for Ctrl key press
+    // Windows: GetAsyncKeyState(VK_CONTROL)
+    // macOS/Linux: check os.Args for --revert flag (simpler)
+    for _, arg := range os.Args {
+        if arg == "--revert" {
+            revertHeld = true
+            break
+        }
+    }
+    reverted, err := updater.CheckOnStartup(revertHeld)
+    if err != nil {
+        log.Printf("startup recovery check failed: %v", err)
+    }
+    if reverted {
+        log.Println("ROLLBACK: reverted to previous version after crash")
+        // The restored .prev may have a different version string — the heartbeat
+        // will re-check for updates on the next cycle.
+    }
+
+    // ... rest of main() ...
+}
+```
+
+**Manual revert for users:** If a bad update ships and the user can still launch the app, tell them to hold Ctrl while launching, or pass `--revert` from a terminal. If the app crashes on startup (can't even reach the revert check), they can:
+1. Find the install directory
+2. Delete `myvpn.exe` (or `myvpn`)
+3. Rename `myvpn.prev` → `myvpn.exe` (or `myvpn`)
+4. Delete `.update-pending`
+
+This is documented in the troubleshooting table in Phase 1.12.
+
+**Limitation:** If a bad update corrupts the TUN routing or helper service rather than crashing outright, the crash-detection sentinel won't trigger (the app starts successfully). In that case:
+- User can still manually revert via `--revert` flag
+- Server-side fix: push a new update that fixes the bug, or set `min_version` on the hub to force clients past the bad version
 
 ---
 
@@ -3052,7 +3277,218 @@ require (
 
 **Build note:** Fyne requires a C compiler for some backends on Linux. For Windows cross-compilation, use `CGO_ENABLED=1` with MinGW. For macOS, use Xcode command-line tools. Pre-built Fyne binaries are statically linked and ~5MB overhead.
 
-### 5. What the GUI Never Shows
+### 5. Custom Theme — Black + Purple Branding
+
+> **The default Fyne gray look doesn't fit the brand.** The service uses a black background with purple outlines/accents and a subtle gradient. Fyne supports full custom theming via the `fyne.Theme` interface.
+
+#### Theme Colors
+
+| Token | Color | Hex | Usage |
+|-------|-------|-----|-------|
+| Background | Black | `#0D0D0F` | Main window background |
+| Foreground | White (90%) | `#E6E6E6` | Body text, labels |
+| Primary | Vibrant Purple | `#A855F7` | Buttons, links, active dot |
+| Primary Darker | Deep Purple | `#7C3AED` | Button hover/pressed state |
+| Secondary | Dim Purple | `#6B21A8` | Borders, outlines, separators |
+| Success | Bright Purple-Pink | `#C084FC` | Status dot when connected |
+| Warning | Amber | `#F59E0B` | Status dot when degraded/fallback |
+| Input BG | Near-Black | `#1C1C1E` | Accordion backgrounds, input fields |
+| Disabled | Muted Gray | `#52525B` | Disabled text |
+| Hover | Purple (10%) | `#A855F7` with 10% alpha | Hover highlights |
+| Focus Ring | Purple glow | `#A855F7` | Focus indicator on buttons |
+
+#### `internal/gui/theme.go` — Custom Theme Implementation
+
+```go
+package gui
+
+import (
+    "image/color"
+
+    "fyne.io/fyne/v2"
+)
+
+type MyVPNTheme struct{}
+
+// enforce singleton
+var _ fyne.Theme = (*MyVPNTheme)(nil)
+
+func (t *MyVPNTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+    // Ignore system variant — always return dark theme colors
+    _ = variant
+
+    switch name {
+    // Backgrounds
+    case "background":
+        return color.RGBA{13, 13, 15, 255}        // #0D0D0F
+    case fyne.ColorNameInputBackground:
+        return color.RGBA{28, 28, 30, 255}         // #1C1C1E
+    case fyne.ColorNameButton:
+        return color.RGBA{168, 85, 247, 255}       // #A855F7 (purple)
+    case fyne.ColorNameHover:
+        return color.RGBA{168, 85, 247, 25}        // #A855F7 at 10% alpha
+    case fyne.ColorNamePressed:
+        return color.RGBA{124, 58, 237, 255}       // #7C3AED
+
+    // Text
+    case fyne.ColorNameForeground:
+        return color.RGBA{230, 230, 230, 255}      // #E6E6E6
+    case fyne.ColorNameDisabled:
+        return color.RGBA{82, 82, 91, 255}         // #52525B
+    case fyne.ColorNamePlaceHolder:
+        return color.RGBA{113, 113, 122, 255}      // #71717A
+
+    // Accent / UI chrome
+    case fyne.ColorNamePrimary:
+        return color.RGBA{168, 85, 247, 255}       // #A855F7
+    case fyne.ColorNameFocusRing:
+        return color.RGBA{168, 85, 247, 200}       // purple glow
+    case fyne.ColorNameSeparator:
+        return color.RGBA{107, 33, 168, 255}       // #6B21A8 (dim purple)
+    case fyne.ColorNameMenuBackground:
+        return color.RGBA{13, 13, 15, 255}         // match background
+
+    // ScrollBar, Shadow (keep minimal)
+    case fyne.ColorNameScrollBar:
+        return color.RGBA{168, 85, 247, 80}
+    case fyne.ColorNameShadow:
+        return color.Transparent
+
+    default:
+        return color.RGBA{13, 13, 15, 255}
+    }
+}
+
+func (t *MyVPNTheme) Font(style fyne.TextStyle) fyne.Resource {
+    // Use default Fyne font (clean sans-serif)
+    return nil
+}
+
+func (t *MyVPNTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
+    return fyne.CurrentApp().Settings().Theme().Icon(name)
+}
+
+func (t *MyVPNTheme) Size(name fyne.ThemeSizeName) float32 {
+    switch name {
+    case fyne.SizeNamePadding:
+        return 8      // tighter padding for minimal look
+    case fyne.SizeNameInnerPadding:
+        return 6
+    case fyne.SizeNameScrollBar:
+        return 6
+    case fyne.SizeNameScrollBarSmall:
+        return 3
+    case fyne.SizeNameSeparatorThickness:
+        return 1
+    case fyne.SizeNameInputBorder:
+        return 1
+    case fyne.SizeNameButtonRadius:
+        return 6      // slightly rounded corners
+    case fyne.SizeNameInputRadius:
+        return 4
+    case fyne.SizeNameSelectionRadius:
+        return 4
+    case fyne.SizeNameTextSize:
+        return 14
+    case fyne.SizeNameHeadingSize:
+        return 16
+    case fyne.SizeNameSubHeadingSize:
+        return 12
+    case fyne.SizeNameCaptionSize:
+        return 11
+    case fyne.SizeNameInlineIcon:
+        return 20
+    default:
+        return fyne.CurrentApp().Settings().Theme().Size(name)
+    }
+}
+```
+
+#### Apply the Theme in `launch()`
+
+Change the first line of `Launch()` to use the custom theme:
+
+```go
+func Launch(activationCode, planTier string) {
+    a := app.New()
+    a.Settings().SetTheme(&MyVPNTheme{})   // ← Add this line
+    state.Window = a.NewWindow("MyVPN")
+    // ... rest unchanged ...
+}
+```
+
+#### Gradient Background
+
+Fyne supports `canvas.LinearGradient` and `canvas.RadialGradient` for backgrounds. Use a subtle purple-to-black radial gradient as the window background:
+
+```go
+import (
+    "image/color"
+    "fyne.io/fyne/v2/canvas"
+)
+
+func gradientBackground() *canvas.RadialGradient {
+    g := canvas.NewRadialGradient(
+        color.RGBA{168, 85, 247, 30},   // inner: purple at very low opacity
+        color.RGBA{13, 13, 15, 255},    // outer: black
+    )
+    g.CenterOffsetX = -0.3   // offset center slightly left
+    g.CenterOffsetY = -0.2   // offset center slightly up
+    return g
+}
+```
+
+Then wrap the main content in a `container.NewStack(gradientBackground(), content)` to layer it behind the widgets:
+
+```go
+func Launch(activationCode, planTier string) {
+    a := app.New()
+    a.Settings().SetTheme(&MyVPNTheme{})
+
+    state.Window = a.NewWindow("MyVPN")
+
+    // ... build content as before ...
+
+    // Wrap with gradient background
+    bg := gradientBackground()
+    root := container.NewStack(bg, content)
+
+    state.Window.SetContent(root)
+    state.Window.Resize(fyne.NewSize(300, 400))
+    state.Window.SetFixedSize(true)
+
+    go statusLoop()
+    state.Window.ShowAndRun()
+}
+```
+
+#### Status Dot with Glow (Instead of Flat Circle)
+
+Replace the simple colored circle with a small radial gradient for a "glowing" effect:
+
+```go
+func newStatusDot(colorName string) *canvas.RadialGradient {
+    var inner, outer color.Color
+    switch colorName {
+    case "green":
+        inner = color.RGBA{192, 132, 252, 255}  // purple-pink glow
+        outer = color.RGBA{192, 132, 252, 50}
+    case "yellow":
+        inner = color.RGBA{245, 158, 11, 255}
+        outer = color.RGBA{245, 158, 11, 50}
+    default: // red
+        inner = color.RGBA{239, 68, 68, 255}
+        outer = color.RGBA{239, 68, 68, 50}
+    }
+    dot := canvas.NewRadialGradient(inner, outer)
+    dot.Resize(fyne.NewSize(12, 12))
+    return dot
+}
+```
+
+> **Tip:** If the gradient looks too different from the mockup on Windows vs macOS, tweak `CenterOffsetX`/`CenterOffsetY` and the inner color alpha (30 is very subtle — try 50 or 80 for a more visible glow).
+
+### 6. What the GUI Never Shows
 
 Per BUSINESS-OVERVIEW.md requirements, the GUI must **never** expose:
 - Real protocol names ("Hysteria 2", "usque", "TUIC v5", "VLESS-REALITY")
@@ -3139,6 +3575,7 @@ import (
     "myvpn/internal/gui"
     "myvpn/internal/heartbeat"
     "myvpn/internal/storage"
+    "myvpn/internal/updater"
 )
 
 var version string // set via ldflags
@@ -3146,6 +3583,25 @@ var version string // set via ldflags
 func main() {
     apiBase := flag.String("api", "https://api.yourdomain.com", "Admin hub URL")
     flag.Parse()
+
+    // --- Rollback safety: must run before any other initialization ---
+    // Pass --revert or hold Ctrl on launch to force-revert to myvpn.prev
+    revertHeld := false
+    for _, arg := range os.Args {
+        if arg == "--revert" {
+            revertHeld = true
+            break
+        }
+    }
+    reverted, err := updater.CheckOnStartup(revertHeld)
+    if err != nil {
+        log.Printf("startup recovery check failed: %v", err)
+    }
+    if reverted {
+        log.Println("ROLLBACK: reverted to previous version after crash")
+        // The restored .prev may have a different version — the heartbeat
+        // will re-check for updates on the next cycle.
+    }
 
     storage.Init()
     branding.Init()
@@ -3199,7 +3655,7 @@ func setupAutostart() {
 | `internal/activation` | Luhn-mod-N checksum validation, code format parsing, fingerprint hashing, device binding request/response | Mock HTTP transport; test valid/invalid/edge-case codes |
 | `internal/storage` | Token persistence, protocol list CRUD, plan tier read/write, privacy opt-out toggle | In-memory temp dir; no real filesystem |
 | `internal/branding` | Protocol name → display name mapping, tier label lookup | Pure function tests |
-| `internal/updater` | SHA256 verification (valid hash, wrong hash, empty file), version comparison, platform matching | Mock HTTP downloads; use known test files |
+| `internal/updater` | SHA256 verification (valid hash, wrong hash, empty file), version comparison, platform matching, sentinel crash detection, auto-revert on sentinel, manual `--revert` flag, `.prev` preservation | Mock HTTP downloads; use known test files; simulate crash by leaving sentinel |
 | `internal/heartbeat` | Token expiry logic, grace period calculation, telemetry field sanitization, cert pin hash comparison | Mock HTTP with custom TLS certs |
 | `internal/throttle` | Probe cache TTL, cap floor/ceiling, hardcoded usque tier caps | Mock HTTP with known-speed responses |
 | `internal/health` | Consecutive fail counter, state transition (healthy→degraded→dead), auto-reconnect sequence | No real TUN needed; mock the probe function |
@@ -3231,6 +3687,9 @@ These require a real VPS and at least one test device per platform:
 | **Update (valid)** | Both | Serve new binary with correct SHA256 → client downloads, verifies, applies |
 | **Update (tampered)** | Both | Serve binary with wrong SHA256 → client rejects, keeps current version |
 | **Privacy toggle** | Both | Toggle off → next heartbeat has telemetry fields zeroed |
+| **Update + crash auto-revert** | Both | Apply update → kill app during first 3s → restart → `.update-pending` triggers revert → old version runs |
+| **Manual revert via --revert** | Both | Run `myvpn --revert` → restores `.prev`, cleans sentinels |
+| **Sentinel two-phase handshake** | Both | Check no stale `.update-pending` or `.update-confirmed` remain after 2 clean launches |
 
 ### 3. What Is NOT Tested (Documented Limitations)
 
@@ -3299,6 +3758,9 @@ These require a real VPS and at least one test device per platform:
 - [ ] IPv6 blocked: `ping -6 ipv6.google.com` fails when connected
 - [ ] GUI never shows real protocol names, IPs, ports, or engine binary names
 - [ ] Settings accordion: collapsed by default, shows activation code (masked) and plan name
+- [ ] Rollback (crash): apply update → kill app during startup → restart → auto-reverts to `.prev`
+- [ ] Rollback (manual): run `myvpn --revert` → restores previous version from `.prev`
+- [ ] Rollback (no .prev): run `--revert` with no `.prev` → app starts normally, sentinels cleaned
 
 ---
 
@@ -3322,3 +3784,7 @@ These require a real VPS and at least one test device per platform:
 | macOS engine crash on connect               | Check `~/Library/Application Support/MyVPN/logs/` for engine logs. Run engine manually from CLI. |
 | Windows SmartScreen blocks the app          | Click "More info" → "Run anyway". (Trade-off for no code signing.)                               |
 | Offsite backup fails                        | Check B2 credentials. Run `b2 authorize-account` again.                                          |
+| App crashes right after update              | **Auto-revert:** Restart the app — `.update-pending` is still present, so the recovery logic reverts to `myvpn.prev`. |
+| Manual rollback needed (app starts but is broken) | Hold **Ctrl** while launching, or run `myvpn --revert` from terminal. Restores `myvpn.prev`.   |
+| Manual rollback (app won't start at all)    | Go to install dir, delete `myvpn.exe`/`myvpn`, rename `myvpn.prev` → `myvpn.exe`/`myvpn`, delete `.update-pending` + `.update-confirmed`. |
+| `.update-pending` or `.update-confirmed` stuck | Sentinel files are harmless. Delete them manually from the install directory to clear stale markers. |
