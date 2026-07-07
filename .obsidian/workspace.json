@@ -8,17 +8,13 @@
         "type": "tabs",
         "children": [
           {
-            "id": "186525157d3cb461",
+            "id": "20d1e71874f68abd",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "BUSINESS-OVERVIEW.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "BUSINESS-OVERVIEW"
+              "title": "New tab"
             }
           }
         ]
@@ -183,9 +179,12 @@
       "bases:Create new base": false
     }
   },
-  "active": "186525157d3cb461",
+  "active": "7b38d6435b6ab391",
   "lastOpenFiles": [
+    "threat-model-rookie-provider.md",
+    "Specifications-for-Simplified-Design.md",
     "school-vpn-blocking-implementation.md",
+    "BUSINESS-OVERVIEW.md",
     "basic-startup.md",
     "App Implementation.md",
     "Untitled",
