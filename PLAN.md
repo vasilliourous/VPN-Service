@@ -389,7 +389,11 @@ myvpn/
 │   ├── health/
 │   │   └── health.go              # Tunnel health check (15s probe, 3-failure threshold)
 │   ├── throttle/
-│   │   └── throttle.go            # Client-side bandwidth limiter — throttles usque for warp_lite plan; gaming plans pass through unbottlenecked
+│   │   ├── throttle.go            # Public API: RunProbe(), Start/StopBackgroundMonitor(), CurrentBandwidthCapKBps()
+│   │   ├── probe.go               # Full bandwidth probe on every connect: 1MB quick test + staged ramp with bufferbloat detection
+│   │   ├── monitor.go             # Continuous background monitor: 15s EWMA-smoothed bandwidth sampling, dynamic cap adjustment, RTT-based bufferbloat detection
+│   │   ├── monitor_test.go        # Monitor tests (EWMA behavior, tier ceiling enforcement)
+│   │   └── usque.go               # Hardcoded per-tier bandwidth caps for usque (Warp Lite: 1MB/s, Gaming Mid: 5MB/s, Gaming Max: uncapped)
 │   ├── updater/
 │   │   ├── update.go              # Download + SHA256 verify (no signing) + apply
 │   │   ├── update_windows.go      # Spawn helper to replace running .exe
@@ -782,7 +786,7 @@ Middlemen **only hand out physical activation codes**. They have no app access, 
 
 | Phase       | Timeline     | Deliverable                                                                                                                                                     |
 | ----------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase 1** | —            | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Minimal Fyne GUI with permanent hardware-fingerprint activation (one code = one device), suspension support, cert-pinned heartbeat with token rotation + telemetry + grace period, SHA256-verified platform-scoped updates, TUN mode with kill switch (route deletion) + DNS guard + IPv6 blocking, bandwidth probing + client-side throttling, 15s health check, process sandboxing + binary renaming, runtime download. Windows + macOS. |
+| **Phase 1** | —            | **Hardened MVP with TUN mode.** VPS: rate limiting, WAL-mode SQLite, offsite backups, uptime monitoring. Hysteria 2 + usque dual-engine. Minimal Fyne GUI with permanent hardware-fingerprint activation (one code = one device), suspension support, cert-pinned heartbeat with token rotation + telemetry + grace period, SHA256-verified platform-scoped updates, TUN mode with kill switch (route deletion) + DNS guard + IPv6 blocking, adaptive bandwidth probing (fresh probe on each connect + continuous background EWMA monitor with bufferbloat detection), 15s health check, process sandboxing + binary renaming, runtime download. Windows + macOS. |
 | **Phase 2** | —            | Split tunnel, WFP/pf kill switch, add VLESS-REALITY + TUIC v5, systray minimize-to-tray, telemetry analytics dashboard.                                      |
 | **Phase 3** | Week 4+      | Gaming protocol optimization, fallback chain tuning, dual-admin-hub failover, key rotation mechanism.                                                          |
 

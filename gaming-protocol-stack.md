@@ -309,6 +309,101 @@ Testing from the 2026 benchmarks, scaled to what matters for competitive gaming:
 
 ---
 
+---
+
+## Adaptive Speed Probing — Handling QoS Bandwidth Fluctuations
+
+> **Critical for Hysteria 2 on school WiFi:** Hysteria 2's "Brutal" congestion control is aggressive by design — it grabs as much bandwidth as it can. On a QoS-shaped network where bandwidth fluctuates second-to-second, an uncapped Brutal connection will:
+> 1. Fill the buffer when bandwidth drops → **bufferbloat** → game latency spikes from 100ms → 800ms
+> 2. Saturate the WiFi AP → **packet loss** → rubberbanding in games
+> 3. Trigger **school IT bandwidth anomaly alerts** → protocol gets blocked faster
+
+### The Three-Layer Adaptive Solution
+
+The client implements a three-layer adaptive bandwidth system built specifically for Hysteria 2's Brutal CC:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  LAYER 1: Connect Probe (runs fresh on every tap Connect)    │
+│                                                              │
+│  ┌──────────────────────────────────┐                        │
+│  │ 1. Baseline RTT to VPS (HEAD  )  │                        │
+│  │ 2. Quick 1MB download, time it   │                        │
+│  │ 3. If ≥1.5s → staged ramp test:  │                        │
+│  │    500KB @ 500KB/s → 1MB/s →     │                        │
+│  │    2MB/s → 5MB/s (Gaming Max)    │                        │
+│  │ 4. Pick highest cap with:        │                        │
+│  │    • <1% packet loss AND         │                        │
+│  │    • RTT < 1.5× baseline RTT     │                        │
+│  └──────────┬───────────────────────┘                        │
+│             │                                                │
+│             ▼                                                │
+│  ┌──────────────────────────────────┐                        │
+│  │ Apply cap to Hysteria 2 config   │                        │
+│  │ via --speed (bps) parameter       │                        │
+│  └──────────┬───────────────────────┘                        │
+│             │                                                │
+│             ▼                                                │
+│  LAYER 2: Background Monitor (every 15s while connected)     │
+│                                                              │
+│  ┌──────────────────────────────────┐                        │
+│  │ Download 100KB chunk, measure    │                        │
+│  │ throughput + RTT                 │                        │
+│  │                                  │                        │
+│  │ EWMA smoothing (α=0.3) to avoid  │                        │
+│  │ reacting to transient spikes     │                        │
+│  │                                  │                        │
+│  │ N consecutive low samples →      │                        │
+│  │ REDUCE cap by 30% (fast sink)    │                        │
+│  │                                  │                        │
+│  │ N consecutive high samples →     │                        │
+│  │ INCREASE cap by 20% (slow rise)  │                        │
+│  │                                  │                        │
+│  │ RTT spike > 2× baseline →        │                        │
+│  │ CUT cap by 50% (bufferbloat!)    │                        │
+│  └──────────┬───────────────────────┘                        │
+│             │                                                │
+│             ▼                                                │
+│  LAYER 3: Runtime Cap Injection                              │
+│                                                              │
+│  ┌──────────────────────────────────┐                        │
+│  │ Monitor calls onCapChange() →    │                        │
+│  │ writes new speed to Hysteria 2   │                        │
+│  │ config JSON → SIGHUP reload      │                        │
+│  │ UDP control socket update        │                        │
+│  └──────────────────────────────────┘                        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Why This Matters for Gaming
+
+| Scenario | Without Adaptive Probe | With Adaptive Probe |
+|---|---|---|
+| **QoS kicks in during peak class time** | Brutal CC fills buffer → 800ms latency | Monitor detects RTT spike → cuts cap → stable 120ms |
+| **Bandwidth frees up after lunch** | Stuck at old low cap → underutilized link | Monitor sees headroom → increases cap → full speed |
+| **Quick connect from dorm** | 30-min cache from congested hallway → slow start | Fresh probe every connect → accurate cap immediately |
+| **School IT rate-limits your MAC** | Keeps trying at high speed → gets blocked | Drops to floor (500KB/s) → avoids detection |
+
+### Tier-Specific Behavior
+
+| Plan | Probe Depth | Dynamic Monitor | Notes |
+|---|---|---|---|
+| **Gaming Max** ($10-13/mo) | Full: quick test + staged ramp up to 15MB/s | Yes — adjusts up/down in real-time | Uncapped if fast, otherwise dynamically limited to prevent lag spikes |
+| **Gaming Mid** ($5-8/mo) | Quick test + capped ramp to 5MB/s | Yes — but ceiling at 5MB/s | Hard ceiling enforced even if network could go faster |
+| **Warp Lite** ($2-4/mo) | Skipped entirely | No — uses hardcoded 1MB/s cap | usque doesn't need dynamic adjustment |
+
+### Key Metrics to Monitor
+
+The heartbeat telemetry includes:
+- `probe_result_kbps` — bandwidth cap from the initial probe
+- `monitor_avg_kbps` — EWMA average during session
+- `monitor_adjustments` — number of cap changes during session (indicator of QoS volatility)
+- `bufferbloat_events` — how many RTT spikes triggered cap cuts
+
+This data helps you tune the EWMA α, reduce/increase thresholds, and identify schools with aggressive QoS.
+
+---
+
 ## Summary: Your Gaming Protocol Stack
 
 ```

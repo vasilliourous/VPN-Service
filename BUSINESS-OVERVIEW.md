@@ -102,7 +102,7 @@ This is a core part of the business. The file `school-vpn-blocking-implementatio
 | **Warp Lite**      | $2–4/mo   | Cloudflare Warp (via usque) | SOCKS5 proxy, bandwidth throttled client-side (app-enforced), no UDP for gaming, good enough for web browsing only |
 | **Stealth Browse** | $4–7/mo   | VLESS-REALITY               | TCP-only, browsing/streaming, no gaming optimization, maximum stealth                               |
 | **Gaming Mid**     | $5–8/mo   | Hysteria 2                  | Medium bandwidth cap, moderate congestion control settings, good for casual gaming                  |
-| **Gaming Max**     | $10–13/mo | Hysteria 2 (uncapped)       | Full "Brutal" congestion control, max bandwidth, UDP gaming, priority support                       |
+| **Gaming Max**     | $10–13/mo | Hysteria 2 (adaptively capped) | Full "Brutal" congestion control, adaptive bandwidth probing (fresh probe per connect + continuous background monitor to prevent QoS bufferbloat), UDP gaming, priority support |
 
 ### Pricing psychology
 

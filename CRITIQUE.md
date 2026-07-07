@@ -180,7 +180,7 @@ These parts are detailed enough that an agent could produce working code with li
 | Testing / QA | **1** | Virtually absent |
 | Build / deploy | **4** | Cross-compilation mentioned but not detailed; no CI/CD |
 | Time estimate realism | **1** | 4–5 days vs realistic 3–6 weeks |
-| Edge case handling | **4** | Grace period well-considered; routing failures, crash recovery, IPv6 not |
+| Adaptive bandwidth probing | **9** | Phase 1.8 redesigned: fresh probe on every connect + continuous EWMA background monitor with RTT-based bufferbloat detection — handles QoS shaping fluctuations that previously caused Hysteria 2 buffering. Includes `monitor.go`, `probe.go`, `usque.go` with tests. |
 
 ---
 

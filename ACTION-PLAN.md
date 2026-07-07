@@ -23,7 +23,7 @@
 - ✅ **Activation code format** — `MYVPN-XXXX-XXXX-XXXX-C` with Luhn-mod-N checksum
 - ✅ **Suspension, not deactivation** — admin can suspend a device from connecting. Binding is never destroyed; code can never be reused on a different device.
 - ✅ **Minimal proper GUI** (not systray) — small window with connection status, tier name, speed indicator, time connected. No technical protocol names exposed. Intransparency by design.
-- ✅ **Client-side bandwidth throttling** — usque: hardcoded per-tier caps; Hysteria 2: dynamic bandwidth probing to infer max usable throughput on congested school WiFi
+- ✅ **Adaptive speed probing + real-time bandwidth monitoring** — usque: hardcoded per-tier caps; Hysteria 2: **fresh bandwidth probe on every connect** + continuous EWMA-smoothed background monitor that dynamically adjusts the cap mid-session to prevent bufferbloat from QoS shaping fluctuations
 - ✅ **MVP protocol scope: Hysteria 2 + usque only** — no VLESS-REALITY, TUIC v5, or Xray in initial release. Added in Phase 2 per market demand.
 - ✅ **IPv6: blocked entirely on TUN interface** — prevents IPv6 leaks. Documented as known limitation.
 - ✅ **Rollback safety** — previous binary kept as `myvpn.prev`, two-phase sentinel handshake auto-reverts on crash after update, manual `--revert` flag as backup
@@ -42,7 +42,7 @@
 - [Phase 1.5: Heartbeat with Cert Pinning + Grace + Telemetry](#phase-15-heartbeat-with-cert-pinning--grace--telemetry)
 - [Phase 1.6: Auto-Updater with SHA256 Verification](#phase-16-auto-updater-with-sha256-verification)
 - [Phase 1.7: TUN Mode + Kill Switch + DNS Guard + IPv6 Blocking + Health Check](#phase-17-tun-mode--kill-switch--dns-guard--ipv6-blocking--health-check)
-- [Phase 1.8: Bandwidth Probing + Client-Side Throttling](#phase-18-bandwidth-probing--client-side-throttling)
+- [Phase 1.8: Adaptive Speed Probing + Client-Side Throttling](#phase-18-adaptive-speed-probing--client-side-throttling)
 - [Phase 1.9: Runtime Engine Download](#phase-19-runtime-engine-download)
 - [Phase 1.10: Minimal GUI (Fyne)](#phase-110-minimal-gui-fyne)
    - [Custom Theme — Black + Purple Branding](#5-custom-theme--black--purple-branding)
@@ -520,6 +520,17 @@ func appDataDir() string {
 
 func LogDir() string { return filepath.Join(appDataDir(), "logs") }
 func EngineDir() string { return filepath.Join(appDataDir(), "engines") }
+func EngineConfigDir() string {
+    d := filepath.Join(appDataDir(), "configs")
+    os.MkdirAll(d, 0700)
+    return d
+}
+
+// EngineConfigPath returns the path to an engine's config file.
+// Configs are stored as JSON and can be rewritten at runtime by the throttle monitor.
+func EngineConfigPath(protocolID string) string {
+    return filepath.Join(EngineConfigDir(), protocolID+".json")
+}
 
 // Log rotation — call as a goroutine from Init()
 func StartLogRotation() {
@@ -1057,10 +1068,12 @@ import (
     "fmt"
     "myvpn/internal/branding"
     "myvpn/internal/storage"
+    "myvpn/internal/throttle"
     "os"
     "os/exec"
     "path/filepath"
     "sync"
+    "syscall"
 )
 
 var (
@@ -1138,6 +1151,8 @@ func StopEngine() {
     mu.Lock()
     defer mu.Unlock()
     stopLocked()
+    // Stop the background bandwidth monitor when engine stops
+    throttle.StopBackgroundMonitor()
 }
 
 func stopLocked() {
@@ -1147,6 +1162,22 @@ func stopLocked() {
         activeCmd = nil
         activeID = ""
         storage.SetActiveConn("")
+    }
+}
+
+// SignalReload sends a reload signal to the running engine.
+// Used by the throttle monitor to apply dynamic bandwidth cap changes.
+func SignalReload() {
+    mu.Lock()
+    defer mu.Unlock()
+    if activeCmd == nil || activeCmd.Process == nil {
+        return
+    }
+    // Hysteria 2 responds to SIGHUP by reloading its config.
+    // On Windows, we send a UDP control message instead (platform-specific).
+    proc := activeCmd.Process
+    if proc != nil {
+        proc.Signal(os.Signal(syscall.SIGHUP))
     }
 }
 
@@ -1317,6 +1348,106 @@ func sandbox(cmd *exec.Cmd) {
 
 func SandboxRunning(cmd *exec.Cmd) {
     // No post-start sandboxing needed on macOS
+}
+```
+
+### 4. `buildCommand()` — Engine Command Builder with Adaptive Bandwidth
+
+```go
+// internal/manager/command.go
+package manager
+
+import (
+    "encoding/json"
+    "fmt"
+    "myvpn/internal/branding"
+    "myvpn/internal/throttle"
+    "myvpn/internal/storage"
+    "os/exec"
+)
+
+// buildCommand constructs the exec.Cmd for an engine, injecting the
+// current adaptive bandwidth cap from the throttle subsystem.
+func buildCommand(binaryPath, protocolID string, configJSON json.RawMessage, planTier string) *exec.Cmd {
+    switch protocolID {
+    case "hysteria2":
+        return buildHysteria2Command(binaryPath, configJSON, planTier)
+    case "usque":
+        return buildUsqueCommand(binaryPath, configJSON, planTier)
+    default:
+        // Fallback: pass config file path
+        return exec.Command(binaryPath, string(configJSON))
+    }
+}
+
+// buildHysteria2Command builds the Hysteria 2 command with dynamic bandwidth cap.
+// Hysteria 2 supports:
+//   - config file (JSON) with "speed" field in bps
+//   - CLI flags: --speed <bps> or --log-level
+// We inject the bandwidth cap from the throttle probe/monitor into the config.
+func buildHysteria2Command(binaryPath string, configJSON json.RawMessage, planTier string) *exec.Cmd {
+    // Parse the existing config JSON
+    var cfg map[string]interface{}
+    if err := json.Unmarshal(configJSON, &cfg); err != nil {
+        cfg = make(map[string]interface{})
+    }
+
+    // Get current bandwidth cap from throttle subsystem
+    capKBps := throttle.CurrentBandwidthCapKBps()
+    displayName := branding.ProtocolDisplayName("hysteria2")
+
+    // Hysteria 2 uses bits-per-second in the "speed" field of Brutal CC.
+    // Convert KBps → bps: multiply by 8000 (8 bits/byte × 1000)
+    if capKBps > 0 {
+        capBps := capKBps * 8000
+        cfg["speed"] = capBps
+    } else {
+        // Uncapped — remove any speed limit from config
+        delete(cfg, "speed")
+    }
+
+    // Apply plan-tier overrides
+    switch planTier {
+    case "gaming_max":
+        // Gaming Max: use whatever the probe says (may be uncapped)
+        // The monitor will dynamically adjust during the session
+    case "gaming_mid":
+        // Gaming Mid: hard ceiling of 5 MB/s (40 Mbps = 40,000,000 bps)
+        midBps := 5000 * 8000
+        if capKBps == 0 || capKBps > 5000 {
+            cfg["speed"] = midBps
+        }
+    case "warp_lite":
+        // Warp Lite doesn't use Hysteria 2; handled by usque code path
+    }
+
+    // Serialize modified config to a temp file
+    configPath := storage.EngineConfigPath("hysteria2")
+    modifiedJSON, _ := json.Marshal(cfg)
+    writeConfig(configPath, modifiedJSON)
+
+    return exec.Command(binaryPath, "-c", configPath)
+}
+
+// buildUsqueCommand builds the usque command with hardcoded per-tier bandwidth limit.
+// usque accepts --bandwidth-limit <KBps> to cap throughput.
+func buildUsqueCommand(binaryPath string, configJSON json.RawMessage, planTier string) *exec.Cmd {
+    capKBps := throttle.UsqueBandwidthLimit(planTier)
+
+    args := []string{
+        string(configJSON),
+    }
+    if capKBps > 0 {
+        args = append(args, "--bandwidth-limit", fmt.Sprintf("%d", capKBps))
+    }
+
+    return exec.Command(binaryPath, args...)
+}
+
+// Helper to write config files atomically.
+func writeConfig(path string, data []byte) {
+    // Implementation writes to temp file then renames for atomicity.
+    // Omitted here for brevity; see storage package.
 }
 ```
 
@@ -2706,48 +2837,84 @@ func probe(tunGateway string) error {
 
 ---
 
-## Phase 1.8: Bandwidth Probing + Client-Side Throttling
+## Phase 1.8: Adaptive Speed Probing + Client-Side Throttling
 
-> **Why:** School WiFi is congested. Hysteria 2's "Brutal" congestion control aggressively grabs bandwidth, which can saturate the network and get the VPN blocked. We need to infer the maximum usable bandwidth and cap the engine accordingly. usque has hardcoded per-tier caps (cheap tier = throttled, gaming tier = uncapped).
+> **Why:** School WiFi is congested and subject to **QoS shaping** — bandwidth fluctuates dramatically minute-to-minute as 50–500 students share limited AP capacity. Hysteria 2's "Brutal" congestion control aggressively grabs bandwidth, which on a QoS-shaped link causes bufferbloat, latency spikes, and game-rubberbanding. We need a probe **on every connect** and **continuous background monitoring** to dynamically adjust the cap in real-time, preventing buffering without starving the connection.
 
-### 1. The Problem
+### 1. The Problem — Why Static Probing Fails
 
-On a congested school WiFi network (50-500 students sharing limited AP bandwidth), an uncapped Hysteria 2 connection using Brutal CC would:
-- Saturate the AP's airtime, degrading WiFi for everyone
-- Likely trigger the school IT's bandwidth anomaly alerts
-- Get the VPN server IP blocked faster
+**Criticism received:** The original design cached probe results for 30 minutes. On a QoS-shaped school WiFi:
+- Bandwidth can drop 60–80% within seconds when a nearby classroom starts a video stream
+- Hysteria 2's Brutal CC interprets the suddenly constrained link as "lossy" and increases send rate → **bufferbloat** → game latency spikes from 100ms to 800ms
+- A stale 30-min-old cap either underutilizes the link (if bandwidth improved) or causes buffering (if bandwidth dropped)
 
-**Solution:** Client-side bandwidth probing that runs before the engine starts, measures real available throughput, and caps the engine at a "polite" fraction of that.
+**Solution:** Three-layer adaptive system:
+1. **Full probe on every connect** (not cached) — ensures each session starts with an accurate cap
+2. **Lightweight background monitor** during the session — small 100KB pings every 15s to detect bandwidth shifts
+3. **Dynamic cap adjustment** — EWMA-smoothed bandwidth estimate drives real-time Hysteria 2 speed limit changes via the engine's control socket
 
-### 2. Bandwidth Probing Algorithm
+### 2. Adaptive Probing Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│  1. Quick test: download 1MB from VPS /speedtest │
-│     endpoint (pre-generated random data).         │
-│     Time it. If <2s, network is fast → skip cap.  │
-│                                                   │
-│  2. If >2s (congested): run a 3-stage ramp test   │
-│     Stage 1: 500KB @ 500KB/s cap — measure loss   │
-│     Stage 2: 500KB @ 1MB/s cap — measure loss     │
-│     Stage 3: 500KB @ 2MB/s cap — measure loss     │
-│                                                   │
-│  3. Pick the highest cap with <1% packet loss.    │
-│     Cap is stored and reused for 30 minutes.       │
-│     After 30 min, re-probe (network may change).   │
-│                                                   │
-│  4. Floor: 500KB/s (even if network is terrible).  │
-│     Ceiling: 15MB/s (don't bother probing above).  │
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  CONNECT FLOW                                                    │
+│                                                                  │
+│  User taps Connect                                               │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────────────┐   ┌─────────────────────────────┐  │
+│  │ 1. Quick 1MB download   │   │ Tier-based decision:        │  │
+│  │    from /speedtest       │──►│ • Gaming Max → always probe│  │
+│  │    Time it, compute BW   │   │ • Gaming Mid → cap at 80%  │  │
+│  │    If <1.5s → uncapped   │   │ • Warp Lite → skip probe   │  │
+│  │    If ≥1.5s → staged     │   │   (hardcoded 1MB/s cap)    │  │
+│  └──────────┬──────────────┘   └──────────────┬──────────────┘  │
+│             │                                  │                 │
+│             ▼                                  ▼                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 2. Staged Ramp Test (only if quick test was slow)        │   │
+│  │   Stage 1: 500KB @ 500KB/s, measure RTT + loss           │   │
+│  │   Stage 2: 500KB @ 1MB/s, measure RTT + loss             │   │
+│  │   Stage 3: 500KB @ 2MB/s, measure RTT + loss             │   │
+│  │   Stage 4: 500KB @ 5MB/s, measure RTT + loss (Gaming Max)│   │
+│  │                                                           │   │
+│  │   Pick highest cap with:                                  │   │
+│  │   • <1% packet loss AND                                   │   │
+│  │   • RTT < 1.5× baseline RTT (no bufferbloat)              │   │
+│  └──────────────────────────┬───────────────────────────────┘   │
+│                             │                                    │
+│                             ▼                                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 3. Apply cap & launch Hysteria 2 with --speed param       │   │
+│  │   • Gaming Max: cap = probe_result (uncapped if fast)    │   │
+│  │   • Gaming Mid:  cap = min(probe_result, 5MB/s)          │   │
+│  │   • Floor: 500KB/s (never lower)                         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 4. Start background monitor goroutine                     │   │
+│  │   • Every 15s: download 100KB chunk, measure throughput   │   │
+│  │   • EWMA smoothing (α=0.3) on bandwidth samples           │   │
+│  │   • If EWMA drops below 70% of current cap × 2 seconds   │   │
+│  │     → REDUCE cap by 30% immediately (fast reaction)       │   │
+│  │   • If EWMA stays above 120% of current cap × 60 seconds  │   │
+│  │     → INCREASE cap by 20% (up to quick-test max)          │   │
+│  │   • If RTT from monitor shows spike > 2× baseline         │   │
+│  │     → REDUCE cap by 50% (bufferbloat detected)            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  DISCONNECT FLOW                                                │
+│  • Stop background monitor                                      │
+│  • Log final bandwidth stats to heartbeat telemetry             │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### 3. `internal/throttle/probe.go`
+### 3. `internal/throttle/probe.go` — Initial Connect Probe
 
 ```go
 package throttle
 
 import (
-    "context"
     "fmt"
     "io"
     "net/http"
@@ -2755,104 +2922,550 @@ import (
     "time"
 )
 
-// ProbeResult holds the inferred bandwidth cap for Hysteria 2.
+// ProbeResult holds the inferred bandwidth state for Hysteria 2.
 type ProbeResult struct {
-    MaxThroughputKBps int       // inferred cap in KB/s; 0 = uncapped
-    PacketLoss        float64   // at that cap
+    MaxThroughputKBps int       // Inferred safe cap in KB/s; 0 = uncapped
+    SuggestedKBps     int       // The cap to actually apply (tier-adjusted)
+    PacketLoss        float64   // Packet loss at the chosen cap
+    BaselineRTT       time.Duration // RTT to VPS before congestion (bufferbloat baseline)
     ProbedAt          time.Time
-    NetworkCondition  string    // "fast", "congested", "degraded"
+    NetworkCondition  string    // "fast", "congested", "degraded", "offline"
 }
 
 const (
-    probeFloorKBps     = 500    // never cap below 500 KB/s
-    probeCeilingKBps   = 15000  // never probe above 15 MB/s
-    probeCacheTTL      = 30 * time.Minute
-    quickTestThreshold = 2 * time.Second
+    probeFloorKBps     = 500    // never cap below ~4 Mbps
+    probeCeilingKBps   = 15000  // never probe above ~120 Mbps
+    gamingMidCapKBps   = 5000   // Gaming Mid hard ceiling (40 Mbps)
+    quickTestThreshold = 1500 * time.Millisecond
     quickTestSize      = 1 * 1024 * 1024 // 1MB
     stageSize          = 500 * 1024      // 500KB per stage
 )
 
-var (
-    cachedResult *ProbeResult
-    cacheMu      sync.Mutex
-)
-
-// Probe runs a bandwidth test against the VPS and returns
+// Probe runs a full bandwidth test against the VPS and returns
 // the recommended throttle cap for Hysteria 2.
-// Results are cached for 30 minutes.
+// Called on every connect — NOT cached.
 func Probe(apiBase, tier string) (*ProbeResult, error) {
-    cacheMu.Lock()
-    if cachedResult != nil && time.Since(cachedResult.ProbedAt) < probeCacheTTL {
-        defer cacheMu.Unlock()
-        return cachedResult, nil
+    // Step 1: Measure baseline RTT (before any load)
+    baselineRTT, err := measureBaselineRTT(apiBase + "/speedtest/500kb.bin")
+    if err != nil {
+        return nil, fmt.Errorf("baseline RTT failed: %w", err)
     }
-    cacheMu.Unlock()
 
-    // Quick test first
+    // Step 2: Quick 1MB download
     start := time.Now()
-    if err := downloadChunk(apiBase+"/speedtest/1mb.bin", quickTestSize, 0); err != nil {
-        return nil, fmt.Errorf("probe failed: %w", err)
+    bwBytes, err := downloadChunk(apiBase+"/speedtest/1mb.bin", quickTestSize, 0)
+    if err != nil {
+        return nil, fmt.Errorf("quick probe failed: %w", err)
     }
     elapsed := time.Since(start)
+    quickThroughputKBps := int(float64(bwBytes) / elapsed.Seconds() / 1024)
 
-    var result ProbeResult
-    result.ProbedAt = time.Now()
+    // Step 3: Decide probing depth based on tier + quick result
+    result := &ProbeResult{
+        ProbedAt:     time.Now(),
+        BaselineRTT:  baselineRTT,
+        PacketLoss:   0,
+    }
 
-    if elapsed < quickTestThreshold {
-        // Network is fast — no cap needed
+    if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
+        // Network is genuinely fast — no cap needed for Gaming Max
         result.MaxThroughputKBps = 0 // 0 = uncapped
         result.NetworkCondition = "fast"
-        result.PacketLoss = 0
-    } else {
-        // Congested — run staged ramp test
-        caps := []int{500, 1000, 2000, 5000, 10000}
-        bestCap := probeFloorKBps
+        result.SuggestedKBps = tierSuggestedCap(tier, 0)
+        return result, nil
+    }
 
-        for _, capKBps := range caps {
-            loss, err := measureLoss(apiBase+"/speedtest/500kb.bin", stageSize, capKBps)
-            if err != nil {
-                continue
-            }
-            if loss < 0.01 { // <1% packet loss
-                bestCap = capKBps
-            } else {
-                break // loss increasing, stop probing higher
-            }
+    // Step 4: Staged ramp test (network is congested or moderate)
+    var stageCaps []int
+    switch tier {
+    case "gaming_max":
+        stageCaps = []int{500, 1000, 2000, 5000, 10000, probeCeilingKBps}
+    case "gaming_mid":
+        stageCaps = []int{500, 1000, 2000, 5000}
+    default: // warp_lite — skip ramp, use hardcoded
+        result.MaxThroughputKBps = 1000 // 1 MB/s
+        result.NetworkCondition = "congested"
+        result.SuggestedKBps = 1000
+        return result, nil
+    }
+
+    bestCap := probeFloorKBps
+    bestLoss := 1.0
+
+    for _, capKBps := range stageCaps {
+        if capKBps > probeCeilingKBps {
+            break
         }
-
-        result.MaxThroughputKBps = bestCap
-        if bestCap <= 1000 {
-            result.NetworkCondition = "degraded"
+        loss, rtt, err := measureLoss(apiBase+"/speedtest/500kb.bin", stageSize, capKBps)
+        if err != nil {
+            continue
+        }
+        // Bufferbloat check: RTT must not exceed 1.5× baseline
+        if rtt > 0 && baselineRTT > 0 && rtt > baselineRTT*3/2 {
+            break // bufferbloat detected — don't try higher caps
+        }
+        if loss < 0.01 { // <1% packet loss
+            bestCap = capKBps
+            bestLoss = loss
         } else {
-            result.NetworkCondition = "congested"
+            break // loss rising, stop
         }
     }
 
-    cacheMu.Lock()
-    cachedResult = &result
-    cacheMu.Unlock()
+    result.MaxThroughputKBps = bestCap
+    result.PacketLoss = bestLoss
+    result.SuggestedKBps = tierSuggestedCap(tier, bestCap)
 
-    return &result, nil
+    if bestCap <= 1000 {
+        result.NetworkCondition = "degraded"
+    } else {
+        result.NetworkCondition = "congested"
+    }
+
+    return result, nil
 }
 
-// downloadChunk downloads size bytes with an optional rate limit (0 = no limit).
-func downloadChunk(url string, size int, rateLimitKBps int) error {
-    // HTTP GET with optional token-bucket rate limiter
-    // Returns error if download fails or is too slow
-    return nil
+// tierSuggestedCap applies tier-based ceilings to the raw probe result.
+// Gaming Max uses the full probed cap (or 0 = uncapped if fast).
+// Gaming Mid caps at 5MB/s even if the network could handle more.
+func tierSuggestedCap(tier string, probedKBps int) int {
+    switch tier {
+    case "gaming_max":
+        return probedKBps // 0 = uncapped, else use probed value
+    case "gaming_mid":
+        if probedKBps == 0 {
+            return gamingMidCapKBps
+        }
+        if probedKBps > gamingMidCapKBps {
+            return gamingMidCapKBps
+        }
+        return probedKBps
+    default: // warp_lite
+        return 1000 // 1 MB/s fixed
+    }
 }
 
-// measureLoss downloads a chunk with rate limiting and measures
-// application-level loss (bytes requested vs bytes received).
-func measureLoss(url string, size int, rateLimitKBps int) (float64, error) {
-    // download with token-bucket limiter, return loss ratio
-    return 0, nil
+// measureBaselineRTT does a small HEAD request to measure unloaded RTT.
+func measureBaselineRTT(url string) (time.Duration, error) {
+    start := time.Now()
+    resp, err := http.Head(url)
+    if err != nil {
+        return 0, err
+    }
+    resp.Body.Close()
+    return time.Since(start), nil
 }
 ```
 
-### 4. Hardcoded usque Throttles (Per Tier)
+### 4. `internal/throttle/monitor.go` — Continuous Background Bandwidth Monitor
 
-Unlike Hysteria 2 (dynamically probed), usque has **hardcoded bandwidth caps** that match the plan tier. These are compiled into the binary and cannot be changed without a client update:
+```go
+package throttle
+
+import (
+    "fmt"
+    "io"
+    "math"
+    "net/http"
+    "sync"
+    "sync/atomic"
+    "time"
+)
+
+// Monitor tracks real-time bandwidth conditions during a session
+// and adjusts the Hysteria 2 cap dynamically to prevent bufferbloat.
+type Monitor struct {
+    apiBase          string
+    tier             string
+    baselineRTT      time.Duration
+
+    // Current cap (atomic for lock-free reads from GUI/manager)
+    currentCapKBps   int64
+
+    // EWMA state
+    ewmaKBps         float64
+    ewmaMu           sync.Mutex
+
+    // Cooldown to prevent oscillation
+    lastAdjustment   time.Time
+    adjustmentMu     sync.Mutex
+
+    // Control
+    stopCh           chan struct{}
+    stopped          chan struct{}
+
+    // Callback to push cap changes to the engine manager
+    onCapChange      func(newCapKBps int)
+}
+
+const (
+    monitorInterval    = 15 * time.Second
+    monitorChunkSize   = 100 * 1024  // 100KB — lightweight
+    ewmaAlpha          = 0.3         // EWMA smoothing factor (higher = more responsive)
+    reduceThreshold    = 0.70        // Reduce cap if EWMA drops below 70% of current cap
+    increaseThreshold  = 1.20        // Increase cap if EWMA stays above 120% of current cap
+    reduceWait         = 2 * time.Second  // How long EWMA must stay below threshold before reducing
+    increaseWait       = 60 * time.Second // How long before we试探 increasing
+    bufferbloatRTTMult = 2.0         // If monitor RTT > 2× baseline, assume bufferbloat
+    minIncreaseInterval = 30 * time.Second // Don't increase more than once per 30s
+)
+
+// NewMonitor creates a bandwidth monitor. Call Start() to begin.
+// onCapChange is called on the monitor's goroutine when the cap changes.
+func NewMonitor(apiBase, tier string, baselineRTT time.Duration, initialCapKBps int, onCapChange func(int)) *Monitor {
+    return &Monitor{
+        apiBase:        apiBase,
+        tier:           tier,
+        baselineRTT:    baselineRTT,
+        currentCapKBps: int64(initialCapKBps),
+        ewmaKBps:       float64(initialCapKBps),
+        stopCh:         make(chan struct{}),
+        stopped:        make(chan struct{}),
+        onCapChange:    onCapChange,
+    }
+}
+
+// Start begins the background monitoring loop.
+// Runs until Stop() is called or the monitor fails permanently.
+func (m *Monitor) Start() {
+    go m.loop()
+}
+
+// Stop terminates the monitoring loop and waits for clean exit.
+func (m *Monitor) Stop() {
+    close(m.stopCh)
+    <-m.stopped
+}
+
+// CurrentCapKBps returns the current dynamic cap (safe for concurrent use).
+func (m *Monitor) CurrentCapKBps() int {
+    return int(atomic.LoadInt64(&m.currentCapKBps))
+}
+
+// Status returns a human-readable network condition string.
+func (m *Monitor) Status() string {
+    cap := m.CurrentCapKBps()
+    switch {
+    case cap == 0:
+        return "fast"
+    case cap <= 1000:
+        return "degraded"
+    case cap <= 3000:
+        return "congested"
+    default:
+        return "moderate"
+    }
+}
+
+func (m *Monitor) loop() {
+    defer close(m.stopped)
+
+    ticker := time.NewTicker(monitorInterval)
+    defer ticker.Stop()
+
+    // Count consecutive samples below/above threshold for hysteresis
+    lowSamples := 0
+    highSamples := 0
+
+    for {
+        select {
+        case <-m.stopCh:
+            return
+        case <-ticker.C:
+            sampleKBps, rtt, err := m.sampleBandwidth()
+            if err != nil {
+                continue // skip bad sample
+            }
+
+            // Update EWMA
+            m.ewmaMu.Lock()
+            if m.ewmaKBps == 0 {
+                m.ewmaKBps = float64(sampleKBps)
+            } else {
+                m.ewmaKBps = ewmaAlpha*float64(sampleKBps) + (1-ewmaAlpha)*m.ewmaKBps
+            }
+            smoothedKBps := int(math.Round(m.ewmaKBps))
+            m.ewmaMu.Unlock()
+
+            currentCap := int(atomic.LoadInt64(&m.currentCapKBps))
+
+            // Bufferbloat detection (RTT spike)
+            if rtt > 0 && m.baselineRTT > 0 && rtt > time.Duration(float64(m.baselineRTT)*bufferbloatRTTMult) {
+                // Bufferbloat! Cut cap aggressively
+                newCap := int(float64(currentCap) * 0.5)
+                if newCap < probeFloorKBps {
+                    newCap = probeFloorKBps
+                }
+                m.adjustCap(newCap)
+                lowSamples = 0
+                highSamples = 0
+                continue
+            }
+
+            // EWMA-based adjustment
+            if currentCap > 0 {
+                // Check if bandwidth has dropped significantly
+                if float64(smoothedKBps) < float64(currentCap)*reduceThreshold {
+                    lowSamples++
+                    highSamples = 0
+                    if lowSamples >= int(reduceWait/monitorInterval) {
+                        // Sustained drop — reduce cap
+                        newCap := int(float64(currentCap) * 0.7)
+                        if newCap < probeFloorKBps {
+                            newCap = probeFloorKBps
+                        }
+                        m.adjustCap(newCap)
+                        lowSamples = 0
+                    }
+                } else if float64(smoothedKBps) > float64(currentCap)*increaseThreshold {
+                    highSamples++
+                    lowSamples = 0
+                    if highSamples >= int(increaseWait/monitorInterval) {
+                        // Sustained headroom — cautiously increase
+                        newCap := int(float64(currentCap) * 1.2)
+                        if newCap > probeCeilingKBps {
+                            newCap = probeCeilingKBps
+                        }
+                        m.adjustCap(newCap)
+                        highSamples = 0
+                    }
+                } else {
+                    // In the comfort zone — reset counters
+                    lowSamples = 0
+                    highSamples = 0
+                }
+            } else {
+                // Currently uncapped. If EWMA shows constrained bandwidth, apply a cap.
+                if smoothedKBps > 0 && float64(smoothedKBps) < float64(probeCeilingKBps)*0.5 {
+                    // Network is fast but not unlimited — cap at 90% of measured
+                    newCap := int(float64(smoothedKBps) * 0.9)
+                    if newCap < probeFloorKBps {
+                        newCap = probeFloorKBps
+                    }
+                    m.adjustCap(newCap)
+                }
+            }
+        }
+    }
+}
+
+// sampleBandwidth downloads a small chunk and measures throughput + RTT.
+func (m *Monitor) sampleBandwidth() (throughputKBps int, rtt time.Duration, err error) {
+    url := m.apiBase + "/speedtest/500kb.bin"
+
+    // Measure RTT (time to first byte)
+    start := time.Now()
+    resp, err := http.Get(url)
+    if err != nil {
+        return 0, 0, fmt.Errorf("monitor GET failed: %w", err)
+    }
+    defer resp.Body.Close()
+    ttfb := time.Since(start) // approximate RTT
+
+    // Read up to monitorChunkSize bytes
+    limited := io.LimitReader(resp.Body, int64(monitorChunkSize))
+    n, readErr := io.Copy(io.Discard, limited)
+    if readErr != nil {
+        return 0, 0, fmt.Errorf("monitor read failed: %w", readErr)
+    }
+    totalElapsed := time.Since(start)
+
+    if totalElapsed < 1*time.Millisecond {
+        return 0, ttfb, fmt.Errorf("monitor sample too fast")
+    }
+
+    throughputKBps = int(float64(n) / totalElapsed.Seconds() / 1024)
+    return throughputKBps, ttfb, nil
+}
+
+// adjustCap atomically updates the current cap and fires the callback.
+func (m *Monitor) adjustCap(newCapKBps int) {
+    m.adjustmentMu.Lock()
+    defer m.adjustmentMu.Unlock()
+
+    // Enforce tier ceiling
+    switch m.tier {
+    case "gaming_mid":
+        if newCapKBps > gamingMidCapKBps {
+            newCapKBps = gamingMidCapKBps
+        }
+    }
+
+    oldCap := int(atomic.LoadInt64(&m.currentCapKBps))
+    if newCapKBps == oldCap {
+        return
+    }
+
+    // Rate-limit adjustments: don't change more than once per 5 seconds
+    if time.Since(m.lastAdjustment) < 5*time.Second {
+        return
+    }
+
+    atomic.StoreInt64(&m.currentCapKBps, int64(newCapKBps))
+    m.lastAdjustment = time.Now()
+
+    if m.onCapChange != nil {
+        m.onCapChange(newCapKBps)
+    }
+}
+```
+
+### 5. `internal/throttle/monitor_test.go` — Monitor Behavior Tests
+
+```go
+package throttle
+
+import (
+    "testing"
+    "time"
+)
+
+func TestMonitorEWMA(t *testing.T) {
+    m := NewMonitor("http://test", "gaming_max", 50*time.Millisecond, 5000, nil)
+
+    // Simulate EWMA smoothing
+    samples := []int{5000, 4800, 4500, 4200, 4000, 3000, 2500, 2000}
+    expected := 5000.0
+    for i, s := range samples {
+        m.ewmaMu.Lock()
+        if i == 0 {
+            m.ewmaKBps = float64(s)
+        } else {
+            m.ewmaKBps = ewmaAlpha*float64(s) + (1-ewmaAlpha)*m.ewmaKBps
+        }
+        m.ewmaMu.Unlock()
+        expected = ewmaAlpha*float64(s) + (1-ewmaAlpha)*expected
+    }
+    // EWMA should dampen sudden drops
+    m.ewmaMu.Lock()
+    if m.ewmaKBps < 2000 || m.ewmaKBps > 5000 {
+        t.Errorf("EWMA out of range: %f", m.ewmaKBps)
+    }
+    m.ewmaMu.Unlock()
+}
+
+func TestMonitorAdjustCapTierCeiling(t *testing.T) {
+    called := false
+    m := NewMonitor("http://test", "gaming_mid", 50*time.Millisecond, 5000, func(cap int) {
+        called = true
+        if cap > gamingMidCapKBps {
+            t.Errorf("gaming_mid cap %d exceeds ceiling %d", cap, gamingMidCapKBps)
+        }
+    })
+    m.adjustCap(10000) // should be clamped to 5000
+    if !called {
+        t.Error("callback not invoked")
+    }
+}
+```
+
+### 6. `internal/throttle/throttle.go` — Public API
+
+```go
+package throttle
+
+import "sync"
+
+// Global state for the throttle subsystem.
+var (
+    // The active monitor (nil when disconnected)
+    activeMonitor *Monitor
+    monitorMu     sync.Mutex
+
+    // Latest probe result (for GUI to read)
+    lastProbeResult *ProbeResult
+    probeMu         sync.RWMutex
+)
+
+// RunProbe performs a fresh bandwidth probe and returns the result.
+// Called on every connect.
+func RunProbe(apiBase, tier string) (*ProbeResult, error) {
+    result, err := Probe(apiBase, tier)
+    if err != nil {
+        return nil, err
+    }
+    probeMu.Lock()
+    lastProbeResult = result
+    probeMu.Unlock()
+    return result, nil
+}
+
+// StartBackgroundMonitor begins continuous bandwidth monitoring.
+// The onCapChange callback is invoked when the dynamic cap changes.
+func StartBackgroundMonitor(apiBase, tier string, baselineRTT time.Duration, initialCapKBps int, onCapChange func(int)) {
+    monitorMu.Lock()
+    defer monitorMu.Unlock()
+
+    // Stop any existing monitor
+    if activeMonitor != nil {
+        activeMonitor.Stop()
+    }
+
+    activeMonitor = NewMonitor(apiBase, tier, baselineRTT, initialCapKBps, onCapChange)
+    activeMonitor.Start()
+}
+
+// StopBackgroundMonitor stops the active bandwidth monitor.
+func StopBackgroundMonitor() {
+    monitorMu.Lock()
+    defer monitorMu.Unlock()
+    if activeMonitor != nil {
+        activeMonitor.Stop()
+        activeMonitor = nil
+    }
+}
+
+// CurrentNetworkStatus returns the current network condition label for the GUI.
+func CurrentNetworkStatus() string {
+    probeMu.RLock()
+    result := lastProbeResult
+    probeMu.RUnlock()
+
+    monitorMu.Lock()
+    mon := activeMonitor
+    monitorMu.Unlock()
+
+    if mon != nil {
+        return mon.Status()
+    }
+    if result != nil {
+        return result.NetworkCondition
+    }
+    return "unknown"
+}
+
+// CurrentBandwidthCapKBps returns the current effective cap (0 = uncapped).
+// Used by the engine manager when constructing Hysteria 2 --speed flags.
+func CurrentBandwidthCapKBps() int {
+    monitorMu.Lock()
+    mon := activeMonitor
+    monitorMu.Unlock()
+
+    if mon != nil {
+        return mon.CurrentCapKBps()
+    }
+
+    probeMu.RLock()
+    result := lastProbeResult
+    probeMu.RUnlock()
+
+    if result != nil {
+        return result.SuggestedKBps
+    }
+    return 0
+}
+
+// CachedResult returns the last probe result (for GUI display).
+func CachedResult() *ProbeResult {
+    probeMu.RLock()
+    defer probeMu.RUnlock()
+    return lastProbeResult
+}
+```
+
+### 7. Hardcoded usque Throttles (Per Tier)
+
+Unlike Hysteria 2 (dynamically probed + continuously monitored), usque has **hardcoded bandwidth caps** that match the plan tier. These are compiled into the binary and cannot be changed without a client update:
 
 | Tier | usque Cap | Rationale |
 |------|----------|-----------|
@@ -2862,11 +3475,31 @@ Unlike Hysteria 2 (dynamically probed), usque has **hardcoded bandwidth caps** t
 
 **Implementation:** The engine manager passes a `--bandwidth-limit <KBps>` flag to the usque binary on launch. The usque SOCKS5 connection is throttled at that rate. The value is hardcoded in `internal/throttle/usque.go` as a `map[string]int` keyed by plan tier.
 
-### 5. VPS Speedtest Endpoint
+```go
+// internal/throttle/usque.go
+package throttle
+
+// UsqueBandwidthLimit returns the hardcoded bandwidth cap for usque by tier.
+// Key: plan_tier, Value: KBps limit (0 = uncapped)
+var usqueBandwidthLimits = map[string]int{
+    "warp_lite":     1000,   // 1 MB/s
+    "gaming_mid":    5000,   // 5 MB/s
+    "gaming_max":    0,      // Uncapped
+}
+
+func UsqueBandwidthLimit(tier string) int {
+    if cap, ok := usqueBandwidthLimits[tier]; ok {
+        return cap
+    }
+    return 1000 // default to Warp Lite cap
+}
+```
+
+### 8. VPS Speedtest Endpoint
 
 The admin hub (Caddy/PocketBase) needs two static files served at:
-- `GET /speedtest/1mb.bin` — 1MB of random data (quick test)
-- `GET /speedtest/500kb.bin` — 500KB of random data (stage test)
+- `GET /speedtest/1mb.bin` — 1MB of random data (quick test + initial probe)
+- `GET /speedtest/500kb.bin` — 500KB of random data (stage test + background monitor)
 
 Generate once on VPS setup:
 ```bash
@@ -2874,16 +3507,46 @@ dd if=/dev/urandom of=/opt/speedtest/1mb.bin bs=1M count=1
 dd if=/dev/urandom of=/opt/speedtest/500kb.bin bs=500K count=1
 ```
 
-Caddy serves them with `Cache-Control: no-store` (don't let intermediate caches skew results).
+Caddy serves them with `Cache-Control: no-store, no-cache, must-revalidate` (don't let intermediate caches skew results). The response should also include a `Content-Length` header so the client can verify complete download.
 
-### 6. UI Integration
+### 9. UI Integration
 
-After probing, the GUI shows a traffic-light indicator:
-- **Green "Fast"** — Hysteria 2 uncapped
-- **Yellow "Congested"** — Hysteria 2 capped at X MB/s
-- **Orange "Slow"** — consider switching to usque fallback
+The GUI reads network status from `throttle.CurrentNetworkStatus()` and the speed label from `throttle.CurrentBandwidthCapKBps()`:
 
-The user never sees raw probe numbers — just a color + label.
+| Network Condition | GUI Indicator | User-visible Label | Hysteria 2 Behavior |
+|---|---|---|---|
+| `"fast"` | 🟢 Green dot | "Network: Fast" | Uncapped (Gaming Max) or tier-capped (Gaming Mid 5MB/s) |
+| `"moderate"` | 🟡 Yellow dot | "Network: Moderate" | Capped at EWMA-derived rate |
+| `"congested"` | 🟠 Orange dot | "Network: Congested" | Capped at probed rate, monitor actively adjusting |
+| `"degraded"` | 🔴 Red dot | "Network: Slow" | Capped at floor (500KB/s), may trigger fallback to usque |
+
+The GUI updates every second via `statusLoop()`:
+
+```go
+// In updateStatus()
+networkLabel := throttle.CurrentNetworkStatus()
+switch networkLabel {
+case "fast":
+    state.NetworkLabel.SetText("Network: 🟢 Fast")
+case "moderate":
+    state.NetworkLabel.SetText("Network: 🟡 Moderate")
+case "congested":
+    state.NetworkLabel.SetText("Network: 🟠 Congested")
+case "degraded":
+    state.NetworkLabel.SetText("Network: 🔴 Slow")
+default:
+    state.NetworkLabel.SetText("Network: --")
+}
+
+// Show current bandwidth cap if capped
+if cap := throttle.CurrentBandwidthCapKBps(); cap > 0 {
+    state.SpeedLabel.SetText(fmt.Sprintf("Speed: ~%d KB/s", cap))
+} else {
+    state.SpeedLabel.SetText("Speed: Max")
+}
+```
+
+The user never sees raw probe numbers, packet loss, or RTT — just a color + label + approximate speed.
 
 ---
 
@@ -3082,6 +3745,8 @@ func verifyHash(path, expected string) bool {
 package gui
 
 import (
+    "encoding/json"
+    "fmt"
     "fyne.io/fyne/v2"
     "fyne.io/fyne/v2/app"
     "fyne.io/fyne/v2/container"
@@ -3091,6 +3756,7 @@ import (
     "myvpn/internal/manager"
     "myvpn/internal/storage"
     "myvpn/internal/throttle"
+    "os"
     "time"
 )
 
@@ -3211,9 +3877,28 @@ func updateStatus() {
         state.ConnectBtn.SetText("Cancel")
     }
 
-    // Update network condition from throttle probe
-    if result := throttle.CachedResult(); result != nil {
-        state.NetworkLabel.SetText("Network: " + result.NetworkCondition)
+    // Update network condition from adaptive throttle subsystem
+    networkStatus := throttle.CurrentNetworkStatus()
+    switch networkStatus {
+    case "fast":
+        state.NetworkLabel.SetText("Network: 🟢 Fast")
+    case "moderate":
+        state.NetworkLabel.SetText("Network: 🟡 Moderate")
+    case "congested":
+        state.NetworkLabel.SetText("Network: 🟠 Congested")
+    case "degraded":
+        state.NetworkLabel.SetText("Network: 🔴 Slow")
+    default:
+        state.NetworkLabel.SetText("Network: --")
+    }
+
+    // Show current bandwidth cap (from live monitor if active, else from probe)
+    if cap := throttle.CurrentBandwidthCapKBps(); cap > 0 {
+        state.SpeedLabel.SetText(fmt.Sprintf("Speed: ~%d KB/s", cap))
+    } else if networkStatus == "fast" {
+        state.SpeedLabel.SetText("Speed: Max")
+    } else {
+        state.SpeedLabel.SetText("Speed: --")
     }
 
     // Update connection time
@@ -3229,16 +3914,104 @@ func onConnect() {
         manager.Disconnect()
         return
     }
-    // Run bandwidth probe before connecting
+    // Run adaptive bandwidth probe before connecting (fresh probe every time)
     go func() {
-        result, err := throttle.Probe(storage.LoadAPIBase(), storage.LoadPlanTier())
+        tier := storage.LoadPlanTier()
+
+        // Skip probe for Warp Lite (uses hardcoded cap)
+        if tier == "warp_lite" {
+            manager.Connect()
+            return
+        }
+
+        result, err := throttle.RunProbe(storage.LoadAPIBase(), tier)
         if err != nil {
             state.NetworkLabel.SetText("Network: Probe failed")
-        } else {
-            state.NetworkLabel.SetText("Network: " + result.NetworkCondition)
+            // Still connect with safe fallback cap
+            manager.Connect()
+            return
         }
+
+        // Update GUI
+        statusLabel := "Network: "
+        switch result.NetworkCondition {
+        case "fast":
+            statusLabel += "🟢 Fast"
+        case "congested":
+            statusLabel += "🟠 Congested"
+        case "degraded":
+            statusLabel += "🔴 Slow"
+        default:
+            statusLabel += result.NetworkCondition
+        }
+        state.NetworkLabel.SetText(statusLabel)
+
+        // Start connection
         manager.Connect()
+
+        // Start background bandwidth monitor (runs during session)
+        throttle.StartBackgroundMonitor(
+            storage.LoadAPIBase(),
+            tier,
+            result.BaselineRTT,
+            result.SuggestedKBps,
+            func(newCapKBps int) {
+                // Called when monitor adjusts cap — update Hysteria 2 via control API
+                dynamicCapUpdate(newCapKBps)
+            },
+        )
     }()
+}
+
+// dynamicCapUpdate sends a new bandwidth cap to the running Hysteria 2 engine.
+// Hysteria 2 supports runtime speed changes via UDP control socket or SIGHUP.
+// This function is called by the background monitor when the cap adjusts.
+func dynamicCapUpdate(capKBps int) {
+    if !manager.IsRunning() {
+        return
+    }
+
+    // Map: protocol → update function
+    switch manager.RunningProtocolID() {
+    case "hysteria2":
+        // Hysteria 2 supports on-the-fly speed changes via its control socket.
+        // Write updated config and signal the engine to reload.
+        configPath := storage.EngineConfigPath("hysteria2")
+
+        // Read existing config, update speed field
+        cfg := readHysteriaConfig(configPath)
+        if capKBps > 0 {
+            cfg["speed"] = capKBps * 8000 // KBps → bps
+        } else {
+            delete(cfg, "speed")
+        }
+
+        // Write updated config
+        data, _ := json.Marshal(cfg)
+        writeConfigAtomic(configPath, data)
+
+        // Signal engine to reload config (SIGHUP on Unix, or UDP control msg)
+        manager.SignalReload()
+    }
+}
+
+func readHysteriaConfig(path string) map[string]interface{} {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return make(map[string]interface{})
+    }
+    var cfg map[string]interface{}
+    json.Unmarshal(data, &cfg)
+    if cfg == nil {
+        cfg = make(map[string]interface{})
+    }
+    return cfg
+}
+
+func writeConfigAtomic(path string, data []byte) {
+    tmpPath := path + ".tmp"
+    os.WriteFile(tmpPath, data, 0644)
+    os.Rename(tmpPath, path)
 }
 
 func onPrivacyToggle(checked bool) {
@@ -3657,7 +4430,7 @@ func setupAutostart() {
 | `internal/branding` | Protocol name → display name mapping, tier label lookup | Pure function tests |
 | `internal/updater` | SHA256 verification (valid hash, wrong hash, empty file), version comparison, platform matching, sentinel crash detection, auto-revert on sentinel, manual `--revert` flag, `.prev` preservation | Mock HTTP downloads; use known test files; simulate crash by leaving sentinel |
 | `internal/heartbeat` | Token expiry logic, grace period calculation, telemetry field sanitization, cert pin hash comparison | Mock HTTP with custom TLS certs |
-| `internal/throttle` | Probe cache TTL, cap floor/ceiling, hardcoded usque tier caps | Mock HTTP with known-speed responses |
+| `internal/throttle` | Connect probe (1MB quick test + staged ramp), EWMA smoothing (α=0.3), cap reduction on sustained low bandwidth, cap increase on sustained headroom, bufferbloat RTT trigger, tier ceiling enforcement (Gaming Mid ≤5MB/s), monitor start/stop lifecycle, concurrent probe + monitor safety | Mock HTTP with known-speed test files; inject RTT delays; verify cap adjustment timing |
 | `internal/health` | Consecutive fail counter, state transition (healthy→degraded→dead), auto-reconnect sequence | No real TUN needed; mock the probe function |
 
 **Run:** `go test -v -race ./internal/...`
@@ -3682,8 +4455,13 @@ These require a real VPS and at least one test device per platform:
 | **Auto-reconnect exhausted** | Both | Block all engines → health retries 5× → GUI shows "Connection Lost — tap to retry" |
 | **Grace period** | Both | Connect → kill VPS → app continues working → GUI shows grace countdown (7→6→...→1 days) |
 | **Grace expiry** | Both | Let grace expire (or mock) → GUI shows "Re-authentication required" |
-| **Bandwidth probe (fast network)** | Both | Connect on fast WiFi → GUI shows green "Fast" → Hysteria 2 uncapped |
-| **Bandwidth probe (congested)** | Both | Throttle VPS to 2MB/s → GUI shows yellow "Congested" → Hysteria 2 capped |
+| **Bandwidth probe (fast network)** | Both | Connect on fast WiFi → GUI shows 🟢 "Fast" → Hysteria 2 uncapped |
+| **Bandwidth probe (congested)** | Both | Throttle VPS to 2MB/s → GUI shows 🟠 "Congested" → Hysteria 2 capped at probed rate |
+| **Bandwidth probe (bufferbloat)** | Both | Throttle VPS with delay → probe detects RTT > 1.5× baseline → skips higher stages → cap at lower tier |
+| **Background monitor (bandwidth drop)** | Both | Start connected → reduce VPS bandwidth to 30% of cap → within 30s monitor reduces cap → GUI updates |
+| **Background monitor (bandwidth increase)** | Both | Start connected at low cap → increase VPS bandwidth → within 60s monitor increases cap → GUI updates |
+| **Background monitor (bufferbloat)** | Both | Inject RTT spike during session → monitor detects >2× baseline → cuts cap by 50% immediately |
+| **Background monitor (stop on disconnect)** | Both | Connect → disconnect → verify monitor goroutine exits (no leak) |
 | **Update (valid)** | Both | Serve new binary with correct SHA256 → client downloads, verifies, applies |
 | **Update (tampered)** | Both | Serve binary with wrong SHA256 → client rejects, keeps current version |
 | **Privacy toggle** | Both | Toggle off → next heartbeat has telemetry fields zeroed |
@@ -3752,8 +4530,13 @@ These require a real VPS and at least one test device per platform:
 - [ ] Privacy opt-out: toggle telemetry off → heartbeat still runs, telemetry fields zeroed
 - [ ] Log rotation: fill engine log past 10MB → rotates, keeps last 3 files
 - [ ] State machine: GUI shows correct state through IDLE→ACTIVE→CONNECTING→CONNECTED→DEGRADED→DISCONNECTED cycle
-- [ ] Bandwidth probe: on throttled network → GUI shows "Congested" → Hysteria 2 capped at probed rate
-- [ ] Bandwidth probe: on fast network → GUI shows "Fast" → Hysteria 2 uncapped
+- [ ] Bandwidth probe: on throttled network → GUI shows appropriate indicator → Hysteria 2 capped at probed rate
+- [ ] Bandwidth probe: on fast network → GUI shows 🟢 "Fast" → Hysteria 2 uncapped
+- [ ] Bandwidth probe: RTT spike during ramp triggers bufferbloat detection → cap reduced
+- [ ] Background monitor: sustained bandwidth drop → cap reduces within 30s
+- [ ] Background monitor: sustained bandwidth increase → cap increases within 60s
+- [ ] Background monitor: bufferbloat RTT spike → cap cut by 50% immediately
+- [ ] Background monitor: stops cleanly on disconnect (goroutine exits)
 - [ ] usque fallback: hardcoded cap applied per tier (1 MB/s Warp Lite, 5 MB/s Gaming Mid)
 - [ ] IPv6 blocked: `ping -6 ipv6.google.com` fails when connected
 - [ ] GUI never shows real protocol names, IPs, ports, or engine binary names
@@ -3775,7 +4558,10 @@ These require a real VPS and at least one test device per platform:
 | Health check shows "dead" but engine runs   | Tunnel misconfigured — check routes and firewall. Try direct ping through TUN IP.                |
 | Kill switch route deletion failed            | Run `netsh interface ip delete route 0.0.0.0/1 <IF_INDEX>` (Windows) or `route delete 0.0.0.0/1` (macOS) manually. |
 | Fyne build fails with CGO errors             | Fyne requires CGO. Install gcc/mingw. On Ubuntu: `sudo apt install build-essential libgl1-mesa-dev xorg-dev`. |
-| Bandwidth probe always shows "Fast"          | Check VPS `/speedtest/1mb.bin` is reachable. Verify Caddy serves it without caching.              |
+| Bandwidth probe always shows "Fast"          | Check VPS `/speedtest/1mb.bin` is reachable. Verify Caddy serves it without caching (`Cache-Control: no-store`). |
+| Bandwidth probe detects bufferbloat falsely   | Baseline RTT too low. Increase `bufferbloatRTTMult` from 2.0 to 2.5 or 3.0 in `monitor.go`. |
+| Monitor oscillates cap up/down rapidly        | EWMA α too high (too responsive). Reduce from 0.3 to 0.15. Increase `minIncreaseInterval` from 30s to 60s. |
+| Monitor never increases cap                   | `increaseThreshold` too high or `increaseWait` too long. Reduce threshold from 1.20 to 1.10 or wait from 60s to 30s. |
 | GUI window is blank/white                    | Fyne OpenGL backend issue. Try `FYNE_RENDERER=software` env var. Or install GPU drivers.          |
 | IPv6 leak detected (IPv6 traffic bypasses tunnel) | Ensure helper service ran `netsh interface ipv6 set interface <IF> disabled` (Win) or no IPv6 route added (macOS). |
 | Certificate pinning blocks connection       | You updated your VPS TLS cert. Generate a new pinned hash and ship an update.                    |
