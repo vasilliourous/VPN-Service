@@ -460,16 +460,20 @@ Start heartbeat loop (every 60s):
     │
     ▼
 User clicks "Connect":
+    ├── Run bandwidth probe (on regular network, BEFORE TUN creation)
+    │   ├── Success → apply probed cap (clamped to tier limits, floored at 3 Mbps)
+    │   ├── Fail/timeout → use fallback default for tier (e.g. 40 Mbps Gaming Max)
+    │   └── Warp Lite → skip probe (hardcoded 1 MB/s cap)
     ├── Create TUN device (wintun / utun)
     ├── Install split-tunnel routes (LAN exclusions, default through TUN)
     ├── Install DNS guard (redirect :53 through tunnel)
     ├── Load highest-priority protocol from list
-    ├── Try engine #1 (e.g. speedmode.exe) → launch as disguised process
-    │   ├── Success → Start health check loop (15s probes)
-    │   │             ├── Healthy → keep running
-    │   │             ├── Degraded (3 fails) → try engine #2
-    │   │             └── All engines fail → Disconnected + kill switch
-    │   └── Fail (15s timeout) → try engine #2
+    ├── Launch engine with bandwidth cap from probe
+    ├── Start background bandwidth monitor (EWMA every 15s, dynamic cap adjustment)
+    ├── Start health check loop (15s probes through tunnel)
+    │   ├── Healthy → keep running
+    │   ├── Degraded (3 fails) → try engine #2
+    │   └── All engines fail → Disconnected + kill switch
     │
     ▼
 User clicks "Disconnect":

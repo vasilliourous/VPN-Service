@@ -2856,57 +2856,92 @@ func probe(tunGateway string) error {
 ### 2. Adaptive Probing Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  CONNECT FLOW                                                    │
-│                                                                  │
-│  User taps Connect                                               │
-│       │                                                          │
-│       ▼                                                          │
-│  ┌─────────────────────────┐   ┌─────────────────────────────┐  │
-│  │ 1. Quick 1MB download   │   │ Tier-based decision:        │  │
-│  │    from /speedtest       │──►│ • Gaming Max → always probe│  │
-│  │    Time it, compute BW   │   │ • Gaming Mid → cap at 80%  │  │
-│  │    If <1.5s → uncapped   │   │ • Warp Lite → skip probe   │  │
-│  │    If ≥1.5s → staged     │   │   (hardcoded 1MB/s cap)    │  │
-│  └──────────┬──────────────┘   └──────────────┬──────────────┘  │
-│             │                                  │                 │
-│             ▼                                  ▼                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 2. Staged Ramp Test (only if quick test was slow)        │   │
-│  │   Stage 1: 500KB @ 500KB/s, measure RTT + loss           │   │
-│  │   Stage 2: 500KB @ 1MB/s, measure RTT + loss             │   │
-│  │   Stage 3: 500KB @ 2MB/s, measure RTT + loss             │   │
-│  │   Stage 4: 500KB @ 5MB/s, measure RTT + loss (Gaming Max)│   │
-│  │                                                           │   │
-│  │   Pick highest cap with:                                  │   │
-│  │   • <1% packet loss AND                                   │   │
-│  │   • RTT < 1.5× baseline RTT (no bufferbloat)              │   │
-│  └──────────────────────────┬───────────────────────────────┘   │
-│                             │                                    │
-│                             ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 3. Apply cap & launch Hysteria 2 with --speed param       │   │
-│  │   • Gaming Max: cap = probe_result (uncapped if fast)    │   │
-│  │   • Gaming Mid:  cap = min(probe_result, 5MB/s)          │   │
-│  │   • Floor: 500KB/s (never lower)                         │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 4. Start background monitor goroutine                     │   │
-│  │   • Every 15s: download 100KB chunk, measure throughput   │   │
-│  │   • EWMA smoothing (α=0.3) on bandwidth samples           │   │
-│  │   • If EWMA drops below 70% of current cap × 2 seconds   │   │
-│  │     → REDUCE cap by 30% immediately (fast reaction)       │   │
-│  │   • If EWMA stays above 120% of current cap × 60 seconds  │   │
-│  │     → INCREASE cap by 20% (up to quick-test max)          │   │
-│  │   • If RTT from monitor shows spike > 2× baseline         │   │
-│  │     → REDUCE cap by 50% (bufferbloat detected)            │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  DISCONNECT FLOW                                                │
-│  • Stop background monitor                                      │
-│  • Log final bandwidth stats to heartbeat telemetry             │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│  CONNECT FLOW                                                      │
+│                                                                    │
+│  User taps Connect                                                 │
+│       │                                                            │
+│       ▼                                                            │
+│  ╔══════════════════════════════════════════════════════════════╗   │
+│  ║  STEP 1 — BANDWIDTH PROBE (runs on regular network,         ║   │
+│  ║            BEFORE TUN is created)                             ║   │
+│  ║  ┌─────────────────────────┐   ┌─────────────────────────┐  ║   │
+│  ║  │ 1a. Quick 1MB download  │   │ Tier-based decision:    │  ║   │
+│  ║  │     from /speedtest      │──►│ • Gaming Max → full     │  ║   │
+│  ║  │     Time it, compute BW  │   │   probe                 │  ║   │
+│  ║  │     If <1.5s → fast      │   │ • Gaming Mid → quick   │  ║   │
+│  ║  │     If ≥1.5s → staged    │   │   probe + ramp         │  ║   │
+│  ║  └──────────┬──────────────┘   │ • Warp Lite → skip      │  ║   │
+│  ║             │                  │   (hardcoded 1MB/s cap)  │  ║   │
+│  ║             ▼                  └─────────────────────────┘  ║   │
+│  ║  ┌──────────────────────────────────────────────────────┐   ║   │
+│  ║  │ 1b. Staged Ramp Test (only if quick test was slow)  │   ║   │
+│  ║  │  Stage 1: 500KB @ 500KB/s, measure RTT + loss       │   ║   │
+│  ║  │  Stage 2: 500KB @ 1MB/s, measure RTT + loss         │   ║   │
+│  ║  │  Stage 3: 500KB @ 2MB/s, measure RTT + loss         │   ║   │
+│  ║  │  Stage 4: 500KB @ 5MB/s, measure RTT + loss (Max)   │   ║   │
+│  ║  │                                                     │   ║   │
+│  ║  │  Pick highest cap with:                             │   ║   │
+│  ║  │  • <1% packet loss AND                              │   ║   │
+│  ║  │  • RTT < 1.5× baseline RTT (no bufferbloat)         │   ║   │
+│  ║  └──────────────────────┬──────────────────────────────┘   ║   │
+│  ║                         │                                   ║   │
+│  ║  ┌──────────────────────▼──────────────────────────────┐   ║   │
+│  ║  │ 1c. Clamp result to tier limits + fallback defaults │   ║   │
+│  ║  │                                                    │   ║   │
+│  ║  │  Hard caps (never exceed):                         │   ║   │
+│  ║  │  • Gaming Max: max 100 Mbps (12,500 KB/s)          │   ║   │
+│  ║  │  • Gaming Mid:  max  50 Mbps ( 6,250 KB/s)         │   ║   │
+│  ║  │  • Floor:  min   3 Mbps (   375 KB/s)  ← never     │   ║   │
+│  ║  │           starves the connection                   │   ║   │
+│  ║  │                                                    │   ║   │
+│  ║  │  If probe fails/timeout → fallback to safe default:│   ║   │
+│  ║  │  • Gaming Max: 40 Mbps (5,000 KB/s)                │   ║   │
+│  ║  │  • Gaming Mid: 20 Mbps (2,500 KB/s)                │   ║   │
+│  ║  │  • Warp Lite:   8 Mbps (1,000 KB/s)                │   ║   │
+│  ║  │  The background monitor refines from there.        │   ║   │
+│  ║  └────────────────────────────────────────────────────┘   ║   │
+│  ╚══════════════════════════════════════════════════════════════╝   │
+│       │                                                            │
+│       ▼                                                            │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  STEP 2 — CREATE TUN DEVICE & INSTALL ROUTES               │    │
+│  │  • Create wintun/utun interface                             │    │
+│  │  • Install split-tunnel routes (LAN exclusions)             │    │
+│  │  • Install DNS guard (redirect :53 through tunnel)         │    │
+│  │  • Apply kill switch routes                                 │    │
+│  └──────────────────────────┬─────────────────────────────────┘    │
+│                             │                                      │
+│                             ▼                                      │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  STEP 3 — LAUNCH ENGINE WITH PROBED CAP                    │    │
+│  │  • Load highest-priority protocol (e.g. Hysteria 2)        │    │
+│  │  • Inject probed cap into Hysteria 2 config via --speed     │    │
+│  │    or config file "speed" field (bps)                       │    │
+│  │  • Start engine process                                     │    │
+│  │  • Start health check loop (15s tunnel probes)             │    │
+│  └──────────────────────────┬─────────────────────────────────┘    │
+│                             │                                      │
+│                             ▼                                      │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  STEP 4 — START BACKGROUND MONITOR                         │    │
+│  │  • Every 15s: download 100KB chunk via regular network     │    │
+│  │  • EWMA smoothing (α=0.3) on bandwidth samples             │    │
+│  │  • If EWMA < 70% of cap × 2 consecutive samples           │    │
+│  │    → REDUCE cap by 30% (fast reaction)                     │    │
+│  │  • If EWMA > 120% of cap × 60 seconds                     │    │
+│  │    → INCREASE cap by 20% (cautious rise)                   │    │
+│  │  • If RTT spike > 2× baseline                              │    │
+│  │    → CUT cap by 50% (bufferbloat!)                         │    │
+│  │  • All adjustments clamped to tier min/max limits          │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                                                                    │
+│  DISCONNECT FLOW                                                  │
+│  • Stop background monitor                                        │
+│  • Stop engine + remove TUN + restore routes                      │
+│  • Log final bandwidth stats to heartbeat telemetry               │
+└────────────────────────────────────────────────────────────────────┘
+```
 ```
 
 ### 3. `internal/throttle/probe.go` — Initial Connect Probe
@@ -2922,74 +2957,130 @@ import (
     "time"
 )
 
-// ProbeResult holds the inferred bandwidth state for Hysteria 2.
-type ProbeResult struct {
-    MaxThroughputKBps int       // Inferred safe cap in KB/s; 0 = uncapped
-    SuggestedKBps     int       // The cap to actually apply (tier-adjusted)
-    PacketLoss        float64   // Packet loss at the chosen cap
-    BaselineRTT       time.Duration // RTT to VPS before congestion (bufferbloat baseline)
-    ProbedAt          time.Time
-    NetworkCondition  string    // "fast", "congested", "degraded", "offline"
+// ── Hard cap limits (absolute, applied after every probe and every monitor adjustment) ──
+//
+// These prevent the adaptive system from ever setting a cap that exceeds
+// the VPS uplink or the plan's contracted maximum, and ensure the connection
+// never starves itself below a usable minimum.
+const (
+    // Absolute minimum floor: 3 Mbps (≈375 KB/s)
+    // Even on a terrible network, don't go below this so the user can still
+    // browse, send chat messages, or play low-bandwidth games.
+    minFloorKBps = 375 // 3 Mbps
+
+    // Gaming Max: hard ceiling 100 Mbps (≈12,500 KB/s)
+    // No school WiFi or consumer VPS uplink will reliably exceed this.
+    gamingMaxCeilingKBps = 12500
+
+    // Gaming Mid: hard ceiling 50 Mbps (≈6,250 KB/s)
+    gamingMidCeilingKBps = 6250
+
+    // Warp Lite: hard ceiling 8 Mbps (1,000 KB/s)
+    warpLiteCeilingKBps = 1000
+)
+
+// ── Probe parameters ──
+const (
+    probeCeilingKBps   = 15000               // don't bother probing above ~120 Mbps
+    quickTestThreshold = 1500 * time.Millisecond
+    quickTestSize      = 1 * 1024 * 1024     // 1MB
+    stageSize          = 500 * 1024          // 500KB per stage
+)
+
+// ── Fallback defaults (used when the probe fails or times out) ──
+//
+// If the VPS speedtest endpoint is unreachable, or the download returns
+// garbage, we fall back to conservative but usable tier-based values.
+// The background monitor will then refine from this starting point.
+var fallbackDefaultsKBps = map[string]int{
+    "gaming_max": 5000,   // 40 Mbps — safe middle ground for Gaming Max
+    "gaming_mid": 2500,   // 20 Mbps — safe middle ground for Gaming Mid
+    "warp_lite":  1000,   //  8 Mbps — hardcoded, same as normal
 }
 
-const (
-    probeFloorKBps     = 500    // never cap below ~4 Mbps
-    probeCeilingKBps   = 15000  // never probe above ~120 Mbps
-    gamingMidCapKBps   = 5000   // Gaming Mid hard ceiling (40 Mbps)
-    quickTestThreshold = 1500 * time.Millisecond
-    quickTestSize      = 1 * 1024 * 1024 // 1MB
-    stageSize          = 500 * 1024      // 500KB per stage
-)
+// ProbeResult holds the inferred bandwidth state for Hysteria 2.
+type ProbeResult struct {
+    MaxThroughputKBps int            // Inferred safe cap in KB/s; 0 = uncapped
+    SuggestedKBps     int            // The cap to actually apply (tier-adjusted + clamped)
+    PacketLoss        float64        // Packet loss at the chosen cap
+    BaselineRTT       time.Duration  // RTT to VPS before congestion (bufferbloat baseline)
+    ProbedAt          time.Time
+    NetworkCondition  string         // "fast", "congested", "degraded", "offline"
+    FallbackUsed      bool           // true if probe failed and we used fallback default
+}
 
 // Probe runs a full bandwidth test against the VPS and returns
 // the recommended throttle cap for Hysteria 2.
-// Called on every connect — NOT cached.
-func Probe(apiBase, tier string) (*ProbeResult, error) {
+// Called on EVERY connect — NOT cached.
+// Runs BEFORE TUN device creation so traffic uses the regular network.
+//
+// If the probe fails entirely, returns a safe fallback default for the tier
+// (no error) so the connection can still proceed. The background monitor
+// will refine the cap once the session is active.
+func Probe(apiBase, tier string) *ProbeResult {
     // Step 1: Measure baseline RTT (before any load)
     baselineRTT, err := measureBaselineRTT(apiBase + "/speedtest/500kb.bin")
     if err != nil {
-        return nil, fmt.Errorf("baseline RTT failed: %w", err)
+        return fallbackResult(tier, "offline")
     }
 
     // Step 2: Quick 1MB download
     start := time.Now()
     bwBytes, err := downloadChunk(apiBase+"/speedtest/1mb.bin", quickTestSize, 0)
     if err != nil {
-        return nil, fmt.Errorf("quick probe failed: %w", err)
+        return fallbackResult(tier, "offline")
     }
     elapsed := time.Since(start)
+    if elapsed < 1*time.Millisecond {
+        return fallbackResult(tier, "offline")
+    }
     quickThroughputKBps := int(float64(bwBytes) / elapsed.Seconds() / 1024)
 
-    // Step 3: Decide probing depth based on tier + quick result
+    // Step 3: Build result container
     result := &ProbeResult{
-        ProbedAt:     time.Now(),
-        BaselineRTT:  baselineRTT,
-        PacketLoss:   0,
+        ProbedAt:    time.Now(),
+        BaselineRTT: baselineRTT,
+        PacketLoss:  0,
     }
 
-    if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
-        // Network is genuinely fast — no cap needed for Gaming Max
-        result.MaxThroughputKBps = 0 // 0 = uncapped
-        result.NetworkCondition = "fast"
-        result.SuggestedKBps = tierSuggestedCap(tier, 0)
-        return result, nil
+    // Step 4: Decide whether to skip / fast-path based on tier + quick result
+    switch tier {
+    case "warp_lite":
+        // Warp Lite uses hardcoded cap — no ramp test needed
+        result.MaxThroughputKBps = clampToTier(warpLiteCeilingKBps, tier)
+        result.NetworkCondition = "congested"
+        result.SuggestedKBps = clampToTier(warpLiteCeilingKBps, tier)
+        return result
+    case "gaming_mid":
+        if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
+            // Fast network — use the tier ceiling as the cap
+            result.MaxThroughputKBps = 0 // uncapped at network level
+            result.NetworkCondition = "fast"
+            result.SuggestedKBps = clampToTier(gamingMidCeilingKBps, tier)
+            return result
+        }
+    case "gaming_max":
+        if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
+            // Genuinely fast — no cap needed
+            result.MaxThroughputKBps = 0
+            result.NetworkCondition = "fast"
+            result.SuggestedKBps = 0 // 0 = uncapped
+            return result
+        }
     }
 
-    // Step 4: Staged ramp test (network is congested or moderate)
+    // Step 5: Staged ramp test (network is congested or moderate)
     var stageCaps []int
     switch tier {
     case "gaming_max":
         stageCaps = []int{500, 1000, 2000, 5000, 10000, probeCeilingKBps}
     case "gaming_mid":
         stageCaps = []int{500, 1000, 2000, 5000}
-    default: // warp_lite — skip ramp, use hardcoded
-        result.MaxThroughputKBps = 1000 // 1 MB/s
-        result.NetworkCondition = "congested"
-        result.SuggestedKBps = 1000
-        return result, nil
+    default:
+        return fallbackResult(tier, "offline")
     }
 
-    bestCap := probeFloorKBps
+    bestCap := minFloorKBps
     bestLoss := 1.0
 
     for _, capKBps := range stageCaps {
@@ -3014,7 +3105,7 @@ func Probe(apiBase, tier string) (*ProbeResult, error) {
 
     result.MaxThroughputKBps = bestCap
     result.PacketLoss = bestLoss
-    result.SuggestedKBps = tierSuggestedCap(tier, bestCap)
+    result.SuggestedKBps = clampToTier(bestCap, tier)
 
     if bestCap <= 1000 {
         result.NetworkCondition = "degraded"
@@ -3022,26 +3113,69 @@ func Probe(apiBase, tier string) (*ProbeResult, error) {
         result.NetworkCondition = "congested"
     }
 
-    return result, nil
+    return result
 }
 
-// tierSuggestedCap applies tier-based ceilings to the raw probe result.
-// Gaming Max uses the full probed cap (or 0 = uncapped if fast).
-// Gaming Mid caps at 5MB/s even if the network could handle more.
-func tierSuggestedCap(tier string, probedKBps int) int {
+// clampToTier applies absolute per-tier hard caps and floor to a raw KBps value.
+// Every probe result and every monitor adjustment MUST pass through this function
+// before being applied to the engine.
+//
+// Rules:
+//   - Never go below minFloorKBps (3 Mbps) — prevents starvation.
+//   - Never exceed the tier's ceiling — respects VPS uplink limit and plan tier.
+//   - 0 (uncapped) is preserved only for Gaming Max on a genuinely fast network.
+func clampToTier(rawKBps int, tier string) int {
+    // First enforce absolute floor
+    if rawKBps > 0 && rawKBps < minFloorKBps {
+        rawKBps = minFloorKBps
+    }
+
     switch tier {
     case "gaming_max":
-        return probedKBps // 0 = uncapped, else use probed value
+        if rawKBps == 0 {
+            return 0 // uncapped — genuine fast network
+        }
+        if rawKBps > gamingMaxCeilingKBps {
+            return gamingMaxCeilingKBps
+        }
+        return rawKBps
     case "gaming_mid":
-        if probedKBps == 0 {
-            return gamingMidCapKBps
+        if rawKBps > gamingMidCeilingKBps {
+            return gamingMidCeilingKBps
         }
-        if probedKBps > gamingMidCapKBps {
-            return gamingMidCapKBps
+        if rawKBps <= 0 {
+            return gamingMidCeilingKBps // uncapped not allowed for Mid
         }
-        return probedKBps
-    default: // warp_lite
-        return 1000 // 1 MB/s fixed
+        return rawKBps
+    case "warp_lite":
+        if rawKBps > warpLiteCeilingKBps {
+            return warpLiteCeilingKBps
+        }
+        if rawKBps <= 0 {
+            return warpLiteCeilingKBps
+        }
+        return rawKBps
+    default:
+        return rawKBps
+    }
+}
+
+// fallbackResult returns a safe default ProbeResult when the probe fails.
+// The background monitor will refine from this starting point once the session
+// is active and it can gather real samples.
+func fallbackResult(tier string, condition string) *ProbeResult {
+    fallback, ok := fallbackDefaultsKBps[tier]
+    if !ok {
+        fallback = 1000
+    }
+    return &ProbeResult{
+        MaxThroughputKBps: fallback,
+        SuggestedKBps:     clampToTier(fallback, tier),
+        PacketLoss:        0,
+        BaselineRTT:       100 * time.Millisecond, // assume a reasonable baseline
+        ProbedAt:          time.Now(),
+        NetworkCondition:  condition,
+        FallbackUsed:      true,
     }
 }
 
@@ -3054,6 +3188,20 @@ func measureBaselineRTT(url string) (time.Duration, error) {
     }
     resp.Body.Close()
     return time.Since(start), nil
+}
+
+// downloadChunk downloads size bytes with an optional rate limit (0 = no limit).
+func downloadChunk(url string, size int, rateLimitKBps int) (int64, error) {
+    // HTTP GET with optional token-bucket rate limiter
+    // Returns number of bytes received, or error if download fails / too slow
+    return 0, nil
+}
+
+// measureLoss downloads a chunk with rate limiting and measures
+// application-level loss (bytes requested vs bytes received) plus RTT.
+func measureLoss(url string, size int, rateLimitKBps int) (float64, time.Duration, error) {
+    // download with token-bucket limiter, return loss ratio and RTT
+    return 0, 0, nil
 }
 ```
 
@@ -3193,10 +3341,7 @@ func (m *Monitor) loop() {
             if rtt > 0 && m.baselineRTT > 0 && rtt > time.Duration(float64(m.baselineRTT)*bufferbloatRTTMult) {
                 // Bufferbloat! Cut cap aggressively
                 newCap := int(float64(currentCap) * 0.5)
-                if newCap < probeFloorKBps {
-                    newCap = probeFloorKBps
-                }
-                m.adjustCap(newCap)
+                m.adjustCap(newCap) // clampToTier inside adjustCap enforces floor
                 lowSamples = 0
                 highSamples = 0
                 continue
@@ -3211,10 +3356,7 @@ func (m *Monitor) loop() {
                     if lowSamples >= int(reduceWait/monitorInterval) {
                         // Sustained drop — reduce cap
                         newCap := int(float64(currentCap) * 0.7)
-                        if newCap < probeFloorKBps {
-                            newCap = probeFloorKBps
-                        }
-                        m.adjustCap(newCap)
+                        m.adjustCap(newCap) // clampToTier inside adjustCap enforces floor
                         lowSamples = 0
                     }
                 } else if float64(smoothedKBps) > float64(currentCap)*increaseThreshold {
@@ -3223,10 +3365,7 @@ func (m *Monitor) loop() {
                     if highSamples >= int(increaseWait/monitorInterval) {
                         // Sustained headroom — cautiously increase
                         newCap := int(float64(currentCap) * 1.2)
-                        if newCap > probeCeilingKBps {
-                            newCap = probeCeilingKBps
-                        }
-                        m.adjustCap(newCap)
+                        m.adjustCap(newCap) // clampToTier inside adjustCap enforces ceiling
                         highSamples = 0
                     }
                 } else {
@@ -3236,13 +3375,10 @@ func (m *Monitor) loop() {
                 }
             } else {
                 // Currently uncapped. If EWMA shows constrained bandwidth, apply a cap.
-                if smoothedKBps > 0 && float64(smoothedKBps) < float64(probeCeilingKBps)*0.5 {
+                if smoothedKBps > 0 && float64(smoothedKBps) < float64(gamingMaxCeilingKBps)*0.5 {
                     // Network is fast but not unlimited — cap at 90% of measured
                     newCap := int(float64(smoothedKBps) * 0.9)
-                    if newCap < probeFloorKBps {
-                        newCap = probeFloorKBps
-                    }
-                    m.adjustCap(newCap)
+                    m.adjustCap(newCap) // clampToTier inside adjustCap enforces floor/ceiling
                 }
             }
         }
@@ -3279,17 +3415,14 @@ func (m *Monitor) sampleBandwidth() (throughputKBps int, rtt time.Duration, err 
 }
 
 // adjustCap atomically updates the current cap and fires the callback.
+// Every new cap value is run through clampToTier() to enforce absolute
+// per-tier limits (floor 3 Mbps, ceiling 50/100 Mbps depending on tier).
 func (m *Monitor) adjustCap(newCapKBps int) {
     m.adjustmentMu.Lock()
     defer m.adjustmentMu.Unlock()
 
-    // Enforce tier ceiling
-    switch m.tier {
-    case "gaming_mid":
-        if newCapKBps > gamingMidCapKBps {
-            newCapKBps = gamingMidCapKBps
-        }
-    }
+    // Clamp to absolute per-tier limits before applying
+    newCapKBps = clampToTier(newCapKBps, m.tier)
 
     oldCap := int(atomic.LoadInt64(&m.currentCapKBps))
     if newCapKBps == oldCap {
@@ -3348,11 +3481,11 @@ func TestMonitorAdjustCapTierCeiling(t *testing.T) {
     called := false
     m := NewMonitor("http://test", "gaming_mid", 50*time.Millisecond, 5000, func(cap int) {
         called = true
-        if cap > gamingMidCapKBps {
-            t.Errorf("gaming_mid cap %d exceeds ceiling %d", cap, gamingMidCapKBps)
+        if cap > gamingMidCeilingKBps {
+            t.Errorf("gaming_mid cap %d exceeds ceiling %d", cap, gamingMidCeilingKBps)
         }
     })
-    m.adjustCap(10000) // should be clamped to 5000
+    m.adjustCap(10000) // should be clamped to gamingMidCeilingKBps (6250)
     if !called {
         t.Error("callback not invoked")
     }
@@ -3377,17 +3510,15 @@ var (
     probeMu         sync.RWMutex
 )
 
-// RunProbe performs a fresh bandwidth probe and returns the result.
-// Called on every connect.
-func RunProbe(apiBase, tier string) (*ProbeResult, error) {
-    result, err := Probe(apiBase, tier)
-    if err != nil {
-        return nil, err
-    }
+// RunProbe performs a fresh bandwidth probe and caches the result.
+// Called on every connect. Uses the new Probe() which always returns
+// a result (fallback defaults if the probe fails).
+func RunProbe(apiBase, tier string) *ProbeResult {
+    result := Probe(apiBase, tier)
     probeMu.Lock()
     lastProbeResult = result
     probeMu.Unlock()
-    return result, nil
+    return result
 }
 
 // StartBackgroundMonitor begins continuous bandwidth monitoring.
@@ -3914,42 +4045,62 @@ func onConnect() {
         manager.Disconnect()
         return
     }
-    // Run adaptive bandwidth probe before connecting (fresh probe every time)
+
+    // ── IMPORTANT: PROBE BEFORE TUN ──
+    // The bandwidth probe MUST complete BEFORE the TUN device is created
+    // and routes are installed. Probe traffic goes over the regular network
+    // interface to measure true link bandwidth. If we created the TUN first,
+    // probe downloads would try to route through the not-yet-ready tunnel,
+    // giving false (low) readings.
+    //
+    // Flow: Probe → Create TUN + Routes → Launch Engine → Start Monitor
     go func() {
         tier := storage.LoadPlanTier()
 
-        // Skip probe for Warp Lite (uses hardcoded cap)
+        // Warp Lite uses a hardcoded 1 MB/s cap — skip the probe entirely
         if tier == "warp_lite" {
             manager.Connect()
             return
         }
 
-        result, err := throttle.RunProbe(storage.LoadAPIBase(), tier)
-        if err != nil {
-            state.NetworkLabel.SetText("Network: Probe failed")
-            // Still connect with safe fallback cap
-            manager.Connect()
-            return
-        }
+        // Step 1: Run bandwidth probe (uses regular network, NOT the tunnel)
+        result := throttle.RunProbe(storage.LoadAPIBase(), tier)
 
-        // Update GUI
+        // Update GUI with probe result
         statusLabel := "Network: "
         switch result.NetworkCondition {
         case "fast":
             statusLabel += "🟢 Fast"
+        case "moderate":
+            statusLabel += "🟡 Moderate"
         case "congested":
             statusLabel += "🟠 Congested"
         case "degraded":
             statusLabel += "🔴 Slow"
+        case "offline":
+            statusLabel += "⚫ Offline"
         default:
             statusLabel += result.NetworkCondition
         }
         state.NetworkLabel.SetText(statusLabel)
 
-        // Start connection
+        if result.FallbackUsed {
+            // Probe failed — log but proceed with fallback cap.
+            // The background monitor will refine from here.
+            state.SpeedLabel.SetText(fmt.Sprintf("Speed: ~%d KB/s (fallback)", result.SuggestedKBps))
+        } else if result.SuggestedKBps > 0 {
+            state.SpeedLabel.SetText(fmt.Sprintf("Speed: ~%d KB/s", result.SuggestedKBps))
+        } else {
+            state.SpeedLabel.SetText("Speed: Max")
+        }
+
+        // Step 2: Create TUN, install routes, launch engine with probed cap
+        //         (manager.Connect reads the cap from throttle.CurrentBandwidthCapKBps())
         manager.Connect()
 
-        // Start background bandwidth monitor (runs during session)
+        // Step 3: Start background bandwidth monitor (runs during session)
+        //         The monitor continuously adjusts the cap up/down based on
+        //         real-time EWMA measurements and bufferbloat detection.
         throttle.StartBackgroundMonitor(
             storage.LoadAPIBase(),
             tier,

@@ -324,7 +324,9 @@ The client implements a three-layer adaptive bandwidth system built specifically
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  LAYER 1: Connect Probe (runs fresh on every tap Connect)    │
+│  LAYER 1: Connect Probe (runs BEFORE TUN creation)           │
+│  ──────── Probe traffic uses the regular network, ────────   │
+│  ──────── NOT the tunnel (which doesn't exist yet)  ──────── │
 │                                                              │
 │  ┌──────────────────────────────────┐                        │
 │  │ 1. Baseline RTT to VPS (HEAD  )  │                        │
@@ -335,15 +337,24 @@ The client implements a three-layer adaptive bandwidth system built specifically
 │  │ 4. Pick highest cap with:        │                        │
 │  │    • <1% packet loss AND         │                        │
 │  │    • RTT < 1.5× baseline RTT     │                        │
+│  │ 5. Clamp to tier limits:         │                        │
+│  │    • Floor:  3 Mbps (min)        │                        │
+│  │    • Max:   50 Mbps (Mid)        │                        │
+│  │              100 Mbps (Max)      │                        │
+│  │ 6. If probe fails → use fallback │                        │
+│  │    (40/20/8 Mbps per tier)       │                        │
 │  └──────────┬───────────────────────┘                        │
 │             │                                                │
 │             ▼                                                │
-│  ┌──────────────────────────────────┐                        │
-│  │ Apply cap to Hysteria 2 config   │                        │
-│  │ via --speed (bps) parameter       │                        │
-│  └──────────┬───────────────────────┘                        │
-│             │                                                │
-│             ▼                                                │
+│  ┌──────────────────────────────────────────────────┐        │
+│  │  ╔══ CREATE TUN DEVICE + INSTALL ROUTES ═════╗  │        │
+│  │  ║  Now the tunnel is ready for engine traffic║  │        │
+│  │  ╚════════════════════════════════════════════╝  │        │
+│  │  Apply clamped cap to Hysteria 2 config          │        │
+│  │  via --speed (bps) and launch engine             │        │
+│  └──────────────────┬───────────────────────────────┘        │
+│                     │                                        │
+│                     ▼                                        │
 │  LAYER 2: Background Monitor (every 15s while connected)     │
 │                                                              │
 │  ┌──────────────────────────────────┐                        │
@@ -382,15 +393,18 @@ The client implements a three-layer adaptive bandwidth system built specifically
 | **QoS kicks in during peak class time** | Brutal CC fills buffer → 800ms latency | Monitor detects RTT spike → cuts cap → stable 120ms |
 | **Bandwidth frees up after lunch** | Stuck at old low cap → underutilized link | Monitor sees headroom → increases cap → full speed |
 | **Quick connect from dorm** | 30-min cache from congested hallway → slow start | Fresh probe every connect → accurate cap immediately |
-| **School IT rate-limits your MAC** | Keeps trying at high speed → gets blocked | Drops to floor (500KB/s) → avoids detection |
+| **School IT rate-limits your MAC** | Keeps trying at high speed → gets blocked | Drops to floor (3 Mbps) → avoids detection |
+| **Probe fails / VPS speedtest down** | Connection fails or uses stale data | Falls back to safe tier default (40/20/8 Mbps) → monitor refines from there |
+| **VPS uplink is the bottleneck** | Probe says 150 Mbps → engine pushes VPS too hard | Hard cap at tier ceiling (100/50/8 Mbps) protects VPS uplink |
+| **Bandwidth drops below 500 KB/s** | Engine starves or behaves erratically | Floor of 3 Mbps (375 KB/s) prevents total starvation |
 
 ### Tier-Specific Behavior
 
-| Plan | Probe Depth | Dynamic Monitor | Notes |
-|---|---|---|---|
-| **Gaming Max** ($10-13/mo) | Full: quick test + staged ramp up to 15MB/s | Yes — adjusts up/down in real-time | Uncapped if fast, otherwise dynamically limited to prevent lag spikes |
-| **Gaming Mid** ($5-8/mo) | Quick test + capped ramp to 5MB/s | Yes — but ceiling at 5MB/s | Hard ceiling enforced even if network could go faster |
-| **Warp Lite** ($2-4/mo) | Skipped entirely | No — uses hardcoded 1MB/s cap | usque doesn't need dynamic adjustment |
+| Plan | Probe Depth | Cap Floor | Cap Ceiling | Dynamic Monitor | Notes |
+|---|---|---|---|---|---|
+| **Gaming Max** ($10-13/mo) | Full: quick test + staged ramp up to 100 Mbps | **3 Mbps** (never starve) | **100 Mbps** (VPS uplink limit) | Yes — adjusts up/down in real-time | Uncapped if fast, else dynamically limited & clamped. Probe failure → fallback to 40 Mbps |
+| **Gaming Mid** ($5-8/mo) | Quick test + capped ramp to 50 Mbps | **3 Mbps** (never starve) | **50 Mbps** (tier limit) | Yes — but ceiling at 50 Mbps | Hard ceiling even if network could go faster. Probe failure → fallback to 20 Mbps |
+| **Warp Lite** ($2-4/mo) | Skipped entirely | — | **8 Mbps** (hardcoded) | No — uses hardcoded 1 MB/s cap | usque doesn't need dynamic adjustment |
 
 ### Key Metrics to Monitor
 
