@@ -11,13 +11,32 @@
             "id": "b6d1365d4f810778",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "Niwa Science Fair/Revised-Plan.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "New tab"
+              "title": "Revised-Plan"
+            }
+          },
+          {
+            "id": "438396838e16547d",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Niwa Science Fair/Notes-for-the-Science-Fair.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Notes-for-the-Science-Fair"
             }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -179,12 +198,13 @@
       "bases:Create new base": false
     }
   },
-  "active": "b6d1365d4f810778",
+  "active": "438396838e16547d",
   "lastOpenFiles": [
     "Niwa Science Fair/Revised-Plan.md",
-    "School Business/PLAN.md",
-    "Niwa Science Fair/Specifications.md",
+    "Niwa Science Fair/Notes-for-the-Science-Fair.md",
     "Niwa Science Fair/Legacy-Plan.md",
+    "Niwa Science Fair/Specifications.md",
+    "School Business/PLAN.md",
     "School Business/school-vpn-blocking-implementation.md",
     "School Business/threat-model-rookie-provider.md",
     "Specifications-for-Simplified-Design.md",
