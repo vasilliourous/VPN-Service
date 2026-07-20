@@ -1,6 +1,6 @@
 # VPN App — Action Plan (v3 Hardened)
 
-**Goal:** Cross-platform VPN app (Windows + macOS) with Hysteria 2 (gaming primary) and usque/Warp (fallback — unbottlenecked for Gaming plans). Activation codes are permanently bound to a single hardware-fingerprinted device with server-side suspension capability. Features: TUN mode via privileged helper service, auto-reconnect loop, certificate pinning, heartbeat grace period, process sandboxing, and tunnel health checks.
+**Goal:** Cross-platform VPN app (Windows + macOS) with Hysteria 2 (primary for all paid plans) and usque/Warp (fallback). Four tiers: Warp Lite (usque-only), Stealth Browse (throughput-optimized Hysteria 2 — max streaming/downloads, terrible gaming), Gaming Mid, Gaming Max. Activation codes are permanently bound to a single hardware-fingerprinted device with server-side suspension capability. Features: TUN mode via privileged helper service, auto-reconnect loop, certificate pinning, heartbeat grace period, process sandboxing, and tunnel health checks.
 
 **Stack:** Go + Fyne (minimal GUI) + Hysteria 2 + usque + PocketBase + Caddy  
 **Prerequisite:** VPS (Ubuntu 22.04, 2GB RAM), domain pointing to it
@@ -24,7 +24,7 @@
 - ✅ **Suspension, not deactivation** — admin can suspend a device from connecting. Binding is never destroyed; code can never be reused on a different device.
 - ✅ **Minimal proper GUI** (not systray) — small window with connection status, tier name, speed indicator, time connected. No technical protocol names exposed. Intransparency by design.
 - ✅ **Adaptive speed probing + real-time bandwidth monitoring** — usque: hardcoded per-tier caps; Hysteria 2: **fresh bandwidth probe on every connect** + continuous EWMA-smoothed background monitor that dynamically adjusts the cap mid-session to prevent bufferbloat from QoS shaping fluctuations
-- ✅ **MVP protocol scope: Hysteria 2 + usque only** — no VLESS-REALITY, TUIC v5, or Xray in initial release. Added in Phase 2 per market demand.
+- ✅ **MVP protocol scope: Hysteria 2 + usque only** — no VLESS-REALITY, TUIC v5, or Xray in initial release. Added in Phase 2 per market demand. Stealth Browse tier uses Hysteria 2 with **standard CC** (throughput-optimized, not gaming-tuned Brutal) — max streaming/download speed but latency spikes make gaming unplayable.
 - ✅ **IPv6: blocked entirely on TUN interface** — prevents IPv6 leaks. Documented as known limitation.
 - ✅ **Rollback safety** — previous binary kept as `myvpn.prev`, two-phase sentinel handshake auto-reverts on crash after update, manual `--revert` flag as backup
 - ❌ **macOS notarization & codesigning** — skipped intentionally. Target users are on school-managed Macs where Gatekeeper is often disabled or bypassable via "Open Anyway." Apple Developer Program ($99/yr) deferred until revenue covers it.
@@ -379,7 +379,7 @@ In the PocketBase admin UI (`https://api.yourdomain.com/_/`), create these colle
 
 **`activation_codes`** — the codes middlemen hand out:
 - `code` (text, unique) — e.g. `MYVPN-A7X3-K9M2-Q5P1-C`
-- `plan` (text) — `warp_lite`, `gaming_mid`, `gaming_max`
+- `plan` (text) — `warp_lite`, `stealth_browse`, `gaming_mid`, `gaming_max`
 - `bound_device_id` (text, unique, nullable) — SHA256 hardware fingerprint of the permanently bound device; `null` when code is fresh/unused
 - `suspended` (bool, default false) — server can suspend connections without breaking the permanent binding
 - `suspended_reason` (text, optional) — admin note (e.g. "reported stolen")
@@ -994,7 +994,7 @@ var (
     // Display names are obfuscated — users never see real protocol names.
     // "Lite Mode" = usque/Warp. Bandwidth limits are NOT tied to this name;
     // they're enforced client-side by the app based on plan_tier
-    // (warp_lite = throttled, gaming_mid/gaming_max fallback = unbottlenecked).
+    // (warp_lite = throttled, stealth_browse = generous cap + standard CC = terrible gaming, gaming_mid/gaming_max fallback = unbottlenecked).
     // usque connects directly to Cloudflare — no VPS in the data path to throttle.
     names  = map[string]string{
         "hysteria2": "Speed Mode",
@@ -1009,9 +1009,11 @@ var (
         "tuic":      "turbomode",
     }
     plans = map[string]string{
-        "warp_lite":  "Warp Lite",
-        "gaming_max": "Gaming Max",
-        "turbo":      "Turbo",
+        "warp_lite":      "Warp Lite",
+        "stealth_browse": "Stealth Browse",
+        "gaming_mid":     "Gaming Mid",
+        "gaming_max":     "Gaming Max",
+        "turbo":          "Turbo",
     }
 )
 
@@ -1412,10 +1414,19 @@ func buildHysteria2Command(binaryPath string, configJSON json.RawMessage, planTi
         // Gaming Max: use whatever the probe says (may be uncapped)
         // The monitor will dynamically adjust during the session
     case "gaming_mid":
-        // Gaming Mid: hard ceiling of 5 MB/s (40 Mbps = 40,000,000 bps)
+        // Gaming Mid: hard ceiling of 5 MB/s (40 Mbps = 40,000,000 bps) — gaming-tuned Brutal CC
         midBps := 5000 * 8000
         if capKBps == 0 || capKBps > 5000 {
             cfg["speed"] = midBps
+        }
+    case "stealth_browse":
+        // Stealth Browse: high throughput cap of 10 MB/s (80 Mbps)
+        // Uses standard Hysteria 2 congestion control (NOT Brutal CC).
+        // Standard CC optimises for throughput → great for streaming/downloads
+        // but latency spikes under load → genuinely terrible for gaming.
+        stealthBps := 10000 * 8000
+        if capKBps == 0 || capKBps > 10000 {
+            cfg["speed"] = stealthBps
         }
     case "warp_lite":
         // Warp Lite doesn't use Hysteria 2; handled by usque code path
@@ -2871,7 +2882,9 @@ func probe(tunGateway string) error {
 │  ║  │     Time it, compute BW  │   │   probe                 │  ║   │
 │  ║  │     If <1.5s → fast      │   │ • Gaming Mid → quick   │  ║   │
 │  ║  │     If ≥1.5s → staged    │   │   probe + ramp         │  ║   │
-│  ║  └──────────┬──────────────┘   │ • Warp Lite → skip      │  ║   │
+│  ║  └──────────┬──────────────┘   │ • Stealth Browse →     │  ║   │
+│  ║             │                  │   quick probe + ramp    │  ║   │
+│  ║             │                  │ • Warp Lite → skip      │  ║   │
 │  ║             │                  │   (hardcoded 1MB/s cap)  │  ║   │
 │  ║             ▼                  └─────────────────────────┘  ║   │
 │  ║  ┌──────────────────────────────────────────────────────┐   ║   │
@@ -2879,7 +2892,10 @@ func probe(tunGateway string) error {
 │  ║  │  Stage 1: 500KB @ 500KB/s, measure RTT + loss       │   ║   │
 │  ║  │  Stage 2: 500KB @ 1MB/s, measure RTT + loss         │   ║   │
 │  ║  │  Stage 3: 500KB @ 2MB/s, measure RTT + loss         │   ║   │
-│  ║  │  Stage 4: 500KB @ 5MB/s, measure RTT + loss (Max)   │   ║   │
+│  ║  │  Stage 4: 500KB @ 5MB/s, measure RTT + loss         │   ║   │
+│  ║  │  Stage 5: 500KB @ 10MB/s, measure RTT + loss        │   ║   │
+│  ║  │           (Stealth Browse)                           │   ║   │
+│  ║  │  Stage 4: 500KB @ 5MB/s, measure RTT + loss (Mid)   │   ║   │
 │  ║  │                                                     │   ║   │
 │  ║  │  Pick highest cap with:                             │   ║   │
 │  ║  │  • <1% packet loss AND                              │   ║   │
@@ -2890,15 +2906,17 @@ func probe(tunGateway string) error {
 │  ║  │ 1c. Clamp result to tier limits + fallback defaults │   ║   │
 │  ║  │                                                    │   ║   │
 │  ║  │  Hard caps (never exceed):                         │   ║   │
-│  ║  │  • Gaming Max: max 100 Mbps (12,500 KB/s)          │   ║   │
-│  ║  │  • Gaming Mid:  max  50 Mbps ( 6,250 KB/s)         │   ║   │
+│  ║  │  • Gaming Max:    max 100 Mbps (12,500 KB/s)       │   ║   │
+│  ║  │  • Gaming Mid:    max  50 Mbps ( 6,250 KB/s)       │   ║   │
+│  ║  │  • Stealth Browse: max  80 Mbps (10,000 KB/s)      │   ║   │
 │  ║  │  • Floor:  min   3 Mbps (   375 KB/s)  ← never     │   ║   │
 │  ║  │           starves the connection                   │   ║   │
 │  ║  │                                                    │   ║   │
 │  ║  │  If probe fails/timeout → fallback to safe default:│   ║   │
-│  ║  │  • Gaming Max: 40 Mbps (5,000 KB/s)                │   ║   │
-│  ║  │  • Gaming Mid: 20 Mbps (2,500 KB/s)                │   ║   │
-│  ║  │  • Warp Lite:   8 Mbps (1,000 KB/s)                │   ║   │
+│  ║  │  • Gaming Max:    40 Mbps (5,000 KB/s)             │   ║   │
+│  ║  │  • Gaming Mid:    20 Mbps (2,500 KB/s)             │   ║   │
+│  ║  │  • Stealth Browse: 48 Mbps (6,000 KB/s)            │   ║   │
+│  ║  │  • Warp Lite:      8 Mbps (1,000 KB/s)             │   ║   │
 │  ║  │  The background monitor refines from there.        │   ║   │
 │  ║  └────────────────────────────────────────────────────┘   ║   │
 │  ╚══════════════════════════════════════════════════════════════╝   │
@@ -2975,6 +2993,11 @@ const (
     // Gaming Mid: hard ceiling 50 Mbps (≈6,250 KB/s)
     gamingMidCeilingKBps = 6250
 
+    // Stealth Browse: hard ceiling 80 Mbps (≈10,000 KB/s) — throughput-optimized
+    // High cap for max streaming/download speed. Uses standard CC (not Brutal),
+    // so latency spikes under load = genuinely terrible for gaming.
+    stealthBrowseCeilingKBps = 10000
+
     // Warp Lite: hard ceiling 8 Mbps (1,000 KB/s)
     warpLiteCeilingKBps = 1000
 )
@@ -2993,9 +3016,10 @@ const (
 // garbage, we fall back to conservative but usable tier-based values.
 // The background monitor will then refine from this starting point.
 var fallbackDefaultsKBps = map[string]int{
-    "gaming_max": 5000,   // 40 Mbps — safe middle ground for Gaming Max
-    "gaming_mid": 2500,   // 20 Mbps — safe middle ground for Gaming Mid
-    "warp_lite":  1000,   //  8 Mbps — hardcoded, same as normal
+    "gaming_max":     5000,   // 40 Mbps — safe middle ground for Gaming Max
+    "gaming_mid":     2500,   // 20 Mbps — safe middle ground for Gaming Mid
+        "stealth_browse": 6000,   // 48 Mbps — generous streaming/download fallback for Stealth Browse
+    "warp_lite":      1000,   //  8 Mbps — hardcoded, same as normal
 }
 
 // ProbeResult holds the inferred bandwidth state for Hysteria 2.
@@ -3051,6 +3075,14 @@ func Probe(apiBase, tier string) *ProbeResult {
         result.NetworkCondition = "congested"
         result.SuggestedKBps = clampToTier(warpLiteCeilingKBps, tier)
         return result
+    case "stealth_browse":
+        if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
+            // Fast network — use the tier ceiling as the cap
+            result.MaxThroughputKBps = 0 // uncapped at network level
+            result.NetworkCondition = "fast"
+            result.SuggestedKBps = clampToTier(stealthBrowseCeilingKBps, tier)
+            return result
+        }
     case "gaming_mid":
         if elapsed < quickTestThreshold && quickThroughputKBps > 10000 {
             // Fast network — use the tier ceiling as the cap
@@ -3076,6 +3108,8 @@ func Probe(apiBase, tier string) *ProbeResult {
         stageCaps = []int{500, 1000, 2000, 5000, 10000, probeCeilingKBps}
     case "gaming_mid":
         stageCaps = []int{500, 1000, 2000, 5000}
+    case "stealth_browse":
+        stageCaps = []int{500, 1000, 2000, 5000, 10000}
     default:
         return fallbackResult(tier, "offline")
     }
@@ -3145,6 +3179,14 @@ func clampToTier(rawKBps int, tier string) int {
         }
         if rawKBps <= 0 {
             return gamingMidCeilingKBps // uncapped not allowed for Mid
+        }
+        return rawKBps
+    case "stealth_browse":
+        if rawKBps > stealthBrowseCeilingKBps {
+            return stealthBrowseCeilingKBps
+        }
+        if rawKBps <= 0 {
+            return stealthBrowseCeilingKBps // uncapped not allowed for Stealth Browse
         }
         return rawKBps
     case "warp_lite":
@@ -3601,6 +3643,7 @@ Unlike Hysteria 2 (dynamically probed + continuously monitored), usque has **har
 | Tier | usque Cap | Rationale |
 |------|----------|-----------|
 | Warp Lite | 1 MB/s (8 Mbps) | Good enough for web browsing. Costs $0 (Cloudflare free tier) — pure margin. |
+| Stealth Browse | 5 MB/s (40 Mbps) | Generous cap for streaming/downloads on usque fallback. Primary Hysteria 2 path has 10 MB/s ceiling. |
 | Gaming Mid | 5 MB/s (40 Mbps) | Sufficient for casual gaming + streaming. |
 | Gaming Max | Uncapped | Full speed. User paid for premium. |
 
@@ -3613,9 +3656,10 @@ package throttle
 // UsqueBandwidthLimit returns the hardcoded bandwidth cap for usque by tier.
 // Key: plan_tier, Value: KBps limit (0 = uncapped)
 var usqueBandwidthLimits = map[string]int{
-    "warp_lite":     1000,   // 1 MB/s
-    "gaming_mid":    5000,   // 5 MB/s
-    "gaming_max":    0,      // Uncapped
+    "warp_lite":      1000,   // 1 MB/s
+    "stealth_browse": 5000,   // 5 MB/s — generous cap for streaming/downloads when on fallback
+    "gaming_mid":     5000,   // 5 MB/s
+    "gaming_max":     0,      // Uncapped
 }
 
 func UsqueBandwidthLimit(tier string) int {
@@ -3646,7 +3690,7 @@ The GUI reads network status from `throttle.CurrentNetworkStatus()` and the spee
 
 | Network Condition | GUI Indicator | User-visible Label | Hysteria 2 Behavior |
 |---|---|---|---|
-| `"fast"` | 🟢 Green dot | "Network: Fast" | Uncapped (Gaming Max) or tier-capped (Gaming Mid 5MB/s) |
+| `"fast"` | 🟢 Green dot | "Network: Fast" | Uncapped (Gaming Max) or tier-capped (Gaming Mid 5MB/s, Stealth Browse 10MB/s) |
 | `"moderate"` | 🟡 Yellow dot | "Network: Moderate" | Capped at EWMA-derived rate |
 | `"congested"` | 🟠 Orange dot | "Network: Congested" | Capped at probed rate, monitor actively adjusting |
 | `"degraded"` | 🔴 Red dot | "Network: Slow" | Capped at floor (500KB/s), may trigger fallback to usque |
@@ -4688,7 +4732,7 @@ These require a real VPS and at least one test device per platform:
 - [ ] Background monitor: sustained bandwidth increase → cap increases within 60s
 - [ ] Background monitor: bufferbloat RTT spike → cap cut by 50% immediately
 - [ ] Background monitor: stops cleanly on disconnect (goroutine exits)
-- [ ] usque fallback: hardcoded cap applied per tier (1 MB/s Warp Lite, 5 MB/s Gaming Mid)
+- [ ] usque fallback: hardcoded cap applied per tier (1 MB/s Warp Lite, 5 MB/s Stealth Browse, 5 MB/s Gaming Mid)
 - [ ] IPv6 blocked: `ping -6 ipv6.google.com` fails when connected
 - [ ] GUI never shows real protocol names, IPs, ports, or engine binary names
 - [ ] Settings accordion: collapsed by default, shows activation code (masked) and plan name

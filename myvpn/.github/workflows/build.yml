@@ -1,0 +1,77 @@
+name: Build MyVPN
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Fyne dependencies
+        run: |
+          choco install mingw
+
+      - name: Build Windows
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "x86_64-w64-mingw32-gcc"
+          go build -trimpath -ldflags="-s -w -X main.version=$env:GITHUB_REF_NAME" -o myvpn_windows_amd64.exe .
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: myvpn-windows
+          path: myvpn_windows_amd64.exe
+
+  build-macos:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Fyne dependencies
+        run: |
+          brew install xorg-server mesa
+
+      - name: Build macOS (${{ matrix.arch }})
+        run: |
+          CGO_ENABLED=1 GOARCH=${{ matrix.arch }} \
+            go build -trimpath -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+            -o myvpn_darwin_${{ matrix.arch }} .
+
+      - name: Upload macOS (${{ matrix.arch }}) artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: myvpn-macos-${{ matrix.arch }}
+          path: myvpn_darwin_${{ matrix.arch }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgl1-mesa-dev xorg-dev
+      - name: Test
+        run: go test -v -race ./internal/...

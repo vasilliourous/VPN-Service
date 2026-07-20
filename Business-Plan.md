@@ -85,13 +85,13 @@ This is a core part of the business. The file `school-vpn-blocking-implementatio
 | -------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | **Layer 1: IP/ASN blocklists**         | Free VPNs use predictable datacenter IPs     | Your VPS IP isn't on public blocklists; you can rotate                                              |
 | **Layer 2: SSH blocking**              | Psiphon uses SSH transport                   | You don't use SSH                                                                                   |
-| **Layer 3: Active TLS probing**        | Free VPN endpoints serve no real web content | Your VLESS-REALITY endpoint proxies unauthenticated requests to a real website (e.g. microsoft.com) |
+| **Layer 3: Active TLS probing**        | Free VPN endpoints serve no real web content | Hysteria 2 over QUIC uses UDP — active TLS probes only work against TCP endpoints, so they pass right over your VPS without detection |
 | **Layer 4: Domain fronting detection** | Psiphon MEEK uses Azure CDN fronting         | You don't use domain fronting                                                                       |
-| **Layer 5: JA3 fingerprinting**        | Free VPNs expose Go's `crypto/tls` JA3 hash  | uTLS (used by Xray/VLESS-REALITY) produces byte-identical Chrome fingerprints                       |
+| **Layer 5: JA3 fingerprinting**        | Free VPNs expose Go's `crypto/tls` JA3 hash  | Our custom app disguises all process/binary names; Hysteria 2's QUIC handshake is far less fingerprinted than standard TLS VPNs |
 
 ### The moat
 
-> *"Free VPNs can't afford REALITY-grade obfuscation."* — VLESS-REALITY with XTLS Vision borrows real TLS certificates from major websites and mimics browser TLS fingerprints perfectly. This costs a domain and a VPS — trivial for you, impossible for free VPNs.
+> *"Free VPNs rely on detectable protocols."* — Hysteria 2 over QUIC with custom tuning is still rare enough that school DPI systems don't have reliable signatures for it. Combined with binary/process renaming, certificate-pinned heartbeats, and the fact that most school firewalls don't deeply inspect UDP at all — you get strong practical stealth without the complexity of VLESS-REALITY. And if UDP ever gets choked, the architecture can add VLESS-REALITY in Phase 2.
 
 ---
 
@@ -100,7 +100,7 @@ This is a core part of the business. The file `school-vpn-blocking-implementatio
 | Plan               | Price     | Protocol                    | Bottleneck / Notes                                                                                  |
 | ------------------ | --------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
 | **Warp Lite**      | $2–4/mo   | Cloudflare Warp (via usque) | SOCKS5 proxy, bandwidth throttled client-side (app-enforced), no UDP for gaming, good enough for web browsing only |
-| **Stealth Browse** | $4–7/mo   | VLESS-REALITY               | TCP-only, browsing/streaming, no gaming optimization, maximum stealth                               |
+| **Stealth Browse** | $4–7/mo   | Hysteria 2 (throughput-optimized) | QUIC/UDP, max streaming & downloads (10 MB/s cap), uses **standard CC** (not Brutal) — high throughput but latency spikes under load = gaming unplayable |
 | **Gaming Mid**     | $5–8/mo   | Hysteria 2                  | Medium bandwidth cap, moderate congestion control settings, good for casual gaming                  |
 | **Gaming Max**     | $10–13/mo | Hysteria 2 (adaptively capped) | Full "Brutal" congestion control, adaptive bandwidth probing (fresh probe per connect + continuous background monitor to prevent QoS bufferbloat), UDP gaming, priority support |
 
@@ -119,24 +119,24 @@ Based on 2026 benchmarks and your research:
 
 | Protocol                    | Purpose          | Stealth | Latency   | Best For                                    |
 | --------------------------- | ---------------- | ------- | --------- | ------------------------------------------- |
-| **Hysteria 2**              | Gaming main      | 7/10    | 110–150ms | 🎮 Competitive gaming, real-time apps       |
+| **Hysteria 2 (Gaming)**     | Gaming main      | 7/10    | 110–150ms | 🎮 Competitive gaming, real-time apps       |
+| **Hysteria 2 (Streaming)**  | Stealth Browse   | 7/10    | 110–150ms | 🛡️ Browsing, streaming, max throughput (10 MB/s) — standard CC kills gaming latency |
 | **TUIC v5**                 | Gaming fallback  | 5/10    | 140–180ms | Fallback when Hysteria2 is blocked          |
-| **VLESS-REALITY**           | Stealth king     | 9/10    | 160–210ms | 🛡️ Browsing, streaming, extreme censorship |
+| **VLESS-REALITY**           | Phase 2 stealth  | 9/10    | 160–210ms | 🛡️ Future: extreme censorship scenarios (Phase 2)
 | **Cloudflare Warp (usque)** | Budget/Warp Lite | 6/10    | ~150ms    | 🌐 Web browsing, cheap tier                 |
 | **AmneziaWG**               | High obfuscation | 8/10    | ~170ms    | Last resort / extreme cases                 |
 
 ### Key insight from research
 
-> **Hysteria2 is 30–40% lower latency than VLESS-REALITY** for gaming. Its "Brutal" congestion control aggressively takes bandwidth on lossy links, and QUIC's 0-RTT handshake means near-instant connection. But UDP/QUIC is more detectable during crackdowns. So the architecture is: **Hysteria2 for daily gaming, VLESS-REALITY for when UDP gets choked.**
+> **Hysteria 2 is the workhorse for both gaming and streaming — but the congestion control makes all the difference.** Gaming plans use "Brutal" CC (low-latency, aggressive, designed for real-time). Stealth Browse uses **standard CC** (throughput-optimized). This means Stealth Browse gets excellent streaming/download speeds but the higher latency under load makes gaming genuinely unplayable — perfect for the product gap. VLESS-REALITY is deferred to Phase 2.
 
 ### Architecture per plan
 
 ```
 Clients ──→ Your VPS (single box)
                 │
-                ├── Hysteria2 :443/udp  (Gaming plans)
-                ├── Xray :443/tcp       (VLESS-REALITY, Stealth Browse)
-                ├── TUIC V5 :8443/udp   (Fallback gaming)
+                ├── Hysteria2 :443/udp  (Gaming plans + Stealth Browse)
+                ├── TUIC V5 :8443/udp   (Fallback gaming — Phase 2)
                 ├── usque socks :1080   (Warp Lite)
                 └── Nginx :8080         (Probe absorber → microsoft.com)
 ```

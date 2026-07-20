@@ -1,0 +1,40 @@
+api.yourdomain.com {
+    reverse_proxy 127.0.0.1:8090
+
+    rate_limit {
+        zone heartbeat {
+            key {remote_host}
+            match_path /api/heartbeat
+            rate 1/10s
+            burst 3
+        }
+        zone activation {
+            key {remote_host}
+            match_path /api/collections/activations/*
+            rate 5/10m
+            burst 5
+        }
+        zone general {
+            key {remote_host}
+            rate 100/10s
+            burst 50
+        }
+    }
+
+    @speedtest {
+        path /speedtest/*
+    }
+    handle @speedtest {
+        root * /var/www/speedtest
+        file_server
+        header Cache-Control "no-store"
+    }
+
+    @updates {
+        path /updates/*
+    }
+    handle @updates {
+        root * /var/www/updates
+        file_server
+    }
+}

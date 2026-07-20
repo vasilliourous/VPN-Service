@@ -1,0 +1,33 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prev
+*.tmp
+.update-pending
+.update-confirmed
+
+# Binaries
+myvpn
+myvpn_windows_amd64.exe
+myvpn_darwin_amd64
+myvpn_darwin_arm64
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+vendor/
+
+# Logs
+*.log

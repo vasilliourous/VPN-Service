@@ -3,7 +3,7 @@
 ## Target
 
 Cross-platform VPN app (Windows + macOS) for **school/college students** bypassing WiFi restrictions.
-Supports Hysteria 2 (gaming primary) and usque/Warp (fallback, unbottlenecked for Gaming plans).
+Supports Hysteria 2 (primary for all paid plans) and usque/Warp (fallback). Four tiers: Warp Lite (usque-only, throttled), Stealth Browse (throughput-optimized Hysteria 2 — max streaming/downloads, terrible gaming), Gaming Mid, Gaming Max.
 **Closed-source, activation-code gated, permanently bound to one hardware-fingerprinted device.** Centrally managed with suspension and SHA256-verified updates. No Ed25519.
 
 > **Full business context:** See `BUSINESS-OVERVIEW.md` — this document covers the *technical* implementation.
@@ -19,7 +19,7 @@ Supports Hysteria 2 (gaming primary) and usque/Warp (fallback, unbottlenecked fo
 | **Distribution**   | Middlemen hand out physical activation codes for cash. They have no app access.  |
 | **Competition**    | Free VPNs (X-VPN, Psiphon, Lantern) and xVPN                                     |
 | **Differentiator** | Hysteria 2 over QUIC — low-latency gaming on congested WiFi; TUN mode; kill switch |
-| **Pricing**        | $2–13/mo across 3 tiers (Warp Lite → Gaming Mid → Gaming Max)                    |
+| **Pricing**        | $2–13/mo across 4 tiers (Warp Lite → Stealth Browse → Gaming Mid → Gaming Max)  |
 | **Key constraint** | **No real protocol names in the UI** — use custom brand names                    |
 | **Key constraint** | **Client-side bottlenecks** enforced by desktop app — users can't override       |
 | **Key constraint** | **Permanent one-code-one-device** via hardware fingerprint; suspension, not deactivation |
@@ -107,9 +107,9 @@ Supports Hysteria 2 (gaming primary) and usque/Warp (fallback, unbottlenecked fo
 
 | Real Protocol   | UI Name      | Binary Name    | Tier(s)                        | Phase | Notes                                                      |
 | --------------- | ------------ | -------------- | ------------------------------ | ----- | ---------------------------------------------------------- |
-| Hysteria 2      | Speed Mode   | `speedmode`    | Gaming Mid, Gaming Max         | 1     | QUIC/UDP, low-latency gaming                              |
+| Hysteria 2      | Speed Mode   | `speedmode`    | Stealth Browse, Gaming Mid, Gaming Max | 1     | QUIC/UDP; gaming-optimized (Brutal CC) for Gaming plans, throughput-optimized (standard CC) for Stealth Browse — high bandwidth but latency spikes under load = terrible for gaming |
 | usque (Warp)    | Lite Mode    | `litemode`     | Warp Lite (primary), Gaming (fallback) | 1     | **Warp Lite** = client-side throttled (app-enforced); **Gaming fallback** = unbottlenecked (full speed) |
-| VLESS-REALITY   | Stealth Mode | `stealthmode`  | Gaming Max                     | 2     | TCP, best DPI evasion                                      |
+| VLESS-REALITY   | Stealth Mode | `stealthmode`  | Gaming Max (Phase 2)           | 2     | TCP, best DPI evasion — deferred from MVP                   |
 | TUIC v5         | Turbo Mode   | `turbomode`    | Turbo                          | 2     | QUIC-based, low overhead                                   |
 
 ### 2.2 Protocol Fallback Chain (Heartbeat-Driven)
@@ -130,7 +130,8 @@ The server sends a prioritized list of protocol configs in every heartbeat respo
 
 > ⚠️ **Bottleneck is plan-driven, enforced client-side.** usque connects directly to Cloudflare (no VPS in the data path), so throttling is applied by the desktop app. The heartbeat response delivers the config, and the app enforces the limits locally:
 > - **`plan: "warp_lite"`** — app throttles usque bandwidth, disables UDP gaming
-> - **`plan: "gaming_mid"` / `plan: "gaming_max"`** — usque (as fallback) runs **unbottlenecked** (full speed, UDP allowed)
+> - **`plan: "stealth_browse"`** — usque runs at generous cap (5 MB/s), Hysteria 2 uses **standard CC** (throughput-optimized, no Brutal) = max streaming/downloads, terrible gaming
+> - **`plan: "gaming_mid"` / `plan: "gaming_max"`** — usque (as fallback) runs **unbottlenecked** (full speed, UDP allowed); Hysteria 2 uses **Brutal CC** (low-latency gaming)
 >
 > The server embeds the bandwidth/QoS limits in the `config_json` field of each `ProtocolConfig`. The app reads its own `plan_tier` from local storage and applies the corresponding limits. A closed-source binary prevents users from overriding them.
 
@@ -393,7 +394,7 @@ myvpn/
 │   │   ├── probe.go               # Full bandwidth probe on every connect: 1MB quick test + staged ramp with bufferbloat detection
 │   │   ├── monitor.go             # Continuous background monitor: 15s EWMA-smoothed bandwidth sampling, dynamic cap adjustment, RTT-based bufferbloat detection
 │   │   ├── monitor_test.go        # Monitor tests (EWMA behavior, tier ceiling enforcement)
-│   │   └── usque.go               # Hardcoded per-tier bandwidth caps for usque (Warp Lite: 1MB/s, Gaming Mid: 5MB/s, Gaming Max: uncapped)
+│   │   └── usque.go               # Hardcoded per-tier bandwidth caps for usque (Warp Lite: 1MB/s, Stealth Browse: 5MB/s, Gaming Mid: 5MB/s, Gaming Max: uncapped)
 │   ├── updater/
 │   │   ├── update.go              # Download + SHA256 verify (no signing) + apply
 │   │   ├── update_windows.go      # Spawn helper to replace running .exe
