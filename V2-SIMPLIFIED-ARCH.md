@@ -1,259 +1,269 @@
 # V2 — Simplified Architecture with Artificial Bottlenecking
 
 > **replaces:** Architectural-Plan.md (over-engineered v1)
-> **principle:** Plans are just bandwidth caps. Updates are the lifeline. Codes unlock servers. Everything else is plumbing.
+> **principle:** Plans are bandwidth profiles. Codes unlock servers. Updates are the lifeline.
 
 ---
 
-## 0. Design Priorities (In Order)
+## 0. Design Priorities
 
-1. **Survive & adapt** — the app must be updatable in the field. School networks change blocking patterns overnight. If the app can't update, it's dead.
-2. **Connect reliably** — tunnel traffic through Hysteria 2. Activation codes unlock the right server for the right tier.
-3. **Monetize simply** — paper codes sold for cash by middlemen. No payment processing. Just codes → servers.
-4. **Stay invisible** — minimal GUI, fake display names, no technical details exposed.
-
----
-
-## 1. What "Artificial Bottlenecking" Means
-
-Each plan tier gets a **hardcoded bandwidth ceiling** applied on the client:
-
-| Tier | Engine | Speed Cap | Notes |
-|------|--------|-----------|-------|
-| Warp Lite | usque/Warp | 1 MB/s (8 Mbps) | Hardcoded cap, no server config needed |
-| Stealth Browse | Hysteria 2 | 6 MB/s (48 Mbps) | Cap applied via `--speed` flag |
-| Gaming Mid | Hysteria 2 | 6.25 MB/s (50 Mbps) | Cap applied via `--speed` flag |
-| Gaming Max | Hysteria 2 | 12.5 MB/s (100 Mbps) | Cap applied via `--speed` flag |
-
-If the user's network is slower than the cap, Hysteria 2's built-in congestion control handles it. No client-side monitor needed.
-
-**Removed from v1:**
-- ❌ Staged ramp speed probe (5 × 500KB tests with per-stage RTT+loss)
-- ❌ EWMA background bandwidth monitor (15s pings + dynamic cap adjustment)
-- ❌ Bufferbloat detection
-- ❌ `internal/probe/` and `internal/monitor/` packages
+1. **Survive & adapt** — background updater to push new binaries when protocols get blocked
+2. **Connect reliably** — Hysteria 2 with configs delivered per-tier via activation + heartbeat
+3. **Bottleneck artificially** — each tier gets a different experience profile via engine config tuning
+4. **Stay invisible** — minimal GUI, fake display names
 
 ---
 
-## 2. ★ The Full Pipeline: Paper Code → Hysteria 2 Connection
+## 1. The Four Bottleneck Profiles
 
-This is the core flow that ties the business model to the technical implementation.
+Each tier uses Hysteria 2's own config parameters to create a distinct artificial experience. Bandwidth caps are just the first dimension.
+
+| Tier | Speed Cap | Brutal CC | Recv Window | Hop Interval | Experience |
+|------|-----------|-----------|-------------|--------------|------------|
+| **Warp Lite** | 1 MB/s (8 Mbps) | N/A (usque) | N/A | N/A | Inherently slow and inconsistent — usque/Warp over free Cloudflare |
+| **Stealth Browse** | 6 MB/s (48 Mbps) | ❌ Disabled | 32 MB (large) | 15s | High throughput for streaming, but **standard CC causes bufferbloat + latency spikes** → terrible for gaming |
+| **Gaming Mid** | 6.25 MB/s (50 Mbps) | ✅ Enabled but **target throttled to 15 Mbps** | 4 MB (small) | 30s | Brutal tries to hit 15 Mbps on a 50 Mbps pipe → **constant congestion signals → rubber-banding + jitter** |
+| **Gaming Max** | Adapts (see §2) | ✅ Enabled, **target = current probed bandwidth** | 64 MB (large) | 0 (off) | Smooth, fast, dynamically adapts to QoS changes |
+
+All of this is delivered as JSON in the `tier_configs` PocketBase collection — no client code changes needed to tweak the profiles.
+
+---
+
+## 2. ★ Gaming Max Adaptive Bottlenecking
+
+This is the only tier that needs dynamic behavior. The rest are static configs.
+
+### The Problem a Hardcoded Cap Can't Solve
+
+If Gaming Max has a 100 Mbps hard cap and school QoS throttles to 5 Mbps:
+- Brutal CC target (100 Mbps) >> actual pipe (5 Mbps)
+- Brutal sends harder → router buffers fill → **RTT spikes to 800ms+**
+- Brutal interprets packet loss as "link is lossy" → **sends even harder** → catastrophic bufferbloat
+- Game becomes unplayable even though 5 Mbps is enough
+
+### The Solution: Probe on Connect + Health Check RTT Monitoring
+
+Two lightweight mechanisms, ~80 lines total, no separate package:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         THE FULL PIPELINE                                │
-│                                                                         │
-│  ┌──────────────┐    ┌──────────────┐    ┌─────────────────────────┐   │
-│  │ 1. CODE GEN  │───→│ 2. PAPER     │───→│ 3. USER ENTERS CODE    │   │
-│  │  (Admin)     │    │    DISTRO    │    │    IN APP               │   │
-│  │              │    │  (Middleman) │    │                         │   │
-│  │ PocketBase   │    │              │    │ "MYVPN-ABCD-1234-..."   │   │
-│  │ generates    │    │ Student pays │    │                         │   │
-│  │ batch of     │    │ $5 cash      │    │ App sends code +        │   │
-│  │ codes, each  │    │ gets paper   │    │ hardware fingerprint    │   │
-│  │ tied to a    │    │ card with    │    │ to hub                  │   │
-│  │ plan tier    │    │ code         │    │                         │   │
-│  └──────┬───────┘    └──────────────┘    └─────────────┬───────────┘   │
-│         │                                              │               │
-│         │                                              ▼               │
-│         │                                   ┌─────────────────────┐   │
-│         │                                   │ 4. SERVER VALIDATES │   │
-│         │                                   │                     │   │
-│         │                                   │ • Luhn-mod-N check  │   │
-│         │                                   │ • Code exists in DB?│   │
-│         │                                   │ • Already used?     │   │
-│         │                                   │ • Rate limit (5/10m)│   │
-│         │                                   │ • Create device     │   │
-│         │                                   │   binding record    │   │
-│         │                                   └─────────────┬───────┘   │
-│         │                                                 │           │
-│         │                                                 ▼           │
-│         │                                   ┌─────────────────────┐   │
-│         │                                   │ 5. SERVER RESPONDS  │   │
-│         │                                   │                     │   │
-│         │                                   │ • JWT token         │   │
-│         │                                   │ • Plan tier name    │   │
-│         │                                   │ • ★ Protocol configs│   │
-│         │                                   │   (server IP, port, │   │
-│         │                                   │    auth password,   │   │
-│         │                                   │    obfuscation)     │   │
-│         │                                   └─────────────┬───────┘   │
-│         │                                                 │           │
-│         ▼                                                 ▼           │
-│  ┌──────────────┐    ┌──────────────┐    ┌─────────────────────────┐   │
-│  │ 6. ADMIN     │    │ 7. HEARTBEAT │    │ 8. CLIENT CONNECTS      │   │
-│  │ CONTROLS     │    │ KEEPS FRESH  │    │                         │   │
-│  │              │    │              │    │ Hysteria 2 client with  │   │
-│  │ Suspension   │    │ Every 60s:   │    │ • server:port from      │   │
-│  │ (set flag)   │    │ • Refresh    │    │   activation config     │   │
-│  │ Change       │    │   token      │    │ • auth password from    │   │
-│  │ server IPs   │    │ • Update     │    │   activation config     │   │
-│  │ Change tiers │    │   protocol   │    │ • --speed from tier cap │   │
-│  │              │    │   configs    │    │ • --tun (engine creates)│   │
-│  └──────────────┘    │ • Push       │    └─────────────────────────┘   │
-│                       │   updates    │                                 │
-│                       └──────────────┘                                 │
-└─────────────────────────────────────────────────────────────────────────┘
+CONNECT FLOW (Gaming Max only):
+  1. Download 1MB from hub → measure throughput + baseline RTT
+  2. Set Brutal CC target = measured throughput (clamped to 100 Mbps)
+  3. Start engine with that config
+  4. Start health check (every 15s, already exists for all tiers)
+        ↓
+MID-SESSION ADAPTATION (Gaming Max only):
+  Health check measures HTTP response time through the tunnel
+    ↓
+  RTT > 3× baseline for 2 consecutive checks?
+    → QoS has throttled the pipe
+    → Halve Brutal CC target
+    → Restart engine with new config (~1s blip)
+    ↓
+  RTT < 1.5× baseline for 4 consecutive checks?
+    → QoS has released
+    → Increase Brutal CC target by 25% (up to original probed max)
+    → Restart engine with new config
 ```
 
-### Step-by-Step
+### Why This Isn't the v1 EWMA Monitor
 
-**Step 1 — Admin generates codes in PocketBase:**
-```json
-// POST /api/collections/codes/records
-{
-    "code": "MYVPN-ABCD-1234-EFGH-5",   // Luhn-mod-N generated
-    "tier": "gaming_mid",                // Which plan this unlocks
-    "used": false,
-    "fingerprint": null,
-    "suspended": false,
-    "middleman": "House 3 - John"        // Track which middleman sold it
+| v1 Monitor | v2 Adaptation |
+|-----------|--------------|
+| 100KB background downloads every 15s | No extra downloads — reuses health check timing |
+| EWMA smoothing with alpha parameter | No smoothing — simple comparison against baseline |
+| Separate `internal/monitor/` package (210 lines) | Single goroutine in `gui/app.go` (~50 lines) |
+| Bufferbloat detection + dynamic cap adjustment | Same, but simpler logic |
+| Ran for ALL tiers | Gaming Max only |
+
+### Code
+
+```go
+// In gui/app.go, launched after engine starts for Gaming Max:
+
+func adaptBandwidth(apiBase, tier string, maxBps int, baselineRTT time.Duration) {
+    ticker := time.NewTicker(15 * time.Second)
+    defer ticker.Stop()
+
+    currentCap := maxBps
+    floor := caps.Floor(tier)
+    slowCount := 0
+    goodCount := 0
+
+    for range ticker.C {
+        if !manager.IsRunning() {
+            return
+        }
+
+        start := time.Now()
+        resp, err := http.Get(apiBase + "/_/health")
+        if err != nil || resp == nil || resp.StatusCode != 200 {
+            continue
+        }
+        resp.Body.Close()
+        rtt := time.Since(start)
+
+        switch {
+        case rtt > baselineRTT*3:
+            slowCount++
+            goodCount = 0
+            if slowCount >= 2 {
+                newCap := currentCap / 2
+                if newCap < floor {
+                    newCap = floor
+                }
+                if newCap != currentCap {
+                    currentCap = newCap
+                    manager.SetBandwidthCap(newCap)
+                    go manager.RestartEngine(storage.GetProtocols()[0], tier)
+                }
+                slowCount = 0
+            }
+
+        case rtt < baselineRTT*1.5:
+            goodCount++
+            slowCount = 0
+            if goodCount >= 4 {
+                newCap := currentCap * 5 / 4
+                if newCap > maxBps {
+                    newCap = maxBps
+                }
+                if newCap != currentCap {
+                    currentCap = newCap
+                    manager.SetBandwidthCap(newCap)
+                    go manager.RestartEngine(storage.GetProtocols()[0], tier)
+                }
+                goodCount = 0
+            }
+
+        default:
+            slowCount = 0
+            goodCount = 0
+        }
+    }
 }
 ```
 
-The admin generates batches via the PocketBase admin UI or a small script. Codes are printed on paper cards with the tier name and a QR code (optional).
+That's it. ~45 lines. No new package. No EWMA. No extra downloads.
 
-**Step 2 — Middleman distributes:** A middleman collects cash from a student, hands them a paper card with the code. No digital payment, no accounts, no email. The middleman has no access to the admin panel — they only have paper.
+---
 
-**Step 3 — User enters code in app:** The app sends a POST to the hub with the code + hardware fingerprint.
+## 3. The Full Pipeline: Paper Code → Hysteria 2 Connection
 
-**Step 4 — Server validates:**
-- Luhn-mod-N checksum valid?
-- Code exists in `codes` collection?
-- Code not already used?
-- IP not rate-limited (5 attempts per 10 minutes)?
-- All pass → bind fingerprint to code (mark `used=true`), create device binding record
+```
+┌──────────┐   ┌──────────┐   ┌──────────────────┐   ┌──────────────────┐
+│ 1. Admin │   │ 2. Paper │   │ 3. User enters   │   │ 4. Server        │
+│    gen   │──→│    distro│──→│    code in app   │──→│    validates     │
+│    codes │   │  (cash)  │   │                   │   │                  │
+│          │   │          │   │ + fingerprint     │   │ • Luhn-mod-N     │
+│ Pocket   │   │ Middleman│   │                   │   │ • Code exists?   │
+│ Base     │   │ hands    │   │                   │   │ • Rate limit     │
+│ batch    │   │ card     │   │                   │   │ • Bind device    │
+└──────────┘   └──────────┘   └──────────────────┘   └────────┬─────────┘
+                                                              │
+                                                              ▼
+                                                  ┌──────────────────────┐
+                                                  │ 5. Server responds  │
+                                                  │                     │
+                                                  │ • JWT token         │
+                                                  │ • Plan tier         │
+                                                  │ • ★ Hysteria 2 cfg  │
+                                                  │   (profile for tier)│
+                                                  └────────┬─────────────┘
+                                                           │
+                                                           ▼
+                                                  ┌──────────────────────┐
+                                                  │ 6. Client connects  │
+                                                  │                     │
+                                                  │ hysteria2 client    │
+                                                  │   -c config.json    │
+                                                  │   --tun             │
+                                                  │   --speed <tier_cap>│
+                                                  │                     │
+                                                  │ If Gaming Max:      │
+                                                  │   probe → set cap   │
+                                                  │   adapt loop starts │
+                                                  └──────────────────────┘
+```
 
-**Step 5 — Server responds with Hysteria 2 config:**
+---
+
+## 4. Protocol Config Delivery
+
+### PocketBase Collection: `tier_configs`
+
 ```json
 {
-    "token": "jwt...",
-    "plan": "gaming_mid",
+    "tier": "gaming_mid",
     "configs": [{
         "id": "hysteria2",
         "display_name": "Speed Mode",
         "binary_name": "speedmode",
         "config_json": {
             "server": "sgp1.api.yourdomain.com:443",
-            "auth": "GamingMid-Pool-A-Password",
+            "auth": "pool-password",
+            "tls": { "sni": "www.cloudflare.com", "insecure": false },
             "obfs": "salamander",
-            "obfs-password": "pool-a-obfuscation-key",
-            "sni": "www.cloudflare.com",
-            "insecure": false
+            "obfs-password": "pool-key",
+            "brutal": {
+                "enabled": true,
+                "up_mbps": 15,
+                "down_mbps": 15
+            },
+            "recv_window_conn": 1048576,
+            "recv_window": 4194304,
+            "hop-interval": 30
         }
     }]
 }
 ```
 
-This is the **pairing of activation code with Hysteria 2 link**. The activation code unlocks the specific server config for that tier.
+The config JSON is the "bottleneck profile." Change these values in PocketBase → next heartbeat delivers them → client experience changes immediately.
 
-**Step 6 — Admin controls servers:** The admin can update server configs in PocketBase at any time. Next heartbeat delivers the new configs. If a server gets blocked, the admin changes the pool IP and all clients get it within 60 seconds.
+### Per-Tier Profiles
 
-**Step 7 — Heartbeat keeps configs fresh:** Every 60s, the heartbeat response can return updated protocol configs. This means:
-- Change server IP without a client update
-- Rotate auth passwords
-- Switch obfuscation methods
-- Add/remove server pools
-- Rebalance tiers across servers
-
-**Step 8 — Client connects:** The client starts Hysteria 2 with the config from activation (or latest heartbeat), applies the speed cap from `caps.Get(tier)`, and creates the TUN interface via `--tun`.
-
----
-
-## 3. Protocol Config Delivery: How Codes Map to Servers
-
-Server configs are tier-specific. Each tier can have multiple server pools for redundancy.
-
-### PocketBase Collection Schema
-
-**`codes` collection:**
+**Warp Lite:**
+```json
+{ "engine": "usque", "config_json": { /* Warp WireGuard config */ } }
 ```
-code           (text, unique) — "MYVPN-ABCD-1234-EFGH-5"
-tier           (text)         — "warp_lite" | "stealth_browse" | "gaming_mid" | "gaming_max"
-used           (bool)         — false until first activation
-fingerprint    (text)         — null until bound, then SHA256 hash
-suspended      (bool)         — admin can suspend without clearing binding
-middleman      (text)         — who sold it (for tracking)
-created_at     (datetime)
-```
+No Hysteria 2 at all. Hardcoded 1 MB/s client cap.
 
-**`tier_configs` collection:**
-```
-tier           (text)         — "gaming_mid" 
-configs        (json)         — array of protocol config objects
-active         (bool)         — which config set is currently active
-updated_at     (datetime)
-```
-
-When a client activates, the server looks up `tier_configs` for the code's tier and returns the active configs alongside the token.
-
-When a heartbeat arrives, the server can optionally include updated configs if the `tier_configs` record changed since the client's last check.
-
-### Config JSON Structure (per protocol)
-
-**Hysteria 2 config:**
+**Stealth Browse:**
 ```json
 {
-    "server": "sgp1.api.yourdomain.com:443",
-    "auth": "pool-password",
-    "tls": {
-        "sni": "www.cloudflare.com",
-        "insecure": false
-    },
-    "obfs": "salamander",
-    "obfs-password": "pool-key",
-    "fast-open": true,
+    "brutal": { "enabled": false },
+    "recv_window_conn": 8388608,
+    "recv_window": 33554432,
+    "hop-interval": 15
+}
+```
+Standard CC (AIMD) + large buffers + port hopping → high throughput for streaming, but standard CC causes bufferbloat under school WiFi congestion → latency spikes make gaming unplayable.
+
+**Gaming Mid:**
+```json
+{
+    "brutal": { "enabled": true, "up_mbps": 15, "down_mbps": 15 },
+    "recv_window_conn": 1048576,
+    "recv_window": 4194304,
     "hop-interval": 30
 }
 ```
+Brutal CC enabled but target (15 Mbps) is well below the cap (50 Mbps). Brutal constantly tries to push past the pipe's actual capacity → congestion signals → periodic rubber-banding. Small receive window adds stutter.
 
-**usque/Warp config** (for Warp Lite tier):
+**Gaming Max:**
 ```json
 {
-    "wg": {
-        "private-key": "...",
-        "peer-public-key": "...",
-        "endpoint": "engage.cloudflareclient.com:2408"
-    }
+    "brutal": { "enabled": true, "up_mbps": 0, "down_mbps": 0 },
+    "recv_window_conn": 16777216,
+    "recv_window": 67108864,
+    "hop-interval": 0
 }
 ```
-
-The client doesn't interpret these — it passes the JSON directly to the engine via `-c config.json`.
-
----
-
-## 4. Business Model Integration
-
-| Business Element | How It Works Technically |
-|-----------------|------------------------|
-| **Middlemen sell codes for cash** | Admin generates codes in PocketBase, prints them on paper cards. Middlemen get a stack of cards. No app access for middlemen. |
-| **No payment processing** | No Stripe, no PayPal. Cash only. Admin generates codes at zero marginal cost. |
-| **Tiered pricing ($2–$13/mo)** | Each code is generated with a specific tier in PocketBase. The tier maps to speed cap + server config. |
-| **One code = one device forever** | Device binding is permanent. The `fingerprint` field on the code is set once and never cleared. |
-| **Suspension without refund** | Admin sets `suspended=true` on the code record. Next heartbeat returns status "suspended" → client disconnects. Binding is preserved. |
-| **Middleman commission tracking** | Each code has a `middleman` field. Admin can query `used=true` grouped by middleman to calculate commissions. |
-| **No self-service portal** | Users have no web login. Everything happens through the app. If they lose their code, they buy a new one from a middleman. |
+Brutal targets start at 0 — set dynamically by the probe on connect. Large buffers, no port hopping. Adaptation loop adjusts target mid-session via health check RTT.
 
 ---
 
-## 5. What We Keep (All Components)
-
-| Component | Why It Stays |
-|-----------|-------------|
-| **Updater** | **Critical** — push new binaries when protocols get blocked |
-| **Heartbeat** | Carries token refresh, suspension status, **updated server configs**, update commands |
-| **Activation** | Luhn-mod-N + hardware fingerprint binding + protocol config delivery |
-| **Storage** | Persist token, tier, device ID, **protocol configs**, pending update state |
-| **Caps** | Hardcoded per-tier bandwidth limits (40 lines) |
-| **Branding** | Fake protocol/plan names for intransparency |
-| **Manager** | Start/stop engine with `--speed <bps>` cap using config from storage |
-| **TUN + kill switch + DNS** | Route traffic, prevent leaks |
-| **Health check** | Detect dead tunnel, trigger reconnect |
-| **GUI** | Connect/disconnect, status, time, tier name |
-
----
-
-## 6. Speed Caps (`internal/caps/caps.go`)
+## 5. Caps Package
 
 ```go
 package caps
@@ -263,262 +273,68 @@ func Get(tier string) int {
     case "warp_lite":      return   8_000_000
     case "stealth_browse": return  48_000_000
     case "gaming_mid":     return  50_000_000
-    case "gaming_max":     return 100_000_000
+    case "gaming_max":     return           0  // 0 = probe on connect
     default:               return           0
     }
 }
 
-func Floor(tier string) int {
-    return 3_000_000
-}
+func Floor(tier string) int  { return 3_000_000 }
+
+// IsAdaptive returns true if this tier uses dynamic cap adjustment mid-session.
+func IsAdaptive(tier string) bool { return tier == "gaming_max" }
 ```
 
 ---
 
-## 7. Connection Flow (End to End)
+## 6. Connection Flow
 
 ```
 User taps Connect
         │
         ▼
-  Load protocol configs from storage
-  (received during activation or last heartbeat)
+  Load protocol configs from storage (from activation or heartbeat)
+  Look up tier cap: caps.Get(tier)
         │
-        ▼
-  Look up tier cap: caps.Get(planTier) → int bps
+        ├── Gaming Max? → Probe (1MB download, measure BW + RTT)
+        │                  → Set initial cap = result
+        │                  → Start engine with Brutal target = result
+        │
+        ├── Other? → Start engine with hardcoded cap
         │
         ▼
   Setup TUN → Engage kill switch → Guard DNS
+  Start engine with config + --speed <cap> + --tun
+  Start health check (15s)
         │
-        ▼
-  Start engine with:
-    • -c config.json (server, auth, obfs from activation/heartbeat)
-    • --tun (engine creates interface)
-    • --speed <bps> (artificial bottleneck)
-        │
-        ▼
-  Start health check (15s ping through tunnel)
+        ├── Gaming Max? → Launch adaptBandwidth goroutine
         │
         ▼
   GUI: "Connected" + tier name + elapsed time
 ```
 
-**Disconnect:** Stop health check → Stop engine → UnGuard DNS → Disengage kill switch → Teardown TUN
+---
 
-**State machine:** 3 states — `IDLE → CONNECTING → CONNECTED`. Health fails 3× → auto-disconnect → "Tap to Retry."
+## 7. Background Updater
+
+Unchanged from previous iteration — the lifeline for when protocols get blocked.
 
 ---
 
-## 8. ★ Background Updater (The Lifeline)
+## 8. Heartbeat (Config Carrier + Update Carrier)
 
-### Why Updates Matter More Than Anything
-
-School IT blocks protocols, not just IPs. Today Hysteria 2 over QUIC on port 443 works. Tomorrow the school's DPI might fingerprint it and drop it. When that happens, you need to push a new binary with different obfuscation to every client **within hours**. The updater is not a nice-to-have — it's the app's immune system.
-
-### Update Trigger
-
-Heartbeat response carries an optional `update` field:
-
-```json
-{
-    "status": "active",
-    "token": "new-jwt...",
-    "update": {
-        "version": "1.0.3",
-        "platform": "windows_amd64",
-        "url": "https://api.yourdomain.com/files/updates/myvpn_1.0.3.exe",
-        "sha256": "a1b2c3d4..."
-    },
-    "configs": [...]        // ← can also update server configs here
-}
-```
-
-### Background Download Flow
-
-```
-Heartbeat response has "update" field
-        │
-        ▼
-  Spawn goroutine:
-    1. Download to engines/myvpn.update.tmp (app data dir — user-writable)
-    2. SHA256 verify
-    3. Rename → engines/myvpn.update
-    4. Save {version, sha256} to storage
-    5. User keeps using VPN — no interruption
-```
-
-### Apply on Next Launch
-
-```
-main() starts:
-  1. Check storage for pending update
-  2. Verify SHA256 again
-  3. Backup current exe → myvpn.prev
-  4. Swap .update → exe path
-  5. Mark "applied, not confirmed"
-  6. syscall.Exec → new binary runs
-```
-
-### Auto-Revert on Crash
-
-```
-New binary crashes before first heartbeat
-        │
-        ▼  (user relaunches)
-  Storage says "applied but not confirmed"
-  myvpn.prev exists
-  → Delete crashed binary
-  → Rename myvpn.prev → exe
-  → Log: "Update v1.0.3 crashed, reverted to v1.0.2"
-```
-
-First heartbeat success → `ConfirmUpdate()` → delete `.prev` → update permanent.
+Returns suspension status, fresh token, updated protocol configs, and optional update command. Config refresh is how you change bottleneck profiles in the field.
 
 ---
 
-## 9. Heartbeat (Update Carrier + Config Refresher)
+## 9. v1 → v2 Summary
 
-```go
-func doHeartbeat() {
-    token := storage.LoadToken()
-    if token == "" { return }
-
-    resp := sendHeartbeat(token, buildPayload())
-
-    // Suspension check
-    if resp.Status == "suspended" {
-        manager.StopEngine()
-        return
-    }
-
-    // Token rotation
-    if resp.Token != "" {
-        storage.SaveToken(resp.Token)
-    }
-
-    // ★ Update protocol configs (server IP, auth, obfuscation)
-    if len(resp.Configs) > 0 {
-        storage.SetProtocols(resp.Configs)
-        // If currently connected, restart engine with new config
-        if manager.IsRunning() {
-            go reconnectWithNewConfig()
-        }
-    }
-
-    // ★ Background update download
-    if resp.Update != nil {
-        go updater.BackgroundDownload(resp.Update.URL, resp.Update.SHA256)
-    }
-
-    // Confirm update on first successful heartbeat
-    if storage.GetAppliedUpdateVersion() != "" {
-        updater.ConfirmUpdate()
-    }
-
-    consecutiveFails = 0
-    graceDeadline = time.Now().Add(graceDuration)
-}
-```
-
----
-
-## 10. Server-Side Architecture
-
-```
-                    Internet
-                       │
-                  ┌────┴────┐
-                  │  Caddy  │  ← TLS termination, rate limiting
-                  │  :443   │
-                  └────┬────┘
-                       │
-                  ┌────┴────┐
-                  │  Caddy  │
-                  │  :8090  │  ← reverse proxy to PocketBase
-                  └────┬────┘
-                       │
-                  ┌────┴──────────┐
-                  │  PocketBase   │
-                  │  (SQLite WAL) │
-                  │               │
-                  │ Collections:  │
-                  │ • codes       │  ← activation codes + device bindings
-                  │ • tier_configs│  ← Hysteria 2 server configs per tier
-                  │ • heartbeats  │  ← telemetry log
-                  └────┬──────────┘
-                       │
-                  ┌────┴────┐
-                  │  Files  │
-                  │ /var/www/updates/  ← update binaries
-                  │ /var/www/speedtest/ ← (removed in v2 — not needed)
-                  └─────────┘
-```
-
-### PocketBase JS Hooks
-
-**`on_codes_create`** — validates code format before saving:
-```js
-// Server-side Luhn-mod-N validation
-if (!isValidLuhnModN(record.code)) throw new Error("Invalid code format");
-```
-
-**`on_codes_activate`** (custom endpoint) — handles the activation POST:
-```js
-// 1. Rate limit: 5 attempts per 10 min per IP
-// 2. Validate Luhn-mod-N
-// 3. Check code exists + not used + not suspended
-// 4. Bind fingerprint to code
-// 5. Generate JWT token
-// 6. Return token + plan + tier configs
-```
-
-**`on_heartbeat`** (custom endpoint) — handles heartbeat POST:
-```js
-// 1. Verify JWT token
-// 2. Check suspension status
-// 3. Rotate token if needed
-// 4. Check if tier_configs changed since last heartbeat
-// 5. Return status + maybe new token + maybe new configs + maybe update cmd
-```
-
----
-
-## 11. TUN (Simplified)
-
-**v1 had:** A privileged helper service with named-pipe IPC, caller verification, service install/uninstall.
-
-**v2 has:** Delegate TUN creation to the engine. Hysteria 2 has a `--tun` flag that creates the interface and routes traffic.
-
-```go
-func buildCommand(binaryPath, protocolID string, configJSON json.RawMessage, planTier string) *exec.Cmd {
-    switch protocolID {
-    case "hysteria2":
-        return exec.Command(binaryPath, "client",
-            "-c", string(configJSON),
-            "--tun",
-            "--speed", fmt.Sprintf("%d", caps.Get(planTier)),
-        )
-    case "usque":
-        return exec.Command(binaryPath, "-c", string(configJSON))
-    }
-}
-```
-
-Kill switch and DNS guard remain as OS-level commands in `internal/tunnel/`.
-
----
-
-## 12. v1 → v2 Summary
-
-| Area | v1 (Over-Engineered) | v2 (Simplified + Complete) |
-|------|---------------------|---------------------------|
-| Activation → server config | Implicit, undocumented pipeline | **Explicit pipeline** — code → tier → server config → Hysteria 2 |
-| Business model | Separate doc, not integrated | **Integrated** — middlemen, paper codes, no payments, suspension |
-| Server config delivery | Only via heartbeat | **Dual path** — activation response + heartbeat updates |
-| Rate limiting | Mentioned in threat model | **Built into activation flow** — 5 attempts per 10 min per IP |
-| Device binding | Permanent, one-way | Same, documented in pipeline |
-| Speed limiting | 5-stage probe + EWMA + dynamic | **Hardcoded lookup** (40 lines) |
-| Helper service | IPC + install + verify | **Dropped** — engine `--tun` flag |
-| Update mechanism | Two-phase sentinel | **Background download + auto-revert on crash** |
-| State machine | 6 states + GRACE | **3 states** — IDLE/CONNECTING/CONNECTED |
-| Server-side | Caddy + PocketBase + hooks | Same, simplified hooks |
+| Area | v1 | v2 |
+|------|----|----|
+| Speed limiting | 5-stage probe + EWMA + dynamic (all tiers) | **Static caps for 3 tiers, adaptive for Gaming Max only** |
+| Bottleneck profiles | Implicit (just speed caps) | **Explicit per-tier engine config tuning** (Brutal targets, recv_window, hop-interval) |
+| Adaptation | Separate monitor package, background 100KB downloads, EWMA smoothing | **Reuses health check timing, single goroutine, ~50 lines** |
+| Probe | Staged ramp per tier | **Single 1MB download for Gaming Max only** |
+| Helper service | IPC + install + verify | **Dropped** — engine --tun |
+| Update | Two-phase sentinel | **Background download + auto-revert** |
+| Server configs | Heartbeat only | **Activation + heartbeat dual path** |
+| State machine | 6 states + GRACE | **3 states** |

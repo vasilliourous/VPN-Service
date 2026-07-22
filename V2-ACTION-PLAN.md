@@ -1,644 +1,443 @@
 # V2 — Simplified Action Plan
 
 > **replaces:** Actionable-Plan.md (v3 Hardened — 4771 lines)
-> **focus:** Artificial bottlenecking + background updater + activation-code-to-Hysteria-2 pipeline
-> **v2 total:** ~1,600 lines of Go (down from ~2,376) + server-side hooks
+> **principle:** Artificial bottlenecking via Hysteria 2 config profiles. Adaptive only for Gaming Max.
+> **v2 total:** ~1,700 lines of Go
 
 ---
 
 ## What Changed From v1
 
-| v1 Feature | v2 Decision | Rationale |
-|------------|-------------|-----------|
-| Staged ramp probe (5 stages) | **Removed** | Hysteria 2 CC handles congestion |
-| EWMA bandwidth monitor | **Removed** | Caps are static per tier |
-| Privileged helper service | **Removed** | Engine's `--tun` flag creates interfaces |
-| Process sandbox (job objects) | **Removed** | Not needed for first-party engine |
-| Process disguise | **Removed** | Adds complexity for no real benefit |
-| 6-state connection machine | **3 states** | Over-engineered for MVP |
-| `internal/probe/`, `monitor/`, `helper/` | **Deleted** | See above |
-| **Updater** | **Enhanced** | Background download + auto-revert on crash |
-| **Heartbeat** | **Simplified** | Suspension + update object + config refresh |
-| **Activation response** | **Enhanced** | Now returns Hysteria 2 server configs |
-| **Server config delivery** | **Dual path** | Activation response + heartbeat refresh |
+| v1 Feature | v2 Decision |
+|------------|-------------|
+| 5-stage ramp probe (all tiers) | **Single 1MB probe for Gaming Max only. Others use static caps.** |
+| EWMA bandwidth monitor (all tiers, 210 lines) | **Replaced by health check RTT monitoring for Gaming Max (~50 lines).** |
+| Separate `internal/monitor/` package | **Removed. Adaptation is a goroutine in gui/app.go.** |
+| Bufferbloat detection with multipliers | **Kept the same concept, simplified logic, no EWMA.** |
+| Helper service + sandbox + disguise | **All removed.** |
+| Two-phase update sentinel | **Background download + auto-revert on crash.** |
+| Activation returns just token + plan | **Now returns Hysteria 2 configs too.** |
+| Server config only via heartbeat | **Now delivered on activation + refreshed on heartbeat.** |
 
 ---
 
-## Phase 0: Server-Side — PocketBase Setup
+## Phase 0: Server-Side Setup
 
-### Step 0.1 — VPS Base
+### Step 0.1 — VPS + Caddy + PocketBase
 
-```bash
-# Ubuntu 22.04, 2GB RAM
-apt update && apt upgrade -y
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 22/tcp
-ufw --force enable
+Same as v1. No changes needed.
 
-# Install Caddy (with rate_limit module)
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy-stable.list
-apt update && apt install -y caddy
+### Step 0.2 — PocketBase Collections
 
-# Install PocketBase
-mkdir -p /opt/pocketbase && cd /opt/pocketbase
-wget https://github.com/pocketbase/pocketbase/releases/download/v0.22.0/pocketbase_linux_amd64.zip
-unzip pocketbase_linux_amd64.zip
-chmod +x pocketbase
-useradd --system --no-create-home --shell /usr/sbin/nologin pocketbase
-chown -R pocketbase:pocketbase /opt/pocketbase
-
-# Systemd service
-cat > /etc/systemd/system/pocketbase.service << 'EOF'
-[Unit]
-Description=PocketBase
-After=network.target
-[Service]
-Type=simple
-User=pocketbase
-Group=pocketbase
-WorkingDirectory=/opt/pocketbase
-ExecStart=/opt/pocketbase/pocketbase serve --http=127.0.0.1:8090
-Restart=always
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload && systemctl enable --now pocketbase
+**`codes`** — Activation codes:
+```
+code, tier, used, fingerprint, suspended, middleman, created_at
 ```
 
-### Step 0.2 — Caddy Config
+**`tier_configs`** — Hysteria 2 bottleneck profiles per tier:
+```
+tier (unique), configs (json), active (bool), updated_at
+```
 
-```nginx
-api.yourdomain.com {
-    reverse_proxy 127.0.0.1:8090
+**`heartbeats`** — Telemetry log (optional)
 
-    rate_limit {
-        zone activation {
-            key {remote_host}
-            match_path /api/collections/codes/activate
-            rate 5
-            burst 5
-            window 10m
-        }
-        zone heartbeat {
-            key {remote_host}
-            match_path /api/heartbeat
-            rate 6
-            burst 10
-            window 1m
-        }
-        zone general {
-            key {remote_host}
-            rate 100
-            burst 200
-            window 10s
-        }
-    }
+### Step 0.3 — Define the Four Bottleneck Profiles
 
-    request_body /api/collections/codes/activate {
-        max_size 2KB
-    }
+Insert these into `tier_configs`:
 
-    @updatefiles path /files/updates/*
-    handle @updatefiles {
-        root * /var/www/updates
-        file_server
-    }
+**Warp Lite:**
+```json
+{
+    "tier": "warp_lite",
+    "configs": [{
+        "id": "usque",
+        "display_name": "Lite Mode",
+        "binary_name": "litemode",
+        "config_json": { "wg": { "endpoint": "engage.cloudflareclient.com:2408" } }
+    }]
 }
 ```
 
-### Step 0.3 — Create PocketBase Collections
-
-Create these collections through the PocketBase Admin UI (`https://api.yourdomain.com/_/`):
-
-**`codes`** — Activation codes database:
-```
-code           Plain text    (unique, required)  — "MYVPN-ABCD-1234-EFGH-5"
-tier          Plain text    (required)           — "warp_lite" | "stealth_browse" | "gaming_mid" | "gaming_max"
-used          Bool          (default: false)
-fingerprint   Plain text    (optional)           — SHA256 hash, set on activation
-suspended     Bool          (default: false)
-middleman     Plain text    (optional)           — who sold it
-created_at    Autodate      (created)
-```
-
-**`tier_configs`** — Hysteria 2 server configs per tier:
-```
-tier          Plain text    (required, unique)   — "gaming_mid"
-configs       JSON          (required)           — array of protocol config objects
-active        Bool          (default: true)
-updated_at    Autodate      (updated)
-```
-
-Example config for a tier:
+**Stealth Browse:**
 ```json
-[
-    {
+{
+    "tier": "stealth_browse",
+    "configs": [{
         "id": "hysteria2",
         "display_name": "Speed Mode",
         "binary_name": "speedmode",
         "config_json": {
             "server": "sgp1.api.yourdomain.com:443",
-            "auth": "pool-a-password",
+            "auth": "stealth-pool-1",
             "tls": { "sni": "www.cloudflare.com", "insecure": false },
             "obfs": "salamander",
-            "obfs-password": "pool-a-obfs-key",
-            "fast-open": true,
+            "obfs-password": "stealth-obfs-key",
+            "brutal": { "enabled": false },
+            "recv_window_conn": 8388608,
+            "recv_window": 33554432,
+            "hop-interval": 15
+        }
+    }]
+}
+```
+
+**Gaming Mid:**
+```json
+{
+    "tier": "gaming_mid",
+    "configs": [{
+        "id": "hysteria2",
+        "display_name": "Speed Mode",
+        "binary_name": "speedmode",
+        "config_json": {
+            "server": "sgp1.api.yourdomain.com:443",
+            "auth": "gaming-mid-pool-1",
+            "tls": { "sni": "www.cloudflare.com", "insecure": false },
+            "obfs": "salamander",
+            "obfs-password": "mid-obfs-key",
+            "brutal": { "enabled": true, "up_mbps": 15, "down_mbps": 15 },
+            "recv_window_conn": 1048576,
+            "recv_window": 4194304,
             "hop-interval": 30
         }
-    }
-]
-```
-
-**`heartbeats`** — Telemetry log (optional, for monitoring):
-```
-device_id     Plain text
-tier          Plain text
-connected     Bool
-health        Plain text
-ip            Plain text
-created_at    Autodate
-```
-
-### Step 0.4 — Generate Initial Tier Configs
-
-Add at least one server pool per tier. For MVP you can point all Hysteria 2 tiers to the same VPS with different auth passwords:
-
-```
-warp_lite:      usque/Warp config only (no Hysteria 2 server needed)
-stealth_browse: Hysteria 2 → your-vps:443, auth=stealth-pool
-gaming_mid:     Hysteria 2 → your-vps:443, auth=gaming-mid-pool
-gaming_max:     Hysteria 2 → your-vps:443, auth=gaming-max-pool
-```
-
-### Step 0.5 — Deploy JS Hooks
-
-Place these in `/opt/pocketbase/pb_hooks/`:
-
-**`activation.pb.js`** — Handles the activation endpoint:
-```javascript
-// POST /api/collections/codes/activate
-// Body: { "code": "MYVPN-...", "fingerprint": "sha256..." }
-// Returns: { "token": "jwt...", "plan": "gaming_mid", "configs": [...] }
-
-routerAdd("POST", "/api/collections/codes/activate", (c) => {
-    const body = $apis.requestInfo(c).data;
-    const code = body.code?.toUpperCase().trim();
-    const fingerprint = body.fingerprint;
-
-    // 1. Luhn-mod-N check
-    if (!isValidLuhnModN(code)) {
-        return c.json(400, { "message": "Invalid code format" });
-    }
-
-    // 2. Find code in DB
-    const record = $app.dao().findFirstRecordByData("codes", "code", code);
-    if (!record) {
-        return c.json(404, { "message": "Code not found" });
-    }
-
-    // 3. Check if already used
-    if (record.getBool("used")) {
-        return c.json(403, { "message": "Code already activated on another device" });
-    }
-
-    // 4. Check if suspended
-    if (record.getBool("suspended")) {
-        return c.json(403, { "message": "Code has been suspended" });
-    }
-
-    // 5. Bind device
-    record.set("used", true);
-    record.set("fingerprint", fingerprint);
-    $app.dao().saveRecord(record);
-
-    // 6. Get tier configs
-    const tier = record.getString("tier");
-    const configRecord = $app.dao().findFirstRecordByData("tier_configs", "tier", tier);
-    const configs = configRecord ? JSON.parse(configRecord.getString("configs")) : [];
-
-    // 7. Generate JWT (valid 24h)
-    const token = generateToken(fingerprint, tier);
-
-    return c.json(200, {
-        "token": token,
-        "plan": tier,
-        "configs": configs
-    });
-});
-
-function isValidLuhnModN(s) { /* Luhn-mod-N over ABCDEFGHJKLMNPQRSTUVWXYZ23456789 */ }
-function generateToken(fp, tier) { /* HMAC-SHA256 JWT with TOKEN_SECRET */ }
-```
-
-**`heartbeat.pb.js`** — Handles heartbeat POST:
-```javascript
-// POST /api/heartbeat
-// Body: { "token": "...", "device_id": "...", ... }
-// Returns: { "status": "active", "token": "...", "configs": [...], "update": {...} }
-
-routerAdd("POST", "/api/heartbeat", (c) => {
-    const body = $apis.requestInfo(c).data;
-
-    // 1. Verify JWT token
-    const claims = verifyToken(body.token);
-    if (!claims) {
-        return c.json(401, { "message": "Invalid token" });
-    }
-
-    // 2. Check if device is suspended
-    const codeRecord = $app.dao().findFirstRecordByData("codes", "fingerprint", body.device_id);
-    if (codeRecord && codeRecord.getBool("suspended")) {
-        return c.json(200, { "status": "suspended", "message": "Account suspended" });
-    }
-
-    // 3. Generate fresh token
-    const newToken = generateToken(claims.fingerprint, claims.tier);
-
-    // 4. Check if tier configs have changed
-    const configRecord = $app.dao().findFirstRecordByData("tier_configs", "tier", claims.tier);
-    const configs = configRecord ? JSON.parse(configRecord.getString("configs")) : [];
-
-    // 5. Check if there's a pending update for this platform
-    const update = checkForUpdate(body.os_platform);
-
-    // 6. Log heartbeat (optional)
-    logHeartbeat(body);
-
-    return c.json(200, {
-        "status": "active",
-        "token": newToken,
-        "configs": configs,
-        "update": update   // null if no update pending
-    });
-});
-```
-
-### Step 0.6 — Generate Initial Code Batch
-
-Run a script or use the PocketBase admin UI to create codes:
-
-```bash
-# scripts/generate_codes.sh
-# Generates 50 codes for each tier
-for tier in warp_lite stealth_browse gaming_mid gaming_max; do
-    for i in $(seq 1 50); do
-        code=$(generate_luhn_code "MYVPN")
-        curl -X POST https://api.yourdomain.com/api/collections/codes/records \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"code\": \"$code\", \"tier\": \"$tier\", \"middleman\": \"unassigned\"}"
-    done
-done
-```
-
-Print codes on paper cards:
-```
-┌──────────────────────┐
-│   MyVPN              │
-│   Gaming Mid         │
-│                      │
-│   MYVPN-ABCD-1234-   │
-│   EFGH-5             │
-│                      │
-│   1 month: $8        │
-│   Cash only          │
-└──────────────────────┘
-```
-
----
-
-## Phase 1: Strip v1 Over-Engineering
-
-### Step 1.1 — Delete Unused Packages
-
-```bash
-rm -rf internal/probe/
-rm -rf internal/monitor/
-rm -rf internal/helper/
-rm -f  internal/manager/disguise_windows.go
-rm -f  internal/manager/process_windows.go
-rm -f  internal/manager/process_darwin.go
-```
-
-### Step 1.2 — Simplify `internal/manager/process.go`
-
-```go
-func StartEngine(cfg storage.ProtocolConfig, planTier string) error {
-    // ... lookup binary, build command with --speed from caps.Get(planTier)
-}
-
-func buildCommand(binaryPath, protocolID string, configJSON json.RawMessage, planTier string) *exec.Cmd {
-    switch protocolID {
-    case "hysteria2":
-        return exec.Command(binaryPath, "client",
-            "-c", string(configJSON),
-            "--tun",
-            "--speed", fmt.Sprintf("%d", caps.Get(planTier)),
-        )
-    case "usque":
-        return exec.Command(binaryPath, "-c", string(configJSON))
-    }
+    }]
 }
 ```
 
-Remove: `sandbox()`, `disguiseProcess()`, `bandwidthBps` parameter.
-
----
-
-## Phase 2: Background Updater (The Lifeline)
-
-### Step 2.1 — Create `internal/updater/updater.go`
-
-Full implementation (~150 lines) covering:
-
-| Function | Purpose |
-|----------|---------|
-| `BackgroundDownload(url, sha256)` | Goroutine: download to app data dir, verify, mark pending |
-| `Startup() bool` | Called from `main()` — check pending update or crash recovery |
-| `CheckOnStartup() bool` | Verify SHA256, backup current, swap, return true if swapped |
-| `recoverFromCrash() bool` | If "applied but not confirmed" + `.prev` exists → restore old binary |
-| `ConfirmUpdate()` | Called after first successful heartbeat — delete `.prev`, clear state |
-
-The key flow:
-```
-Heartbeat has "update" field → BackgroundDownload() → engines/myvpn.update
-Next launch → Startup() → CheckOnStartup() → syscall.Exec → new binary
-First heartbeat → ConfirmUpdate() → delete .prev
-Crash before first heartbeat → recoverFromCrash() → restore .prev
-```
-
-### Step 2.2 — Update `main.go`
-
-```go
-func main() {
-    storage.Init()
-
-    // ★ Update check runs before anything else
-    if updater.Startup() {
-        exe, _ := os.Executable()
-        syscall.Exec(exe, os.Args, os.Environ())
-    }
-
-    if !storage.IsActivated() {
-        gui.ShowActivationPrompt(*adminHubURL)
-        return
-    }
-
-    gui.Run(*adminHubURL)
-}
-```
-
----
-
-## Phase 3: Heartbeat (Config Carrier)
-
-### Step 3.1 — Heartbeat Response Structure
-
-```go
-type HeartbeatResponse struct {
-    Status    string               `json:"status"`
-    Plan      string               `json:"plan"`
-    Token     string               `json:"token"`
-    Configs   []storage.ProtocolConfig `json:"configs,omitempty"`    // ★ Server config refresh
-    Update    *UpdateCommand       `json:"update,omitempty"`          // ★ Binary update
-    Message   string               `json:"message,omitempty"`
-}
-
-type UpdateCommand struct {
-    Version  string `json:"version"`
-    Platform string `json:"platform"`
-    URL      string `json:"url"`
-    SHA256   string `json:"sha256"`
-}
-```
-
-### Step 3.2 — Heartbeat Loop
-
-```go
-func doHeartbeat() {
-    token := storage.LoadToken()
-    if token == "" { return }
-
-    resp := sendHeartbeat(token, buildPayload())
-
-    // 1. Suspension
-    if resp.Status == "suspended" {
-        manager.StopEngine()
-        return
-    }
-
-    // 2. Token rotation
-    if resp.Token != "" {
-        storage.SaveToken(resp.Token)
-    }
-
-    // 3. ★ Server config refresh (new IPs, ports, auth)
-    if len(resp.Configs) > 0 {
-        storage.SetProtocols(resp.Configs)
-        if manager.IsRunning() {
-            go reconnectWithNewConfigs(resp.Configs)
+**Gaming Max:**
+```json
+{
+    "tier": "gaming_max",
+    "configs": [{
+        "id": "hysteria2",
+        "display_name": "Speed Mode",
+        "binary_name": "speedmode",
+        "config_json": {
+            "server": "sgp1.api.yourdomain.com:443",
+            "auth": "gaming-max-pool-1",
+            "tls": { "sni": "www.cloudflare.com", "insecure": false },
+            "obfs": "salamander",
+            "obfs-password": "max-obfs-key",
+            "brutal": { "enabled": true, "up_mbps": 0, "down_mbps": 0 },
+            "recv_window_conn": 16777216,
+            "recv_window": 67108864,
+            "hop-interval": 0
         }
-    }
-
-    // 4. ★ Background update
-    if resp.Update != nil {
-        go updater.BackgroundDownload(resp.Update.URL, resp.Update.SHA256)
-    }
-
-    // 5. Confirm update on first successful heartbeat
-    if storage.GetAppliedUpdateVersion() != "" {
-        updater.ConfirmUpdate()
-    }
-
-    consecutiveFails = 0
-    graceDeadline = time.Now().Add(graceDuration)
+    }]
 }
 ```
+
+### Step 0.4 — JS Hooks
+
+**`activation.pb.js`** — Validates code, binds device, returns configs from `tier_configs`.
+
+**`heartbeat.pb.js`** — Checks suspension, refreshes token, returns current configs + optional update command.
 
 ---
 
-## Phase 4: Activation
-
-### Step 4.1 — Client-Side Activation Call
+## Phase 1: Create Caps Package
 
 ```go
-type ActivationRequest struct {
-    Code        string `json:"code"`
-    Fingerprint string `json:"fingerprint"`
-}
-
-type ActivationResponse struct {
-    Token   string                `json:"token"`
-    Plan    string                `json:"plan"`
-    Configs []ProtocolConfig      `json:"configs"`  // ★ Hysteria 2 server configs
-}
-```
-
-The activation call is nearly identical to v1, but the response now includes `configs`:
-
-```go
-func Validate(apiBase, code string) (*ActivationResponse, error) {
-    // ... Luhn-mod-N check
-    // ... POST with code + fingerprint
-    // ... Parse response including configs array
-    // ... Return token + plan + configs
-}
-```
-
-### Step 4.2 — Save Configs on Activation
-
-When activation succeeds, save both the token and the server configs:
-
-```go
-storage.SaveActivation(result.Token, result.Plan)
-storage.SetProtocols(result.Configs)  // ★ Save Hysteria 2 server configs
-```
-
----
-
-## Phase 5: Caps Package
-
-```go
-// internal/caps/caps.go — 40 lines
+// internal/caps/caps.go — 45 lines
 package caps
+
 func Get(tier string) int {
     switch tier {
     case "warp_lite":      return   8_000_000
     case "stealth_browse": return  48_000_000
     case "gaming_mid":     return  50_000_000
-    case "gaming_max":     return 100_000_000
+    case "gaming_max":     return           0  // 0 = probe on connect
     default:               return           0
     }
 }
-func Floor(tier string) int { return 3_000_000 }
+
+func Floor(tier string) int  { return 3_000_000 }
+func IsAdaptive(tier string) bool { return tier == "gaming_max" }
 ```
 
 ---
 
-## Phase 6: GUI (No Probe, No Monitor)
+## Phase 2: Simplify Probe (Gaming Max Only)
+
+Create a simplified probe — single 1MB download, no stages:
+
+```go
+// internal/probe/probe.go (simplified, Gaming Max only)
+package probe
+
+import (
+    "io"
+    "net/http"
+    "time"
+)
+
+type Result struct {
+    BandwidthBps int
+    BaselineRTT  time.Duration
+}
+
+func Run(adminHubURL string) (*Result, error) {
+    url := adminHubURL + "/speedtest/1mb.bin"
+    start := time.Now()
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    // Time to first byte = baseline RTT
+    baselineRTT := time.Since(start)
+
+    n, _ := io.Copy(io.Discard, resp.Body)
+    elapsed := time.Since(start)
+
+    if elapsed < time.Millisecond {
+        return nil, nil
+    }
+
+    bps := int(float64(n*8) / elapsed.Seconds())
+    if bps > 100_000_000 {
+        bps = 100_000_000
+    }
+    if bps < 3_000_000 {
+        bps = 3_000_000
+    }
+
+    return &Result{BandwidthBps: bps, BaselineRTT: baselineRTT}, nil
+}
+```
+
+This only runs for Gaming Max. Other tiers don't call it.
+
+---
+
+## Phase 3: Manager — Support Dynamic Cap
+
+```go
+// internal/manager/process.go additions
+
+var dynamicCap int64  // 0 = use caps.Get()
+
+func SetBandwidthCap(bps int) {
+    atomic.StoreInt64(&dynamicCap, int64(bps))
+}
+
+func CurrentBandwidthCap() int {
+    d := atomic.LoadInt64(&dynamicCap)
+    if d > 0 {
+        return int(d)
+    }
+    return 0
+}
+
+func StartEngine(cfg storage.ProtocolConfig, tier string) error {
+    // ... resolve binary ...
+
+    cap := CurrentBandwidthCap()
+    if cap == 0 {
+        cap = caps.Get(tier)
+    }
+
+    cmd := buildCommand(binaryPath, cfg.ID, cfg.ConfigJSON, tier, cap)
+    // ... start ...
+}
+
+func RestartEngine(cfg storage.ProtocolConfig, tier string) error {
+    StopEngine()
+    return StartEngine(cfg, tier)
+}
+```
+
+`buildCommand` now receives the resolved cap as an int (not looking it up internally), and passes `--tun --speed <cap>`.
+
+For Gaming Max adaptive changes: `RestartEngine` stops and starts with a new config. The config JSON's Brutal CC target is updated to match the new cap:
+
+```go
+func updateBrutalTarget(configJSON json.RawMessage, capBps int) json.RawMessage {
+    var cfg map[string]interface{}
+    json.Unmarshal(configJSON, &cfg)
+    if brutal, ok := cfg["brutal"].(map[string]interface{}); ok {
+        mbps := float64(capBps) / 1_000_000
+        brutal["up_mbps"] = mbps
+        brutal["down_mbps"] = mbps
+    }
+    updated, _ := json.Marshal(cfg)
+    return updated
+}
+```
+
+---
+
+## Phase 4: GUI — Connect Flow + Adaptation Loop
+
+### Connect (simplified)
 
 ```go
 func connect() {
     state.ConnectBtn.SetText("Connecting...")
     go func() {
         planTier := storage.LoadPlanTier()
+        protos := storage.GetProtocols()
+        if len(protos) == 0 {
+            state.StatusLabel.SetText("No server configs — re-activate?")
+            state.ConnectBtn.SetText("Connect")
+            return
+        }
 
+        // Gaming Max: probe bandwidth
+        var probeResult *probe.Result
+        if caps.IsAdaptive(planTier) {
+            probeResult, _ = probe.Run(state.adminHubURL)
+            if probeResult != nil {
+                manager.SetBandwidthCap(probeResult.BandwidthBps)
+            }
+        }
+
+        // Setup tunnel
         tunnel.Setup()
         tunnel.Engage()
         tunnel.Guard()
 
-        protos := storage.GetProtocols()  // Configs from activation or heartbeat
-        if len(protos) > 0 {
-            manager.StartEngine(protos[0], planTier)  // Cap applied internally
+        // Start engine
+        if err := manager.StartEngine(protos[0], planTier); err != nil {
+            state.StatusLabel.SetText(fmt.Sprintf("Engine failed: %v", err))
+            disconnect()
+            return
         }
 
+        // Start health check
         state.healthChecker = health.New(state.adminHubURL)
         state.healthChecker.OnDead(func() { disconnect() })
         state.healthChecker.Start()
+
+        // Gaming Max: launch adaptation loop
+        if caps.IsAdaptive(planTier) && probeResult != nil {
+            go adaptBandwidth(state.adminHubURL, planTier,
+                probeResult.BandwidthBps, probeResult.BaselineRTT)
+        }
 
         state.connected = true
         state.startTime = time.Now()
         state.ConnectBtn.SetText("Disconnect")
         state.StatusLabel.SetText("Connected")
+        setDotColor(green)
     }()
 }
 ```
 
-Speed label shows tier cap from `caps.Get()`, not from a monitor.
-
----
-
-## Phase 7: Storage — Add Update + Config State
+### Adaptation Loop (~50 lines)
 
 ```go
-type AppData struct {
-    Token             string            `json:"token"`
-    DeviceFingerprint string            `json:"device_fingerprint"`
-    PlanTier          string            `json:"plan_tier"`
-    Protocols         []ProtocolConfig  `json:"protocols"`         // Server configs
-    PendingUpdate     *PendingUpdate    `json:"pending_update,omitempty"`
-    AppliedVersion    string            `json:"applied_version,omitempty"`
-    // ...v1 fields kept: TelemetryOptOut, EngineCache, ActiveConn
+func adaptBandwidth(apiBase, tier string, maxBps int, baselineRTT time.Duration) {
+    ticker := time.NewTicker(15 * time.Second)
+    defer ticker.Stop()
+
+    currentCap := maxBps
+    floor := caps.Floor(tier)
+    slowCount := 0
+    goodCount := 0
+
+    for range ticker.C {
+        if !manager.IsRunning() {
+            return
+        }
+
+        start := time.Now()
+        resp, err := http.Get(apiBase + "/_/health")
+        if err != nil || resp == nil || resp.StatusCode != 200 {
+            continue
+        }
+        resp.Body.Close()
+        rtt := time.Since(start)
+
+        switch {
+        case rtt > baselineRTT*3:
+            slowCount++
+            goodCount = 0
+            if slowCount >= 2 {
+                newCap := currentCap / 2
+                if newCap < floor {
+                    newCap = floor
+                }
+                if newCap != currentCap {
+                    currentCap = newCap
+                    manager.SetBandwidthCap(newCap)
+                    go manager.RestartEngine(storage.GetProtocols()[0], tier)
+                }
+                slowCount = 0
+            }
+
+        case rtt < baselineRTT*1.5:
+            goodCount++
+            slowCount = 0
+            if goodCount >= 4 {
+                newCap := currentCap * 5 / 4
+                if newCap > maxBps {
+                    newCap = maxBps
+                }
+                if newCap != currentCap {
+                    currentCap = newCap
+                    manager.SetBandwidthCap(newCap)
+                    go manager.RestartEngine(storage.GetProtocols()[0], tier)
+                }
+                goodCount = 0
+            }
+
+        default:
+            slowCount = 0
+            goodCount = 0
+        }
+    }
 }
 ```
 
----
-
-## Phase 8: Testing — Full Pipeline
-
-### Activation-to-Hysteria-2 Tests
-
-| Test | Expected |
-|------|----------|
-| Admin generates code via API | Code appears in PocketBase `codes` collection |
-| User enters valid code | Server returns token + plan + Hysteria 2 config |
-| User enters used code | Server rejects with "already activated" |
-| User enters suspended code | Server rejects with "suspended" |
-| User enters invalid Luhn code | Server rejects before DB lookup |
-| Same IP activates 6× in 10 min | 6th attempt blocked by Caddy rate limit |
-| User activates with wrong fingerprint | Activation succeeds, fingerprint bound |
-| Second activation same code, different device | Rejected — code already bound |
-| Admin suspends active code | Next heartbeat returns "suspended" → client disconnects |
-| Admin changes Hysteria 2 server IP | Next heartbeat delivers new config → client reconnects |
-| Client receives configs on activation | Storage has protocol configs, engine can start |
-
-### Update Tests
-
-| Test | Expected |
-|------|----------|
-| Heartbeat returns `update` field | Background download starts, no UI impact |
-| Download completes | `.update` file saved, pending state in storage |
-| User relaunches | Binary swapped, new version runs |
-| New version crashes before first heartbeat | Next launch auto-reverts to `.prev` |
-| SHA256 mismatch | Temp file deleted, error logged, no update |
-| Network drops during download | Fails, retries on next heartbeat |
-| First heartbeat succeeds | Update confirmed, `.prev` cleaned |
-
-### Core Tests
-
-| Test | Expected |
-|------|----------|
-| Launch with no activation | Activation prompt shown |
-| Enter valid code | Token + configs saved, main window opens |
-| Tap Connect | Engine starts with configs + speed cap, "Connected" |
-| Change server IP on hub mid-session | Next heartbeat → new config → reconnect |
-| Disconnect | Engine stops, TUN torn down, "Disconnected" |
-| Health check fails 3× | Auto-disconnect, "Tap to Retry" |
-| Heartbeat fails 7 days | Grace expires, re-activation required |
+No EWMA. No background downloads. No separate package. ~45 lines that sit in `gui/app.go`.
 
 ---
 
-## Phase 9: Operations — Code Management
+## Phase 5: Simplify Heartbeat
 
-### Generating Codes (Weekly Task)
+Response now carries configs + optional update:
 
-```bash
-# Generate 100 codes for each tier, assign to middlemen
-./scripts/generate_codes.sh \
-    --tier gaming_mid \
-    --count 100 \
-    --middleman "House 3 - John" \
-    --admin-token "$ADMIN_TOKEN"
+```go
+type HeartbeatResponse struct {
+    Status    string                `json:"status"`
+    Token     string                `json:"token"`
+    Configs   []ProtocolConfig      `json:"configs,omitempty"`
+    Update    *UpdateCommand        `json:"update,omitempty"`
+    Message   string                `json:"message,omitempty"`
+}
 ```
 
-### Monitoring (Quick PocketBase Queries)
+Heartbeat loop: suspension check → token rotate → save configs if present → spawn update download if present → confirm update on first success.
 
-```sql
--- All codes sold by a middleman
-SELECT * FROM codes WHERE middleman = 'House 3 - John' AND used = true;
+---
 
--- All active devices (heartbeat in last 5 min)
-SELECT DISTINCT device_id FROM heartbeats WHERE created_at > datetime('now', '-5 minutes');
+## Phase 6: Background Updater
 
--- Suspended devices
-SELECT * FROM codes WHERE suspended = true;
-```
+Unchanged from previous — background download to app data dir → apply on next launch → auto-revert on crash.
 
-### Suspending a User
+---
 
-In PocketBase admin UI, find the code record → set `suspended = true`. The device's next heartbeat returns `"status": "suspended"` → client disconnects. Binding is preserved — unsuspending re-enables the device.
+## Phase 7: Testing
+
+### Gaming Max Adaptation Tests
+
+| Test | Expected |
+|------|----------|
+| Gaming Max connect on fast network (80 Mbps) | Probe measures 80 Mbps → Brutal target 80 Mbps → smooth gaming |
+| Simulate QoS throttle (traffic shape to 5 Mbps mid-session) | Health check RTT spikes → cap halves → engine restarts → settles near 5 Mbps |
+| Simulate QoS release (back to 80 Mbps) | RTT normal for 4 checks → cap increases by 25% → climbs back toward 80 Mbps |
+| Gaming Max connect on already-throttled network (10 Mbps) | Probe measures 10 Mbps → starts there → no spike, no adaptation needed |
+| Non-Gaming-Max tiers connect | No probe runs, no adaptation loop, hardcoded cap applied |
+
+### Other Tiers Bottleneck Tests
+
+| Test | Expected |
+|------|----------|
+| Stealth Browse streaming | High throughput, but latency spikes make gaming unplayable |
+| Gaming Mid gaming | Periodic rubber-banding, stutter from small recv_window |
+| Warp Lite browsing | Slow and inconsistent (usque/Warp behavior) |
 
 ---
 
@@ -646,17 +445,15 @@ In PocketBase admin UI, find the code record → set `suspended = true`. The dev
 
 | Task | Time |
 |------|------|
-| VPS setup (Caddy + PocketBase) | 30 min |
-| Create collections + deploy hooks | 1 hour |
-| Generate initial codes | 10 min |
-| Delete unused v1 packages | 5 min |
-| Create `internal/caps/caps.go` | 10 min |
-| Build `internal/updater/updater.go` | 1 hour |
-| Update `main.go` for startup update | 10 min |
-| Simplify `manager/process.go` | 20 min |
+| VPS + PocketBase + collections | 30 min |
+| Define 4 bottleneck profiles in `tier_configs` | 15 min |
+| Write JS hooks (activation + heartbeat) | 45 min |
+| Create `internal/caps/caps.go` | 5 min |
+| Simplify `internal/probe/probe.go` (Gaming Max only) | 15 min |
+| Update `manager/process.go` (dynamic cap, restart, updateBrutalTarget) | 30 min |
+| Add adaptation loop in `gui/app.go` | 20 min |
+| Simplify `gui/app.go` connect flow | 15 min |
 | Simplify `heartbeat/heartbeat.go` | 20 min |
-| Simplify `gui/app.go` | 20 min |
-| Update `storage/storage.go` | 15 min |
-| Test full activation→config→connect pipeline | 30 min |
-| Test update→crash→revert cycle | 30 min |
+| Build background updater | 1 hour |
+| Test Gaming Max adaptation | 30 min |
 | **Total** | **~4.5 hours** |

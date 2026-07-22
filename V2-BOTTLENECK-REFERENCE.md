@@ -1,142 +1,98 @@
 # V2 — Quick Reference
 
-> **Three things matter:** (1) hardcoded speed caps, (2) background updater, (3) codes unlocking server configs.
+---
+
+## The Four Bottleneck Profiles
+
+| Tier | Engine | Speed Cap | Brutal CC | Recv Window | Hop | Experience |
+|------|--------|-----------|-----------|-------------|-----|------------|
+| Warp Lite | usque/Warp | 1 MB/s | N/A | N/A | N/A | Slow + inconsistent |
+| Stealth Browse | Hysteria 2 | 6 MB/s | **Disabled** | 32 MB | 15s | Good streaming, **terrible gaming** (bufferbloat) |
+| Gaming Mid | Hysteria 2 | 6.25 MB/s | **Target 15 Mbps** (cap is 50) | 4 MB | 30s | **Rubber-banding + jitter** (Brutal fights itself) |
+| Gaming Max | Hysteria 2 | **Adaptive** | **Target = probed BW** | 64 MB | 0 | Smooth, adapts to QoS |
+
+The profiles are JSON in PocketBase `tier_configs`. Change them live → clients get them on next heartbeat.
 
 ---
 
-## Part 1: The Full Pipeline
+## Gaming Max Adaptation
 
 ```
-Paper code → Enter in app → Hub validates Luhn + checks DB →
-Binds device fingerprint → Returns token + plan + Hysteria 2 config →
-Client saves configs, starts engine with --speed <cap> --tun
+On connect: download 1MB from hub → measure bandwidth + baseline RTT
+            → set Brutal CC target = measured bandwidth
+
+Every 15s: health check measures HTTP response time through tunnel
+
+  RTT > 3× baseline × 2 in a row?  → halve Brutal target → restart engine
+  RTT < 1.5× baseline × 4 in a row? → +25% Brutal target → restart engine
 ```
 
-**Activation response carries server configs:**
-```json
-{
-    "token": "jwt...",
-    "plan": "gaming_mid",
-    "configs": [{
-        "id": "hysteria2",
-        "config_json": {
-            "server": "sgp1.api.yourdomain.com:443",
-            "auth": "pool-password",
-            "tls": { "sni": "www.cloudflare.com" },
-            "obfs": "salamander",
-            "obfs-password": "pool-key"
-        }
-    }]
-}
-```
-
-**Heartbeat keeps them fresh:**
-```json
-{
-    "status": "active",
-    "token": "new-jwt...",
-    "configs": [...],         // updated server configs if changed
-    "update": { ... }         // binary update if available
-}
-```
+~50 lines. No EWMA. No background downloads. No separate package.
 
 ---
 
-## Part 2: Artificial Bottlenecking
+## Code: caps.Get()
 
 ```go
 func Get(tier string) int {
     switch tier {
-    case "warp_lite":      return   8_000_000   //  1 MB/s
-    case "stealth_browse": return  48_000_000   //  6 MB/s
-    case "gaming_mid":     return  50_000_000   //  6.25 MB/s
-    case "gaming_max":     return 100_000_000   // 12.5 MB/s
-    default:               return           0   // uncapped
+    case "warp_lite":      return   8_000_000
+    case "stealth_browse": return  48_000_000
+    case "gaming_mid":     return  50_000_000
+    case "gaming_max":     return           0  // 0 = probe on connect
+    default:               return           0
     }
 }
-```
-
-One file, 40 lines. Applied as `hysteria2 client --speed 50000000 --tun -c config.json`.
-
----
-
-## Part 3: Background Updater
-
-```
-Heartbeat has "update" → download to engines/myvpn.update in background
-Next launch → verify SHA256 → backup exe as myvpn.prev → swap → restart
-First heartbeat → confirm → delete .prev
-Crash before first heartbeat → auto-restore .prev
+func IsAdaptive(tier string) bool { return tier == "gaming_max" }
 ```
 
 ---
 
-## Part 4: Server-Side Collections (PocketBase)
+## Pipeline
 
-**`codes`** — Each activation code:
-| Field | Type | Notes |
-|-------|------|-------|
-| `code` | text (unique) | `MYVPN-ABCD-1234-EFGH-5` |
-| `tier` | text | warp_lite / stealth_browse / gaming_mid / gaming_max |
-| `used` | bool | false → true on activation |
-| `fingerprint` | text (nullable) | SHA256 of device HW, set once |
-| `suspended` | bool | admin toggle |
-| `middleman` | text (optional) | tracking who sold it |
+```
+Paper code → app → hub validates + binds device → returns token + Hysteria 2 config
+  → client saves config → connect: probe (Gaming Max) or static cap (others)
+  → engine starts with --tun --speed <cap> -c config.json
+  → health check pings every 15s
+  → Gaming Max: adaptation loop monitors health check RTT, adjusts Brutal target
+```
 
-**`tier_configs`** — Hysteria 2 server configs per tier:
-| Field | Type | Notes |
-|-------|------|-------|
-| `tier` | text (unique) | matches codes.tier |
-| `configs` | json | array of protocol configs |
-| `active` | bool | if false, clients get empty configs |
+Heartbeat refreshes configs (change server IPs, bottleneck profiles) + triggers background updates.
 
 ---
 
-## Part 5: What to Delete From v1
+## What to Delete From v1
 
-```bash
-rm -rf internal/probe/          # Replaced by caps.Get()
-rm -rf internal/monitor/        # Replaced by caps.Get()
-rm -rf internal/helper/         # Engine --tun flag
+```
+rm -rf internal/monitor/         # Replaced by 50-line goroutine in gui/app.go
+rm -rf internal/helper/          # Engine --tun flag
 rm -f  internal/manager/disguise_windows.go
 rm -f  internal/manager/process_windows.go
 rm -f  internal/manager/process_darwin.go
 ```
 
----
-
-## Part 6: What to Add
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `internal/caps/caps.go` | 40 | Hardcoded tier speed caps |
-| `internal/updater/updater.go` | 150 | Background download + auto-revert |
-| `server/pb_hooks/activation.pb.js` | 80 | Server-side activation handler |
-| `server/pb_hooks/heartbeat.pb.js` | 70 | Server-side heartbeat handler |
-| `server/Caddyfile` | 40 | Reverse proxy + rate limiting |
-| `scripts/generate_codes.sh` | 30 | Batch code generation |
+Probe stays but simplified — only 1MB download, only for Gaming Max.
 
 ---
 
-## Part 7: What to Simplify
+## What to Add/Change
 
-| File | Change |
-|------|--------|
-| `manager/process.go` | Remove sandbox, disguise, bandwidth param. Add `caps.Get()` lookup |
-| `heartbeat/heartbeat.go` | Remove RemoteCommand dispatch. Add update + config fields |
-| `gui/app.go` | Remove probe.Run(), monitor. Speed from caps.Get() |
-| `updater/recover.go` | Replace sentinel machine with simple --revert + crash recovery |
-| `storage/storage.go` | Add PendingUpdate + AppliedVersion fields |
+| File | Change | Lines |
+|------|--------|-------|
+| `internal/caps/caps.go` | New — per-tier caps + IsAdaptive() | 45 |
+| `internal/probe/probe.go` | Simplify to single 1MB download | 40 |
+| `internal/manager/process.go` | Add dynamic cap, updateBrutalTarget(), RestartEngine() | +30 |
+| `internal/gui/app.go` | Add adaptBandwidth() goroutine | +50 |
+| `server/pb_hooks/activation.pb.js` | New — validate + bind + return configs | 80 |
+| `server/pb_hooks/heartbeat.pb.js` | New — suspension + token rotate + config refresh | 70 |
 
 ---
 
-## Part 8: Lines of Code
+## Key Principle
 
-| Area | v1 Lines | v2 Lines | Saved |
-|------|---------|---------|-------|
-| Probe + Monitor + Helper + Sandbox | ~650 | 0 | 650 |
-| Caps + Updater (new) | 0 | ~190 | -190 |
-| Everything else (simplified) | ~1,726 | ~1,410 | 316 |
-| **Total Go** | **~2,376** | **~1,600** | **~776** |
-| Server hooks (new) | 0 | ~150 | -150 |
-| **Total project** | **~2,376** | **~1,750** | **~626** |
+**Don't fight the engine. Tune it.**
+
+Hysteria 2's Brutal CC, recv_window, and hop-interval are already powerful shaping tools. The four bottleneck profiles use these parameters directly — no external traffic shaping, no kernel modules, no helper service needed. The only "extra code" is the Gaming Max adaptation loop, which uses the health check HTTP timing that already exists.
+
+No BBR. No EWMA. No staged ramps. Just config JSON + 50 lines of adaptation.
