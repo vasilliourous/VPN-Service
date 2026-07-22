@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "V2-ACTION-PLAN.md",
+                "file": "myvpn-simplified/README.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "V2-ACTION-PLAN"
+              "title": "README"
             }
           }
         ]
@@ -185,9 +185,12 @@
   },
   "active": "a5f5321a956f0428",
   "lastOpenFiles": [
+    "myvpn-simplified/IMPLEMENT.md",
+    "myvpn-simplified/BUSINESS.md",
+    "myvpn-simplified/ARCHITECTURE.md",
+    "V2-ACTION-PLAN.md",
     "V2-BOTTLENECK-REFERENCE.md",
     "V2-SIMPLIFIED-ARCHITECTURE.md",
-    "V2-ACTION-PLAN.md",
     "school-vpn-blocking-implementation.md",
     "defender-perspective.md",
     "comprehensive-vpn-blocklist.md",
@@ -210,8 +213,6 @@
     "App Implementation.md",
     "Untitled",
     "Objective-and-Business-Model.md",
-    "gaming-protocol-stack.md",
-    "implementation-guide/README.md",
     "implementation-guide/scripts/vpn-backup.sh",
     "implementation-guide/scripts/vpn-health-check.sh",
     "implementation-guide/scripts/enterprise-nat-setup.sh",
@@ -219,7 +220,6 @@
     "implementation-guide/configs/activation-api.env",
     "implementation-guide/configs/marzban.env",
     "implementation-guide/configs/marzban-docker-compose.yml",
-    "implementation-guide/configs/nginx-api.conf",
-    "implementation-guide/configs/README.md"
+    "implementation-guide/configs/nginx-api.conf"
   ]
 }
