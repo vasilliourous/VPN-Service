@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> Target: ~1,180 lines of Go across 19 files, plus server configs and scripts.
+> Target: ~1,260 lines of Go across 22 files, plus server configs and scripts.
 > Time: One focused weekend for a competent Go developer.
 
 ## Prerequisites
@@ -151,7 +151,53 @@ routerAdd("POST", "/api/check-suspension", (c) => {
 });
 ```
 
-### Step 2.5 — Caddy Config
+### Step 2.5 — JS Hook: middleman_codes.pb.js (Optional)
+
+**File:** `server/pb_hooks/middleman_codes.pb.js`
+
+Purpose: Lets middlemen self-service generate codes without bothering the admin.
+Middlemen hit this endpoint with a shared secret token, get fresh codes returned.
+
+```javascript
+// server/pb_hooks/middleman_codes.pb.js
+// POST /api/middleman/request-codes
+// Middlemen can request fresh codes using their secret token.
+// Body: { "token": "middleman-secret", "tier": "stealth", "count": 5 }
+// Response: { "codes": ["ABCD-EFGH-IJKL", ...] }
+
+routerAdd("POST", "/api/middleman/request-codes", (c) => {
+  const data = $apis.requestInfo(c).data;
+  const token = data.token;
+  const tier = data.tier || "eco";
+  const count = Math.min(data.count || 5, 20);
+
+  if (token !== "your-middleman-secret-token") {
+    return c.json(403, { message: "Invalid token" });
+  }
+
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const codes = [];
+
+  for (let i = 0; i < count; i++) {
+    let code = "";
+    for (let j = 0; j < 12; j++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+      if (j === 3 || j === 7) code += "-";
+    }
+    const record = new Record($app.dao().findCollectionByNameOrId("codes"));
+    record.set("code", code);
+    record.set("tier", tier);
+    record.set("used", false);
+    record.set("suspended", false);
+    $app.dao().saveRecord(record);
+    codes.push(code);
+  }
+
+  return c.json(200, { codes: codes });
+});
+```
+
+### Step 2.6 — Caddy Config
 
 **File:** `server/Caddyfile`
 
@@ -370,7 +416,54 @@ package manager
 //   No process disguise, no sandboxing, no priority tweaking.
 ```
 
-### Step 3.6 — Tunnel (`internal/tunnel/`)
+### Step 3.6 — Updater (`internal/updater/updater.go`)
+
+```go
+package updater
+
+// Types:
+//   UpdateCheck struct: Version string, Windows/MacOSIntel/MacOSARM *PlatformUpdate
+//   PlatformUpdate struct: URL string, SHA256 string
+//
+// Functions:
+//   - Check(apiBase, currentVersion string) (*UpdateCheck, error)
+//       GET <apiBase>/update.json
+//       Compare version strings.
+//       If same version → return nil (no update).
+//       If newer → return UpdateCheck with download info.
+//
+//   - DownloadAndApply(update *PlatformUpdate) error
+//       Download zip from update.URL to a temp file.
+//       Verify SHA256 of the downloaded zip.
+//       Find the binary inside the zip (first entry, or named myvpn*).
+//       Extract to a temp location.
+//       Rename current executable to <myvpn>.prev
+//       Move extracted binary to current executable path.
+//       Return nil → caller should restart the app.
+//
+//   - Cleanup()
+//       Delete <myvpn>.prev if current binary is running fine.
+//       Called on startup.
+//
+// Flow:
+//   On app launch:
+//     updater.Cleanup()  // remove .prev from previous update
+//     go func() {
+//       time.Sleep(30s)  // wait for app to stabilize
+//       updater.Check(apiBase, version)
+//       if update available → updater.DownloadAndApply(update)
+//       if success → os.Exit(0)  // app restarts via OS/batch script
+//     }()
+//
+//   Every 6 hours:
+//     Same check loop (goroutine in GUI).
+//
+//   No sentinel, no rollback, no signing keys.
+//   If download or verify fails → log error, retry next check.
+//   If app crashes after update → user re-downloads from website.
+```
+
+### Step 3.7 — Tunnel (`internal/tunnel/`)
 
 ```go
 package tunnel
@@ -406,62 +499,119 @@ package tunnel
 // Implement and test only if --tun doesn't work on a target platform.
 ```
 
-### Step 3.7 — GUI (`internal/gui/app.go`)
+### Step 3.8 — GUI (`internal/gui/app.go`)
 
-This is the biggest file (~250 lines). It's a Fyne v2 application with two screens:
+This is the biggest file (~320 lines). A Fyne v2 application that runs in
+the system tray, with a control panel window.
 
-**Screen 1: Activation**
+**Architecture:**
 
-- Window title: "MyVPN — Activate"
-- Single text entry for the code
-- Activate button
-- Status text (validating... / error message / success)
-- On success: save config + fingerprint to storage, close window, open main window
-- Fingerprint is collected silently via `activation.CollectFingerprint()` and sent
-  as `X-Device-Fingerprint` header with the activation POST
+```
+main() → storage.Init() → updater.Cleanup() → gui.Run(apiBase, version)
+  │
+  gui.Run:
+  ├── Create Fyne app (app.New())
+  ├── Check storage.IsActivated()
+  │   ├── false → show activation screen (modal window)
+  │   └── true  → proceed
+  ├── Create control panel window (hidden)
+  ├── Set up system tray icon + menu
+  ├── Start background goroutines:
+  │   ├── Auto-update check (30s delay, then every 6h)
+  │   ├── Connection status refresh (every 2s when connected)
+  │   └── (Optional) Auto-start on boot
+  └── app.Run()  // main loop (doesn't block, tray keeps running)
+```
 
-**Screen 2: Main Window**
+**System Tray (Fyne desktop.App):**
 
-- Window title: "MyVPN"
-- Top: connection indicator (green/red dot + status text)
-- Tier name (formatted: "Stealth" or "Strike")
+```go
+import "fyne.io/fyne/v2/driver/desktop"
+
+if desk, ok := a.(desktop.App); ok {
+    // Set the tray icon (green/grey/red dot based on connection)
+    desk.SetSystemTrayIcon(resourceIconPng)
+    
+    // Right-click menu
+    desk.SetSystemTrayMenu(fyne.NewMenu("MyVPN",
+        fyne.NewMenuItem("Show Window", func() { showWindow() }),
+        fyne.NewMenuItem("Connect/Disconnect", func() { toggleConnect() }),
+        fyne.NewMenuItem("Settings", func() { showSettings() }),
+        fyne.NewMenuItem("Quit", func() { cleanupAndExit() }),
+    ))
+}
+```
+
+**Control Panel Window:**
+
+- Window title: "MyVPN" (hidden on close, not destroyed)
+- Top: connection indicator (colored dot + text)
+- Tier name (e.g. "Strike · Gaming")
 - Connection timer (HH:MM:SS)
-- Speed display (show Mbps from engine log or simple estimator)
+- Speed display (optional, from engine log parsing)
 - Connect/Disconnect button
-- Settings accordion:
+- Settings section (expandable):
   - Code display (masked)
-  - Telemetry opt-out toggle (stub — no actual telemetry)
-- Theme: dark background (#0D0D0F), purple accent (#A855F7)
+  - Theme: dark background (#0D0D0F), purple accent (#A855F7)
 
-**Flow:**
+**Activation Screen:**
+
+- Modal window (blocks until activated or quit)
+- Code entry field
+- Activate button
+- Status messages
+- On success: saves config + fingerprint, closes, creates tray
+
+**Background Goroutines:**
+
+```go
+// 1. Auto-update checker
+go func() {
+    time.Sleep(30 * time.Second)  // wait for app to stabilize
+    ticker := time.NewTicker(6 * time.Hour)
+    for {
+        update, err := updater.Check(apiBase, version)
+        if err == nil && update != nil {
+            // Download and apply
+            err = updater.DownloadAndApply(getPlatformUpdate(update))
+            if err == nil {
+                // Update applied — restart app
+                os.Exit(0)
+            }
+        }
+        <-ticker.C
+    }
+}()
+
+// 2. Connection status ticker (updates timer + speed every 2s)
+go func() {
+    for range time.NewTicker(2 * time.Second).C {
+        if connected {
+            updateTimer()
+            updateSpeed()
+        }
+    }
+}()
+```
+
+**Connect/Disconnect Flow:**
 
 ```
-app.New() → check storage.IsActivated()
-  ├── false → showActivationPrompt(apiBase) 
-  └── true  → launchMain(apiBase, tier)
-```
-
-Connect button handler:
-```
-onConnect():
-  if connected: disconnect()
-  else: connect()
-
 connect() — goroutine:
   1. Check suspension via /api/check-suspension
   2. Find engine binary (next to app or in engines/ subdir)
   3. Write config JSON to temp file in app data dir
   4. If tier == "strike":
        a. Run probe.Run(apiBase, "strike")
-       b. If probe succeeds → update config's Brutal target to 80% of measured bandwidth
-       c. If probe fails → use default 50 Mbps target (Brutal self-tunes anyway)
+       b. If probe succeeds → update config's Brutal target
+       c. If probe fails → use default 50 Mbps
   5. StartEngine(configPath, tier, enginePath, probeResult)
-  6. If engine starts OK → update GUI to "Connected"
-  7. Read engine stderr for connection stats (optional)
+  6. If OK → update tray icon to green, update status
+  7. Start connection stats reader (goroutine)
 
 disconnect() — goroutine:
   1. StopEngine()
-  2. Update GUI to "Disconnected"
+  2. Update tray icon to grey, update status
 ```
 
 ## Phase 4: Main Entrypoint
@@ -674,17 +824,44 @@ EOF
 systemctl daemon-reload
 systemctl enable hysteria
 
+# 6. Install auto-refill cron job (keeps code pool full)
+cat > /usr/local/bin/refill-codes.sh <<'REFILL'
+#!/bin/bash
+# Auto-refill codes when fewer than 10 unused remain
+# Change PB_TOKEN + MIDDLEMAN_TOKEN after first PocketBase admin setup
+PB_API='https://api.yourdomain.com'
+PB_TOKEN='CHANGE_ME_TO_YOUR_PB_ADMIN_TOKEN'
+MIDDLEMAN_TOKEN='your-middleman-secret'
+
+UNUSED=$(curl -s "$PB_API/api/collections/codes/records?filter=(used=false)&count=1" \
+  -H "Authorization: Bearer $PB_TOKEN" | grep -o '"totalItems":[0-9]*' | cut -d: -f2)
+
+if [ -z "$UNUSED" ] || [ "$UNUSED" -lt 10 ]; then
+  echo "$(date): Refilling codes ($UNUSED remaining)" >> /var/log/refill-codes.log
+  curl -s -X POST "$PB_API/api/middleman/request-codes" \
+    -H "Content-Type: application/json" \
+    -d '{"token":"'"$MIDDLEMAN_TOKEN"'","tier":"eco","count":10}' > /dev/null
+  curl -s -X POST "$PB_API/api/middleman/request-codes" \
+    -H "Content-Type: application/json" \
+    -d '{"token":"'"$MIDDLEMAN_TOKEN"'","tier":"stealth","count":6}' > /dev/null
+  curl -s -X POST "$PB_API/api/middleman/request-codes" \
+    -H "Content-Type: application/json" \
+    -d '{"token":"'"$MIDDLEMAN_TOKEN"'","tier":"strike","count":4}' > /dev/null
+fi
+REFILL
+chmod +x /usr/local/bin/refill-codes.sh
+echo "0 * * * * root /usr/local/bin/refill-codes.sh" > /etc/cron.d/refill-codes
+
 echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "1. Set your DNS A record to this server's IP"
-echo "2. Run: certbot --nginx -d api.yourdomain.com  (or use Caddy auto TLS)"
-echo "3. Open https://api.yourdomain.com/_/ and create admin account"
-echo "4. Create 'codes' and 'tier_configs' collections"
-echo "5. Copy pb_hooks/ to /opt/pocketbase/pb_hooks/"
-echo "6. Update auth passwords in /etc/hysteria/server.yaml"
-echo "7. systemctl start hysteria"
-echo "8. Generate codes via admin UI"
+echo "2. Open https://api.yourdomain.com/_/ and create admin account"
+echo "3. Create 'codes' and 'tier_configs' collections"
+echo "4. Copy pb_hooks/ to /opt/pocketbase/pb_hooks/"
+echo "5. Update auth passwords in /etc/hysteria/server.yaml + PB_TOKEN in /usr/local/bin/refill-codes.sh"
+echo "6. systemctl start hysteria"
+echo "7. Generate initial codes via admin UI or ./scripts/generate_codes.sh"
 ```
 
 ### Step 7.2 — `scripts/generate_codes.sh`
@@ -755,7 +932,88 @@ EOF
 done
 ```
 
-## Phase 8: Testing Checklist
+### Step 7.3 — `scripts/print_codes.sh`
+
+Generates codes and outputs them in a printable format suitable for cutting
+into card strips.
+
+```bash
+#!/bin/bash
+# print_codes.sh — Generate codes and output in printable card format
+# Usage: ./print_codes.sh <api_base> <admin_token> <tier> <count> [output_file]
+#
+# Example:
+#   ./print_codes.sh https://api.yourdomain.com myadmintoken eco 50 cards.txt
+#   ./print_codes.sh https://api.yourdomain.com myadmintoken strike 30
+
+API_BASE="${1}"
+TOKEN="${2}"
+TIER="${3}"
+COUNT="${4}"
+OUTPUT="${5:-/dev/stdout}"
+
+if [ -z "$API_BASE" ] || [ -z "$TOKEN" ] || [ -z "$TIER" ] || [ -z "$COUNT" ]; then
+    echo "Usage: $0 <api_base> <admin_token> <tier> <count> [output_file]"
+    exit 1
+fi
+
+# Generate and format for printing
+{
+    echo "=============================================="
+    echo "  MyVPN - ${TIER} Codes"
+    echo "  Generated: $(date)"
+    echo "=============================================="
+    echo ""
+
+    for i in $(seq 1 "$COUNT"); do
+        # Generate a random code
+        CHARS="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        CODE=""
+        for j in $(seq 1 12); do
+            idx=$((RANDOM % ${#CHARS}))
+            CODE="${CODE}${CHARS:$idx:1}"
+            if [ "$j" -eq 4 ] || [ "$j" -eq 8 ]; then
+                CODE="${CODE}-"
+            fi
+        done
+
+        # Create the code in PocketBase
+        curl -s -X POST "${API_BASE}/api/collections/codes/records" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"code\":\"${CODE}\",\"tier\":\"${TIER}\",\"used\":false,\"suspended\":false}" > /dev/null
+
+        # Output in card format (cut along the dashes)
+        echo "┌─────────────────────────────┐"
+        echo "│                             │"
+        echo "│     Activation Code         │"
+        echo "│                             │"
+        echo "│       ${CODE}        │"
+        echo "│                             │"
+        echo "│  Tier: ${TIER}                    │"
+        echo "│  Download: api.yourdomain.com  │"
+        echo "│                             │"
+        echo "└─────────────────────────────┘"
+        echo ""
+    done
+
+    echo "Generated ${COUNT} codes."
+} > "$OUTPUT"
+
+# If output to file, show path and hint
+if [ "$OUTPUT" != "/dev/stdout" ]; then
+    echo "Codes saved to: $OUTPUT"
+    echo "Print and cut along the borders."
+fi
+```
+
+This script produces ASCII art cards that you can print, cut, and staple to
+laminated instruction sheets. Each card has:
+- The activation code in large text
+- The tier name
+- The download URL
+
+## Phase 9: Testing Checklist
 
 ### Manual Tests (do these before distributing)
 
@@ -782,7 +1040,39 @@ done
 | macOS Apple Silicon | Build native, test on M1/M2 Mac |
 | Linux (optional) | Build-native, test with `ip tuntap` |
 
-## Phase 9: Distribution
+## Phase 8: Update Distribution Files
+
+The app binaries and `update.json` are served as static files from the VPS.
+No website — just files on disk that the auto-updater checks.
+
+### Step 8.1 — `update.json`
+
+```json
+{
+  "version": "0.1.0",
+  "windows": {
+    "url": "https://api.yourdomain.com/myvpn-windows.zip",
+    "sha256": ""
+  },
+  "macos_intel": {
+    "url": "https://api.yourdomain.com/myvpn-macos-intel.zip",
+    "sha256": ""
+  },
+  "macos_arm": {
+    "url": "https://api.yourdomain.com/myvpn-macos-arm.zip",
+    "sha256": ""
+  }
+}
+```
+
+The agent updates this file whenever a new version is built. SHA256 is
+computed from the zip file and inserted here. The desktop app checks
+this endpoint every 6 hours and applies updates automatically.
+
+Place this file at `/var/www/html/update.json` on the VPS (the setup script
+already creates this directory and configures Caddy to serve it).
+
+## Phase 10: Distribution (Physical Cards)
 
 ### For 20 Users
 
@@ -813,16 +1103,33 @@ done
 
 If you're an AI agent picking this up later, here's what matters:
 
-1. **The ARCHITECTURE.md** describes the system design. Read it first.
-2. **The BUSINESS.md** describes why certain choices were made.
-3. **The IMPLEMENT.md** (this file) is a step-by-step build guide.
-4. **The DEPLOY.md** explains how to operate the server.
+1. **ARCHITECTURE.md** — system design. Read this first.
+2. **BUSINESS.md** — why certain choices were made (tiers, pricing, decoy effect).
+3. **IMPLEMENT.md** (this file) — step-by-step build guide for the developer.
+4. **DEPLOY.md** — how to operate the server day-to-day.
+5. **OPS.md** — **the agent operations manual.** Every API call, SSH command, and
+   workflow you'll need to manage the service without writing code.
+6. **UI-AESTHETICS.md** — visual design spec for the GUI. Do this **after** the
+   backend is fully working.
 
-Key implementation notes:
+### Key Implementation Notes
+
 - The GUI uses **Fyne v2**. Familiarize yourself with `fyne.io/fyne/v2` widgets.
 - The engine is **Hysteria 2**. Download the binary for each platform; the app executes it as a subprocess.
 - The server is **PocketBase** with JS hooks. PocketBase auto-generates REST APIs from collections.
 - **No CGO on the server side** (PocketBase is Go, but we interact via HTTP).
 - **CGO is required on the client** because Fyne needs it.
+- The most complex part is the GUI (`internal/gui/app.go` at ~250 lines). Everything else is straightforward HTTP calls and process management.
 
-The most complex part is the GUI (`internal/gui/app.go` at ~250 lines). Everything else is straightforward HTTP calls and process management.
+### Agent Management Model
+
+The human **never writes code or SSH commands directly.** They tell the agent what
+to do, and the agent runs the documented API calls and SSH commands from OPS.md.
+
+| Human Says | Agent Does |
+|-----------|-----------|
+| "Suspend user ABC1" | Runs the suspend API call (OPS.md §1) |
+| "Generate codes" | Runs generate_codes.sh or middleman API (OPS.md §2) |
+| "Change the SNI/port" | Updates tier_configs + server.yaml (OPS.md §3) |
+| "Push an update" | Builds binaries, updates configs (OPS.md §6) |
+| "Server is down" | SSH in, checks logs, fixes (OPS.md §1) |
