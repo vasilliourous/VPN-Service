@@ -17,11 +17,174 @@
 7. [Xray VLESS+REALITY Implementation (Experimental)](#7-xray-vlessreality-implementation-experimental)
 8. [Other Protocols Tested & Results](#8-other-protocols-tested--results)
 9. [Product Tier Architecture](#9-product-tier-architecture)
-10. [TCP Brutal Analysis](#10-tcp-brutal-analysis)
-11. [Forward Error Correction (FEC) Analysis](#11-forward-error-correction-fec-analysis)
-12. [Kernel Tuning](#12-kernel-tuning)
-13. [Key Files & Locations](#13-key-files--locations)
-14. [Future Considerations](#14-future-considerations)
+10. [SOCKS5 vs TUN vs Direct TCP Tunnel](#10-socks5-vs-tun-vs-direct-tcp-tunnel)
+11. [TCP Brutal Analysis](#11-tcp-brutal-analysis)
+12. [Forward Error Correction (FEC) Analysis](#12-forward-error-correction-fec-analysis)
+13. [Kernel Tuning](#13-kernel-tuning)
+14. [Key Files & Locations](#14-key-files--locations)
+15. [Future Considerations](#15-future-considerations)
+
+---
+
+## 10. SOCKS5 vs TUN vs Direct TCP Tunnel
+
+### Why This Matters
+
+This is a critical architectural decision for the VPN-Service client app. The current implementation uses SOCKS5, but there are three progressively better approaches for the final product.
+
+### SOCKS5 (Current — ss-local)
+
+**How it works:**
+```
+Game/App → SOCKS5 proxy → sslocal (encrypted TCP) → ssserver → Internet
+```
+
+**Overhead per TCP connection:**
+```
+Client → SOCKS5:  [version auth selection]  (1 RTT)
+Client ← SOCKS5:  [auth method chosen]      
+Client → SOCKS5:  [connect request]         (1 RTT)
+Client ← SOCKS5:  [connection established]
+                  ↓
+               2 RTTs of overhead per connection
+```
+At ~35ms RTT to the VPS, that's ~70ms per connection × 50 page resources = 3.5 seconds of pure SOCKS5 handshake overhead on every page load.
+
+**Pros:**
+- No admin rights needed
+- Simple to implement
+- Per-app routing possible
+- UDP ASSOCIATE works for gaming
+
+**Cons:**
+- +2 RTT handshake per TCP connection (~70ms at 35ms RTT)
+- Requires per-app proxy configuration (most games ignore system proxy)
+- Users must manually configure each app they want proxied
+- Non-technical users find it confusing
+
+### Option A: Redsocks/ss-redir (TCP Tunnel, No SOCKS5 Overhead)
+
+**How it works:**
+```
+Game/App → [iptables NAT redirect] → ss-redir (encrypted TCP directly) → ssserver
+```
+
+Instead of a SOCKS5 handshake, `ss-redir` uses iptables `TPROXY` or `REDIRECT` to intercept TCP traffic at the kernel level and forward it directly through the encrypted tunnel. No SOCKS framing — the first byte of data goes out immediately.
+
+**Overhead per TCP connection:**
+```
+Game/App → [0 RTT — kernel redirects directly] → ss-redir → encrypted TCP → ssserver
+```
+**Zero additional handshake overhead.**
+
+**Pros:**
+- No SOCKS5 handshake overhead (saves ~70ms per connection)
+- System-wide — no per-app config needed
+- Transparent to all applications
+
+**Cons:**
+- ⚠️ **TCP only — no UDP** (can't do gaming)
+- Requires root/admin rights for iptables rules
+- More complex to set up
+
+### Option B: tun2socks + sslocal (TUN Virtual NIC, Full VPN)
+
+**How it works:**
+```
+Game/App → [TUN virtual NIC] → tun2socks → sslocal (SOCKS5) → ssserver → Internet
+```
+
+`tun2socks` creates a virtual network adapter (TUN interface). All traffic (TCP + UDP) goes through this virtual NIC and gets piped through the SOCKS5 proxy. The SOCKS5 handshake still happens, but tun2socks can **pool TCP connections** to reduce overhead.
+
+**Pros:**
+- System-wide — all apps routed automatically (like a real VPN)
+- **UDP support** — games, voice chat, DNS all work
+- No per-app configuration needed
+- Click Connect → everything works
+
+**Cons:**
+- Requires admin rights (TUN device creation)
+- SOCKS5 still present internally (but hidden from user)
+- Slightly higher CPU overhead from TUN + SOCKS5 stack
+
+### Option C: Pure TCP + UDP Tunnel (ss-redir + ss-tunnel, No SOCKS5 at All)
+
+**How it works:**
+```
+TCP traffic → [iptables TPROXY] → ss-redir → ssserver
+UDP traffic → [iptables TPROXY] → ss-tunnel → ssserver
+```
+
+Run two Shadowsocks instances side-by-side:
+- **ss-redir** handles TCP (direct, no SOCKS5)
+- **ss-tunnel** handles UDP (dedicated UDP relay)
+- iptables routes traffic to the correct instance based on protocol
+
+**Overhead per connection:**
+```
+Zero SOCKS5 overhead. Zero handshake. Kernel-level redirection directly to encrypted tunnel.
+```
+
+**Pros:**
+- Absolute minimum overhead
+- System-wide (no per-app config)
+- TCP and UDP both supported
+- Fastest possible TCP path
+
+**Cons:**
+- Requires root/admin rights (iptables + TUN)
+- Most complex to set up and debug
+- Harder to implement split-tunnelling
+
+### Performance Comparison
+
+| Metric | SOCKS5 (ss-local) | ss-redir (TCP tunnel) | tun2socks + sslocal | Pure tunnel (ss-redir + ss-tunnel) |
+|--------|:------------------:|:---------------------:|:-------------------:|:----------------------------------:|
+| **TCP overhead** | +2 RTT (~70ms) | **+0 RTT (0ms)** | +0 RTT (pooled) | **+0 RTT (0ms)** |
+| **UDP support** | ✅ Yes | ❌ No | ✅ Yes | ✅ Yes |
+| **System-wide** | ❌ Per-app | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Admin rights** | ❌ Not needed | ✅ Required | ✅ Required | ✅ Required |
+| **Setup complexity** | Simple | Medium | Medium | Complex |
+| **Best for tier** | Testing/debug | Stealth/Eco (TCP-only) | **Strike (gaming)** | Power users |
+
+### Recommendation for the Product
+
+**Do not phase out SOCKS5 entirely** — but demote it to an internal implementation detail:
+
+```
+┌───────────────────────────────────────────────┐
+│          MyVPN Desktop App (Go + Fyne)          │
+│                                                 │
+│  ┌───────────────────────────────────────────┐  │
+│  │  Default: tun2socks + sslocal              │  │
+│  │  • System-wide VPN experience              │  │
+│  │  • UDP gaming works natively               │  │
+│  │  • Click Connect → everything routes       │  │
+│  │  • SOCKS5 hidden internally                │  │
+│  └───────────────────────────────────────────┘  │
+│                                                 │
+│  ┌───────────────────────────────────────────┐  │
+│  │  Fallback: SOCKS5-only (ss-local)          │  │
+│  │  • Used when TUN creation fails            │  │
+│  │  • No admin rights = SOCKS5 mode           │  │
+│  │  • Per-app config required, show guide     │  │
+│  └───────────────────────────────────────────┘  │
+│                                                 │
+│  ┌───────────────────────────────────────────┐  │
+│  │  Advanced: Pure tunnel (ss-redir+ss-tun)   │  │
+│  │  • Toggle in settings for power users      │  │
+│  │  • Best performance, most complex          │  │
+│  └───────────────────────────────────────────┘  │
+└───────────────────────────────────────────────┘
+```
+
+### Build Order
+
+| Phase | Approach | Why |
+|-------|----------|-----|
+| **MVP** | SOCKS5 (ss-local) | Fastest to ship, works now |
+| **V2** | tun2socks + sslocal | Better UX, gaming-ready |
+| **V3** | Pure tunnel option | Performance tier for enthusiasts |
 
 ---
 
