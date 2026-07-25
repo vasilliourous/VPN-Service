@@ -37,8 +37,37 @@ ssh $VPS "journalctl -u shadowsocks-strike -n 20 --no-pager"
 # Caddy + PocketBase
 ssh $VPS "systemctl is-active caddy pocketbase"
 
+# Brutal check — run after every kernel update
+# If tcp_brutal isn't loaded, the Stealth tier silently falls back to BBR.
+# DKMS should auto-rebuild it, but verify:
+ssh $VPS "lsmod | grep tcp_brutal && echo 'OK' || echo 'WARNING: tcp_brutal not loaded — run: dkms install tcp-brutal-ng/1.0 && modprobe tcp_brutal'"
+
+# tc qdisc status (Eco cap — verify after reboot)
+ssh $VPS "tc -s class show dev eth0 | head -10 || echo 'WARNING: tc cap not applied — run: systemctl restart tc-eco-cap'"
+
+# Strike cap (verify class 1:30 exists and is getting traffic)
+ssh $VPS "tc -s class show dev eth0 | grep -A2 'class htb 1:30' || echo 'WARNING: Strike cap not applied — run: systemctl restart tc-strike-cap'"
+
 # Last backup
 ssh $VPS "tail -1 /var/log/pocketbase-backup.log"
+
+### Helper Service Status (Client-Side Debug)
+
+These must be checked on the client machine, not the VPS:
+
+```bash
+# macOS
+launchctl list | grep myvpn-helper
+
+# Windows (run in PowerShell as admin)
+Get-Service MyVPNHelper
+
+# Linux
+systemctl is-active myvpn-helper
+```
+
+If the helper isn't running, the app can't create the TUN device.
+Re-run the installer with `--install` flag to re-register it.
 ```
 
 ---
@@ -100,11 +129,12 @@ The customer then enters their existing code on the new device → normal activa
 
 ## Updates
 
-### Push an Update
+### Push an Update (Staged Rollout)
 
 ```bash
 make bundle-all
 VERSION="1.1.0"
+ROLLOUT_PERCENT=5   # Start at 5%
 WIN_SHA=$(sha256sum dist/myvpn-windows.zip | cut -d' ' -f1)
 MAC_INTEL_SHA=$(sha256sum dist/myvpn-macos-intel.zip | cut -d' ' -f1)
 MAC_ARM_SHA=$(sha256sum dist/myvpn-macos-arm.zip | cut -d' ' -f1)
@@ -114,6 +144,7 @@ scp dist/*.zip root@api.yourdomain.com:/var/www/html/
 ssh root@api.yourdomain.com "cat > /var/www/html/update.json << EOF
 {
   \"version\": \"$VERSION\",
+  \"rollout_percent\": $ROLLOUT_PERCENT,
   \"windows\": {
     \"url\": \"https://api.yourdomain.com/myvpn-windows.zip\",
     \"sha256\": \"$WIN_SHA\"
@@ -133,13 +164,38 @@ EOF"
 The heartbeat endpoint returns `update_available` when `update.json` version changes.
 Clients will check within 5 minutes of the heartbeat detecting the new version.
 
+### Rollout Stages
+
+| Stage | rollout_percent | Duration | Action |
+|:-----:|:---------------:|:--------:|--------|
+| Canary | 5% | 24h | Monitor heartbeat crash signals |
+| Partial | 25% | 24h | Confirm telemetry looks normal |
+| Full | 100% | — | Full deployment |
+| Halt | 0 | Immediate | Stop rollout, no new clients take it |
+
+To advance stages without rebuilding:
+```bash
+# Use jq to safely update rollout_percent (more reliable than sed on JSON)
+ssh root@api.yourdomain.com "jq '.rollout_percent = 25' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+```
+
+To halt a bad rollout:
+```bash
+ssh root@api.yourdomain.com "jq '.rollout_percent = 0' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+# Existing clients already on the bad version will auto-revert on next crash/restart
+```
+
 ### Force-Update All Clients
 
-1. Push `update.json` with new version
-2. All active clients get `update_available` on their next heartbeat
-3. Clients automatically download and apply the update
-4. If any client's update crashes → auto-rollback to `.prev`
-5. If many clients roll back → investigate, fix, push again
+```bash
+# Set to 100% — all clients get it on next heartbeat
+ssh root@api.yourdomain.com "jq '.rollout_percent = 100' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+```
+
+1. All active clients get `update_available` on their next heartbeat
+2. Clients automatically download and apply the update
+3. If any client's update crashes → auto-rollback to `.prev`
+4. If many clients roll back → investigate, fix, push again
 
 ### Manual Revert (Customer-Side)
 
@@ -221,19 +277,27 @@ curl -s "$PB_API/api/collections/codes/records?skipTotal=1" \
 
 ## Rate Limiting
 
-### Check if an IP is Rate-Limited
+### Check if a Rate Key is Rate-Limited
 ```bash
-curl -s "$PB_API/api/collections/activation_attempts/records?filter=(ip='203.0.113.42')" \
+# Rate key is fingerprint hash prefix (or IP fallback for non-fingerprint requests)
+curl -s "$PB_API/api/collections/activation_attempts/records?filter=(rate_key='a1b2c3d4e5f6g7h8')" \
   -H "Authorization: Bearer $PB_TOKEN" | jq '.items | length'
 ```
 
-### Clear Rate Limit for an IP
+### Clear Rate Limit for a Key
 ```bash
-# Delete all attempts for that IP
-IDS=$(curl -s "$PB_API/api/collections/activation_attempts/records?filter=(ip='203.0.113.42')" \
+# Delete all attempts for that rate key
+IDS=$(curl -s "$PB_API/api/collections/activation_attempts/records?filter=(rate_key='a1b2c3d4e5f6g7h8')" \
   -H "Authorization: Bearer $PB_TOKEN" | jq -r '.items[].id')
 for ID in $IDS; do
   curl -X DELETE "$PB_API/api/collections/activation_attempts/records/$ID" \
     -H "Authorization: Bearer $PB_TOKEN"
 done
+```
+
+### Check Rate Limit by IP (audit fallback)
+```bash
+# Useful when investigating a problem where fingerprint wasn't provided
+curl -s "$PB_API/api/collections/activation_attempts/records?filter=(ip='203.0.113.42')" \
+  -H "Authorization: Bearer $PB_TOKEN" | jq '.items | length'
 ```

@@ -29,6 +29,7 @@ The script does everything:
 - Installs three ssserver instances (eco:8443, stealth:8444, strike:8445)
 - Builds Brutal kernel module + LD_PRELOAD wrapper for Stealth
 - Configures tc traffic shaping (5 Mbps cap on port 8443 for Eco)
+- Configures tc traffic shaping (200 Mbps shared cap on port 8445 for Strike)
 - Sets Brutal target rate to 48 Mbps
 - Installs Caddy with rate limiting zones
 - Installs PocketBase with JS hooks directory
@@ -85,7 +86,8 @@ ssh root@your-vps "systemctl restart pocketbase"
 |---------|-------|
 | App won't connect | `systemctl status shadowsocks-eco shadowsocks-stealth shadowsocks-strike` on VPS |
 | Brutal not working | `lsmod \| grep tcp_brutal` — module must be loaded |
-| Eco cap not working | `tc -s qdisc show dev eth0` — check stats on port 8443 class |
+| Eco cap not working | `tc -s class show dev eth0` — check stats on class 1:10 (port 8443) |
+| Strike cap not working | `tc -s class show dev eth0` — check stats on class 1:30 (port 8445) |
 | Brutal rate wrong | `cat /sys/module/tcp_brutal/parameters/target_rate` |
 | BBR not active | `sysctl net.ipv4.tcp_congestion_control` should show `bbr` |
 | UDP relay failing | `journalctl -u shadowsocks-strike -n 20` |

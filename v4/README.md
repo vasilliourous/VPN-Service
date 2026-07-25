@@ -32,7 +32,7 @@
 |------|-------|:----:|:---------:|:---------------:|:---:|------------|
 | **Eco** | $2 | 8443 | BBR | 5 Mbps (server tc) | ❌ | Text loads slow, video buffers |
 | **Stealth** | $4 | 8444 | **Brutal** (LD_PRELOAD) | 48 Mbps (Brutal target) | ❌ | Fast streaming, jitter makes gaming bad |
-| **Strike** | $8 | 8445 | BBR | Unlimited | ✅ | Gaming (33-44ms), 4K streaming |
+| **Strike** | $8 | 8445 | BBR | 200 Mbps (server tc) | ✅ | Gaming (33-44ms), 4K streaming |
 
 ---
 

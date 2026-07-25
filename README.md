@@ -143,11 +143,34 @@ LEGEND:
 
 | Directory | Status | Contents |
 |-----------|--------|----------|
-| `v4/` | **Build this.** | Sing-box client, three-tier server, all reliability features. Production-ready. |
+| `v4/` | **Build this.** | Sing-box client, three-tier server, all reliability features. Production-ready. **Architectural issues from review have been fixed in the plan.** |
 | `v3/` | **Reference only.** | Shadowsocks plan with bugs. V4 is the fixed version. |
 | `simplified/` | **Archived.** | V2 Hysteria 2 plan. UDP blocked by N4L — won't work. |
 | `originals/` | **Archived.** | V1 and V2 research documents. Pre-testing. |
 | `CONTEXT.md` | **Reference.** | Full testing report. Every protocol tested against N4L. |
+
+## Pre-Build Fixes Applied to V4
+
+During architectural review, the following issues were identified and fixed:
+
+| Fix | Documents Updated | Details |
+|-----|-----------------|---------|
+| Staged rollout hookup | `ARCHITECTURE.md`, `IMPLEMENT.md` | Server-side fingerprint hash mod gating + client-side double-check |
+| Brutal LD_PRELOAD wrapper | `IMPLEMENT.md` | Intercepts TCP_CONGESTION directly, proper TCP_NODELAY passthrough, error handling |
+| PB hook filter injection | `IMPLEMENT.md` | Parameterized queries everywhere (`{:param}` syntax), input sanitization |
+| CGNAT rate limiting | `IMPLEMENT.md`, `OPS.md` | Fingerprint-keyed rate limiting (not IP), IP as fallback audit field |
+| Runtime crash detection | `IMPLEMENT.md` | `.update-timestamp` + `.last-heartbeat` tracking — detects crashes after update confirmation |
+| Rollout percent sed safety | `OPS.md` | Replaced fragile sed with `jq` |
+| Brutal module kernel updates | `IMPLEMENT.md` | DKMS installation so module auto-rebuilds |
+| tc qdisc reboot persistence | `IMPLEMENT.md` | Systemd oneshot service replaces rc.local |
+| Obfuscation fallback plan | `ARCHITECTURE.md` | Documented v2ray-plugin path + port agility + future-proofing |
+| Device fingerprint fallback | `IMPLEMENT.md` | 4-tier fallback chain for VMs, USB adapters, edge cases |
+| Heartbeat exponential backoff | `IMPLEMENT.md`, `ARCHITECTURE.md` | 5min→2h, doubles on failure, resets on success |
+| PocketBase user security | `IMPLEMENT.md` | Dedicated `pocketbase` user instead of root |
+| Backup verification | `IMPLEMENT.md` | Integrity check + 7-day auto-prune + audit logging |
+| IPv6 leak protection | `IMPLEMENT.md` | `block-ipv6` outbound + AAAA query routing in sing-box config |
+| CGNAT-aware Caddy limits | `IMPLEMENT.md` | Increased per-IP limits for shared public IP |
+| Cross-compilation pain | `IMPLEMENT.md` | Added GitHub Actions workflow as recommended alternative |
 
 ## Build Order
 
