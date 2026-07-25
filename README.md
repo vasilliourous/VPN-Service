@@ -118,6 +118,34 @@ Bad update scenario (V3):                 Bad update scenario (V4):
 
 ---
 
+## Business Model
+
+A three-tier VPN sold through friends (middlemen) who distribute physical code
+cards at Macleans College. Cash-based, no payment processors, no ads.
+
+| Tier | Price | What It Does | Middleman Cut | Your Net |
+|------|:-----:|-------------|:-------------:|:--------:|
+| **Eco** | $2/mo | Basic browsing, video buffers | $0.40–0.60 | ~$1.50 |
+| **Stealth** | $4/mo | Fast streaming, Brutal CC | $0.80–1.20 | ~$3.00 |
+| **Strike** | $8/mo | Gaming + UDP, 200 Mbps | $1.60–2.40 | ~$6.00 |
+
+**Key innovations in the business model:**
+- **Term passes** (10-week blocks) improve cash flow and reduce collection frequency
+- **Referral cards** turn every code card into an acquisition channel
+- **Strike bundling** — Strike users get a free Eco code to give a friend,
+  creating network effects at zero marginal cost
+- **Middlemen are friends**, not anonymous resellers — trust is high, fraud is low
+
+**Scale:** 10–30 users = ~$200–500/year. 50 users = ~$1,000–2,500/year.
+Breakeven is 2–4 users. The VPS costs ~$8/month. This is a side project that
+covers its costs and then some — not a startup needing venture scale.
+
+**Biggest risk:** N4L blocks Shadowsocks. Mitigation built into the architecture
+(v2ray-plugin fallback, heartbeat-delivered protocol switching). See
+[`v4/BUSINESS.md`](v4/BUSINESS.md) for the full breakdown.
+
+---
+
 ## Evolution Summary
 
 ```
