@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "myvpn-simplified/README.md",
+                "file": "CONTEXT.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "README"
+              "title": "CONTEXT"
             }
           }
         ]
@@ -185,6 +185,27 @@
   },
   "active": "a5f5321a956f0428",
   "lastOpenFiles": [
+    "README.md",
+    "simplified/BUSINESS.md",
+    "v4/README.md",
+    "v4/UI-AESTHETICS.md",
+    "v4/DEPLOY.md",
+    "v4/IMPLEMENT.md",
+    "v4/OPS.md",
+    "v4/BUSINESS.md",
+    "v4/ARCHITECTURE.md",
+    "v4",
+    "v3/UI-AESTHETICS.md",
+    "v3/OPS.md",
+    "v3/README.md",
+    "v3/IMPLEMENT.md",
+    "v3/DEPLOY.md",
+    "v3/BUSINESS.md",
+    "v3/ARCHITECTURE.md",
+    "v3",
+    "CONTEXT.md",
+    "simplified/UI-AESTHETICS.md",
+    "simplified/ARCHITECTURE.md",
     "myvpn-simplified/IMPLEMENT.md",
     "myvpn-simplified/BUSINESS.md",
     "myvpn-simplified/ARCHITECTURE.md",
@@ -192,34 +213,13 @@
     "V2-BOTTLENECK-REFERENCE.md",
     "V2-SIMPLIFIED-ARCHITECTURE.md",
     "school-vpn-blocking-implementation.md",
-    "defender-perspective.md",
-    "comprehensive-vpn-blocklist.md",
-    "attacker-perspective.md",
     "LICENSE",
-    "Business-Plan.md",
-    "Architectural-Plan.md",
-    "Actionable-Plan.md",
-    "Niwa Science Fair/Revised-Plan.md",
-    "Niwa Science Fair/Notes-for-the-Science-Fair.md",
-    "Niwa Science Fair/Legacy-Plan.md",
-    "Niwa Science Fair/Specifications.md",
-    "School Business/PLAN.md",
-    "School Business/school-vpn-blocking-implementation.md",
-    "School Business/threat-model-rookie-provider.md",
-    "Specifications-for-Simplified-Design.md",
-    "threat-model-rookie-provider.md",
-    "BUSINESS-OVERVIEW.md",
-    "basic-startup.md",
-    "App Implementation.md",
     "Untitled",
-    "Objective-and-Business-Model.md",
     "implementation-guide/scripts/vpn-backup.sh",
     "implementation-guide/scripts/vpn-health-check.sh",
     "implementation-guide/scripts/enterprise-nat-setup.sh",
     "implementation-guide/scripts/vps-routing-setup.sh",
     "implementation-guide/configs/activation-api.env",
-    "implementation-guide/configs/marzban.env",
-    "implementation-guide/configs/marzban-docker-compose.yml",
-    "implementation-guide/configs/nginx-api.conf"
+    "implementation-guide/configs/marzban.env"
   ]
 }
