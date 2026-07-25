@@ -1,214 +1,285 @@
-# MyVPN — VPN Service
+# MyVPN — Secure School VPN
 
-A commercial VPN for students at N4L-managed NZ schools (Macleans College).
-
----
-
-## V2 — Archived (Do Not Build)
-
-The `simplified/` directory contains the V2 plan. It was built around **Hysteria 2** — a QUIC-based protocol that assumes UDP is available. V2 was designed before we could test against the actual school network.
-
-**Why V2 doesn't work:**
-
-| Assumption | Reality (N4L Network) |
-|-----------|----------------------|
-| UDP is available | N4L blocks all non-DNS UDP. Hysteria 2's QUIC handshake times out. |
-| TLS disguise is sufficient | N4L fingerprints non-browser TLS (JA3) and detects SNI/IP mismatches. TLS proxies get classified and dropped. |
-| A bandwidth probe can calibrate Brutal CC | TCP congestion control self-tunes — no probe needed. The entire `internal/probe/` package was Hysteria 2 baggage. |
-
-V2 has been left in the repository for reference, but **should not be built or used as the basis for implementation.** The protocol assumptions are wrong for the target network.
+A commercial VPN service for students at N4L-managed NZ schools (Macleans College).
+Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, no UDP blocks).
 
 ---
 
-## V3 — Shadowsocks Architecture (Replaced by V4)
-
-The `v3/` directory contains the Shadowsocks-based plan. Replaces Hysteria 2 with **Shadowsocks-rust**, which bypasses N4L's Palo Alto firewall because it doesn't use TLS and runs over TCP only.
-
-**V3 was the first working protocol choice** but had architectural issues that were fixed in V4. Key problems discovered during audit:
-
-| Problem | Severity | V4 Fix |
-|---------|:--------:|--------|
-| Eco & Strike shared port 8443 with different passwords — only one could authenticate | **Critical** | Three separate ports (8443/8444/8445) each with own ssserver instance and password |
-| Non-standard `"speed"` field in Shadowsocks JSON — sslocal ignores it, caps don't work | **Critical** | Server `tc` traffic shaping for Eco, Brutal sysctl target rate for Stealth |
-| No rollback safety — bad update = dead app | **Critical** | Two-phase sentinel auto-rollback (restored from V1) |
-| No offsite backups — VPS failure = total data loss | **Critical** | Hourly Backblaze B2 backups (restored from V1) |
-| No heartbeat / grace period — hub downtime kills all connections | **High** | 5-min heartbeat with 7-day grace period |
-| No activation rate limiting — brute-force possible | **High** | Caddy + PocketBase hook, 5 attempts per 10 min per IP |
-| No Luhn checksum on codes — every typo hits the server | **Medium** | Client + server-side Luhn-mod-N validation |
-| tun2socks is abandonware (last updated 2020) | **Medium** | Replaced by sing-box (actively maintained) |
-| sslocal + tun2socks = 2 binaries, SOCKS5 hop adds latency | **Low** | Sing-box unifies TUN + Shadowsocks in one process |
-| No code recovery on device failure | **Medium** | Admin unbind endpoint |
-
-**V3 is kept for reference but V4 supersedes it.**
-
----
-
-## V4 — Current Architecture (Build This)
-
-The `v4/` directory contains the production-ready architecture. Sing-box replaces sslocal + tun2socks. The update system, backups, heartbeat, and activation flows are fully hardened for a real business.
-
-### V4 Changes
-
-#### From V3 to V4 — Technical Architecture
-
-| Component | V3 | V4 |
-|-----------|:--:|:--:|
-| Client tunnel engine | sslocal + tun2socks (2 processes, 1 abandonware) | **sing-box** (1 process, actively maintained) |
-| Client-to-server hop | App → sslocal (SOCKS5) → tun2socks (TUN) → server | **App → sing-box (TUN+SS direct) → server** |
-| Server instances | 2 (shared Eco+Strike port with conflicting passwords) | **3** (Eco:8443, Stealth:8444, Strike:8445 — each isolated) |
-| Bandwidth enforcement | Non-functional `"speed"` JSON field | **Server tc HTB qdisc** (Eco) + **Brutal sysctl target** (Stealth) |
-| LD_PRELOAD wrappers | 2 (cubic-wrap + brutal-wrap) | **1** (brutal-wrap only — system default is BBR) |
-
-#### From V3 to V4 — Reliability & Business
-
-| Feature | V3 | V4 | Business Value |
-|---------|:--:|:--:|----------------|
-| Update rollback safety | ❌ Replace + restart. Crash = dead app. | ✅ **Two-phase sentinel** — auto-revert on crash, manual `--revert` | Customers don't lose VPN on bad updates |
-| Offsite backups | ❌ Not mentioned | ✅ **Hourly SQLite backup to Backblaze B2** — plus daily SQL dump | VPS dies → restore in minutes, not start over |
-| Heartbeat + grace period | ❌ None | ✅ **5-min heartbeat check, 7-day grace** | Hub downtime doesn't disconnect customers |
-| Activation rate limiting | ❌ None | ✅ **Caddy + PocketBase hook** — 5 attempts / 10 min / IP | No brute-force attacks on codes |
-| Luhn code checksum | ❌ 12-char, no validation | ✅ **Luhn-mod-N** — client detects typos instantly | Better activation UX, less server load |
-| Code recovery on device failure | ❌ Permanent binding | ✅ **Admin unbind endpoint** — reset fingerprint | Customer breaks laptop → keeps subscription |
-| Auto-reconnect | ❌ None | ✅ **Built into sing-box** | WiFi blips don't kill connection |
-| Force-update capability | ❌ Wait 6h | ✅ **Heartbeat signals update** — app checks immediately | Push urgent security fixes fast |
-
-### V4 Server Architecture
+## Architecture Overview
 
 ```
-Three Shadowsocks instances, one per tier:
-
-┌─────────┬──────┬──────────┬──────────────┬─────┬───────────────┐
-│  Tier   │ Port│ Server CC│ Bandwidth     │ UDP │ Enforcement   │
-├─────────┼──────┼──────────┼──────────────┼─────┼───────────────┤
-│ Eco     │ 8443 │ BBR      │ 5 Mbps       │ ❌  │ tc HTB qdisc  │
-│ Stealth │ 8444 │ Brutal   │ 48 Mbps      │ ❌  │ Brutal sysctl │
-│ Strike  │ 8445 │ BBR      │ Unlimited    │ ✅  │ None needed   │
-└─────────┴──────┴──────────┴──────────────┴─────┴───────────────┘
-
-System default CC = BBR (tcp_bbr module loaded at boot)
-```
-
-### V4 Client Engine
-
-```
-V3:  sslocal ──SOCKS5──→ tun2socks ────→ TUN device
-     ↑ 2 processes, 1 abandoned          ↑
-     └─ extra hop, latency                   
-
-V4:  sing-box ────────────────→ TUN device
-     ↑ 1 process, actively maintained
-     └─ direct, no intermediate hop
-```
-
-### V4 Update Flow
-
-```
-Bad update scenario (V3):                 Bad update scenario (V4):
-
-1. Download new binary                    1. Save current as .prev
-2. SHA256 verify                          2. Write .update-pending sentinel ← Phase 1
-3. Replace current binary                 3. Write new binary
-4. Restart                                4. Restart
-5. New binary crashes on startup          5. New binary starts, renames sentinel ← Phase 2
-6. App won't open                         6. Customer uses app ← fine
-   → Customer stuck, you SSH              → If crash: .update-pending still exists
-                                            → Auto-revert to .prev
-                                            → Customer never notices
+┌─────────────────────────────────────────────────┐
+│              STUDENT'S LAPTOP                     │
+│                                                   │
+│  ┌───────────────────────────────────────────┐   │
+│  │         MyVPN Desktop App (Go+Fyne)        │   │
+│  │                                             │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
+│  │  │Activation│  │ Heartbeat │  │ Updater   │  │   │
+│  │  │ Client   │  │ 5min→2h   │  │ 2-phase   │  │   │
+│  │  └────┬─────┘  └────┬─────┘  └─────┬────┘  │   │
+│  │       │              │              │        │   │
+│  │  ┌────┴──────────────┴──────────────┴────┐   │   │
+│  │  │         Manager (sing-box)            │   │   │
+│  │  │   Generates config, spawns process    │   │   │
+│  │  └─────────────────┬────────────────────┘   │   │
+│  └────────────────────┼────────────────────────┘   │
+│                       │                            │
+│              SOCKS5 :1080                           │
+│                       │                            │
+└───────────────────────┼────────────────────────────┘
+                        │ Shadowsocks TCP
+                        ▼
+┌─────────────────────────────────────────────────┐
+│              VPS (Ubuntu 22.04)                   │
+│                                                   │
+│  Caddy (TLS + rate_limit) ←──→ PocketBase        │
+│       │                              │            │
+│       │                         ┌────┴────┐       │
+│       │                         │ JS Hooks│       │
+│       │                         │  • Act. │       │
+│       │                         │  • HB   │       │
+│       │                         │  • Unbin│       │
+│       │                         └─────────┘       │
+│       │                                            │
+│  ┌────┴────┐  ┌──────────┐  ┌──────────┐          │
+│  │ Eco     │  │ Stealth  │  │ Strike   │          │
+│  │ :8443   │  │ :8444    │  │ :8445    │          │
+│  │ BBR     │  │ Brutal   │  │ BBR+UDP  │          │
+│  │ 5M tc   │  │ 48M rate │  │ 200M tc  │          │
+│  └─────────┘  └──────────┘  └──────────┘          │
+│                                                   │
+│  Backups → Backblaze B2 (hourly, 7-day retention)  │
+└─────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Business Model
+## The Three Tiers
 
-A three-tier VPN sold through friends (middlemen) who distribute physical code
-cards at Macleans College. Cash-based, no payment processors, no ads.
-
-| Tier | Price | What It Does | Middleman Cut | Your Net |
-|------|:-----:|-------------|:-------------:|:--------:|
-| **Eco** | $2/mo | Basic browsing, video buffers | $0.40–0.60 | ~$1.50 |
-| **Stealth** | $4/mo | Fast streaming, Brutal CC | $0.80–1.20 | ~$3.00 |
-| **Strike** | $8/mo | Gaming + UDP, 200 Mbps | $1.60–2.40 | ~$6.00 |
-
-**Key innovations in the business model:**
-- **Term passes** (10-week blocks) improve cash flow and reduce collection frequency
-- **Referral cards** turn every code card into an acquisition channel
-- **Strike bundling** — Strike users get a free Eco code to give a friend,
-  creating network effects at zero marginal cost
-- **Middlemen are friends**, not anonymous resellers — trust is high, fraud is low
-
-**Scale:** 10–30 users = ~$200–500/year. 50 users = ~$1,000–2,500/year.
-Breakeven is 2–4 users. The VPS costs ~$8/month. This is a side project that
-covers its costs and then some — not a startup needing venture scale.
-
-**Biggest risk:** N4L blocks Shadowsocks. Mitigation built into the architecture
-(v2ray-plugin fallback, heartbeat-delivered protocol switching). See
-[`v4/BUSINESS.md`](v4/BUSINESS.md) for the full breakdown.
+| Tier | Price | Port | Server CC | Bandwidth | UDP | Experience |
+|------|-------|:----:|:---------:|:---------:|:---:|------------|
+| **Eco** | $2/mo | 8443 | BBR (system) | 5 Mbps (tc capped) | ❌ | Text loads, video buffers. Exists to sell Stealth. |
+| **Stealth** | $4/mo | 8444 | **Brutal** (kernel module) | 48 Mbps (target rate) | ❌ | Fast streaming. Jitter makes gaming unplayable. |
+| **Strike** | $8/mo | 8445 | BBR (system) | 200 Mbps (tc capped) | ✅ | Gaming (33-44ms latency). 4K streaming. |
 
 ---
 
-## Evolution Summary
+## Project Layout
 
 ```
-V1 (originals/)         V2 (simplified/)         V3 (v3/)             V4 (v4/)
-─────────────────       ─────────────────       ──────────────       ──────────────
-Hysteria 2               Hysteria 2               Shadowsocks-rust     Shadowsocks-rust
-sslocal + tun2socks     sslocal + tun2socks       sslocal + tun2socks  sing-box (unified)
-Two-phase update         Simplified update         No rollback           Two-phase update
-JWT heartbeat + grace   No heartbeat              No heartbeat          5-min heartbeat + grace
-Offsite B2 backups      Manual backup only        No backups            Hourly B2 backups
-4 tiers                  3 tiers                   3 tiers               3 tiers
-Luhn code checksum       No checksum               No checksum           Luhn checksum
-Rate limiting            No rate limiting          No rate limiting      Caddy + PB rate limit
-Privileged helper        Engine --tun              tun2socks TUN         sing-box TUN
-
-LEGEND:
-✔ = Had it             ✘ = Had it, stripped it    ✘ = Never had it     ✔ = Everything fixed
+myvpn/
+├── modular-vps/              ← SERVER: VPS setup scripts (deployable unit)
+│   ├── setup.sh              ← Orchestrator — runs all 8 modules
+│   ├── restore.sh            ← Full restore from B2 backup
+│   ├── modules/              ← 8 idempotent setup modules
+│   │   ├── 00-env.sh         ── Environment validation
+│   │   ├── 01-bbr.sh         ── BBR congestion control + kernel tuning
+│   │   ├── 02-shadowsocks.sh ── 3× ssserver instances (eco/stealth/strike)
+│   │   ├── 03-brutal.sh      ── TCP Brutal kernel module + LD_PRELOAD wrapper
+│   │   ├── 04-tc.sh          ── Traffic shaping (tc HTB qdisc)
+│   │   ├── 05-caddy.sh       ── Caddy reverse proxy + rate limiting
+│   │   ├── 06-pocketbase.sh  ── PocketBase admin backend + JS hooks
+│   │   ├── 07-backups.sh     ── Hourly B2 backup service
+│   │   └── 08-firewall.sh    ── UFW firewall rules
+│   ├── pb_hooks/             ← PocketBase JavaScript hooks
+│   │   ├── activation.pb.js  ── Code validation + device binding
+│   │   ├── heartbeat.pb.js   ── Suspension check + staged rollout
+│   │   └── admin_unbind.pb.js ── Admin code recovery endpoint
+│   └── templates/            ← Config templates
+│       ├── Caddyfile
+│       ├── eco.json / stealth.json / strike.json
+│       └── pocketbase.service
+│
+├── v4/                       ← CLIENT: Go desktop application
+│   ├── cmd/myvpn/main.go     ← Entry point
+│   ├── internal/
+│   │   ├── activation/       ── Luhn-mod-N validation + device fingerprinting
+│   │   ├── storage/          ── JSON persistence (activation state)
+│   │   ├── manager/          ── sing-box config generation + lifecycle
+│   │   ├── heartbeat/        ── Periodic hub check (5min→2h backoff)
+│   │   ├── updater/          ── Two-phase update + auto-rollback
+│   │   ├── tunnel/           ── Fallback TUN + kill switch + DNS
+│   │   ├── gui/              ── Fyne v2 desktop GUI
+│   │   └── helper/           ── Privileged TUN helper service
+│   ├── Makefile              ── Cross-platform build system
+│   └── go.mod                ── Go module definition
+│
+├── scripts/                  ← Operational tooling
+│   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
+│   └── print_codes.sh        ── Printable PDF code cards
+│
+└── .github/workflows/        ← CI/CD
+    └── build.yml             ── Build + release for all platforms
 ```
 
 ---
 
-## Directories
+## How It Works
 
-| Directory | Status | Contents |
-|-----------|--------|----------|
-| `v4/` | **Build this.** | Sing-box client, three-tier server, all reliability features. Production-ready. **Architectural issues from review have been fixed in the plan.** |
-| `v3/` | **Reference only.** | Shadowsocks plan with bugs. V4 is the fixed version. |
-| `simplified/` | **Archived.** | V2 Hysteria 2 plan. UDP blocked by N4L — won't work. |
-| `originals/` | **Archived.** | V1 and V2 research documents. Pre-testing. |
-| `CONTEXT.md` | **Reference.** | Full testing report. Every protocol tested against N4L. |
+### Network Protocol
 
-## Pre-Build Fixes Applied to V4
+The VPN uses **Shadowsocks TCP** — a simple, fast tunnel protocol that encrypts traffic with AES-256-GCM. Unlike TLS-based proxies (Trojan, Xray VLESS), Shadowsocks has no TLS handshake or certificate exchange, so it bypasses N4L's JA3 fingerprinting.
 
-During architectural review, the following issues were identified and fixed:
+All traffic goes through a single TCP connection per tier. The client runs **sing-box** which provides a local SOCKS5 proxy on `127.0.0.1:1080`. Applications connect to this proxy, and sing-box tunnels everything through Shadowsocks to the server.
 
-| Fix | Documents Updated | Details |
-|-----|-----------------|---------|
-| Staged rollout hookup | `ARCHITECTURE.md`, `IMPLEMENT.md` | Server-side fingerprint hash mod gating + client-side double-check |
-| Brutal LD_PRELOAD wrapper | `IMPLEMENT.md` | Intercepts TCP_CONGESTION directly, proper TCP_NODELAY passthrough, error handling |
-| PB hook filter injection | `IMPLEMENT.md` | Parameterized queries everywhere (`{:param}` syntax), input sanitization |
-| CGNAT rate limiting | `IMPLEMENT.md`, `OPS.md` | Fingerprint-keyed rate limiting (not IP), IP as fallback audit field |
-| Runtime crash detection | `IMPLEMENT.md` | `.update-timestamp` + `.last-heartbeat` tracking — detects crashes after update confirmation |
-| Rollout percent sed safety | `OPS.md` | Replaced fragile sed with `jq` |
-| Brutal module kernel updates | `IMPLEMENT.md` | DKMS installation so module auto-rebuilds |
-| tc qdisc reboot persistence | `IMPLEMENT.md` | Systemd oneshot service replaces rc.local |
-| Obfuscation fallback plan | `ARCHITECTURE.md` | Documented v2ray-plugin path + port agility + future-proofing |
-| Device fingerprint fallback | `IMPLEMENT.md` | 4-tier fallback chain for VMs, USB adapters, edge cases |
-| Heartbeat exponential backoff | `IMPLEMENT.md`, `ARCHITECTURE.md` | 5min→2h, doubles on failure, resets on success |
-| PocketBase user security | `IMPLEMENT.md` | Dedicated `pocketbase` user instead of root |
-| Backup verification | `IMPLEMENT.md` | Integrity check + 7-day auto-prune + audit logging |
-| IPv6 leak protection | `IMPLEMENT.md` | `block-ipv6` outbound + AAAA query routing in sing-box config |
-| CGNAT-aware Caddy limits | `IMPLEMENT.md` | Increased per-IP limits for shared public IP |
-| Cross-compilation pain | `IMPLEMENT.md` | Added GitHub Actions workflow as recommended alternative |
+### Tiers & Congestion Control
+
+Each tier uses a different congestion control algorithm:
+
+- **Eco & Strike**: Use **BBR** (Bottleneck Bandwidth and Round-trip propagation time), Linux's default CC. BBR is fair and stable.
+- **Stealth**: Uses **Brutal CC**, a kernel module that aggressively fills bandwidth regardless of packet loss. The `tcp-brutal` module registers "brutal" as a TCP congestion control algorithm. An LD_PRELOAD wrapper intercepts `accept()` calls on the Stealth ssserver and sets `TCP_CONGESTION=brutal` + target rate on each client connection.
+
+### Activation Flow
+
+1. User enters code in the app: `MYVPN-A7X3-K9M2-Q5P1-C`
+2. **Client-side Luhn-mod-N validation** catches typos instantly
+3. App generates a **device fingerprint** (SHA256 of MAC address + disk serial + motherboard UUID)
+4. POST to `/api/activate` with `{ code, fingerprint }`
+5. Server validates Luhn checksum, looks up code, binds fingerprint
+6. Returns tier config with server address, port, password, method
+7. App stores config locally and starts the tunnel
+
+### Heartbeat & Grace Period
+
+The app sends a heartbeat every 5 minutes. If the hub is unreachable:
+- Interval doubles: 5min → 10min → 20min → ... → 2h max
+- VPN keeps working (config is stored locally, no token dependency)
+- **7-day grace period** before requiring re-activation
+
+On server response:
+- `200 OK`: Normal operation. Resets interval to 5min.
+- `403 suspended`: Immediately disconnect. Show suspension message.
+- `update_available` field: Triggers staged rollout update.
+
+### Staged Rollouts
+
+Updates are delivered gradually:
+1. Server sets `rollout_percent` (0-100) in PocketBase `update_config`
+2. Heartbeat response includes `update_available` only if fingerprint passes server-side hash gate
+3. Client independently checks: `hash(fingerprint) % 100 < rollout_percent`
+4. If eligible, downloads new binary, verifies SHA256, applies two-phase update
+
+### Two-Phase Update Safety
+
+```
+Normal:     .update-pending → .update-confirmed → done
+Crash:      .update-pending → (no .update-confirmed) → auto-revert
+Manual:     --revert flag → restore from .myvpn-backups/
+```
+
+The `.update-pending` sentinel is written before swapping the binary. On first successful launch of the new version, `.update-confirmed` is written. If the new version crashes before writing confirmation, the next start detects the orphaned `.update-pending` and auto-reverts.
+
+### Device Fingerprinting
+
+The fingerprint is a deterministic SHA256 hash of hardware identifiers:
+
+1. **Strong**: MAC address + disk serial + motherboard UUID
+2. **Medium**: MAC address + motherboard UUID
+3. **Weak**: MAC address + hostname + machine_id
+4. **Fallback**: Random UUID v4 (persistent for install lifetime)
+
+This binds an activation code to a specific device. If the device is lost or broken, an admin can unbind the code via the `/api/admin/unbind` endpoint.
+
+---
 
 ## Build Order
 
-1. Read `v4/ARCHITECTURE.md` — understand the full system
-2. Read `v4/IMPLEMENT.md` — step-by-step build guide
-3. Deploy server: blank Ubuntu 22.04 → run setup script → configure B2 backups
-4. Build the Go + Fyne client app with sing-box bundled
-5. Test activation flow (including Luhn checksum)
-6. Test update flow (including forced crash → auto-rollback)
-7. Test heartbeat + grace period (kill the hub, verify VPN keeps working)
-8. Deploy to production with PocketBase collections and seeded tier configs
-9. Print code cards, staple to instructions, hand to middlemen
-10. Set up uptime monitoring (UptimeRobot/PingPong) on `https://api.yourdomain.com/api/health`
+### Step 1: Deploy Server
+
+```bash
+# Copy to VPS
+scp -r modular-vps root@your-vps:/root/
+
+# Run setup (takes 10-15 minutes)
+ssh root@your-vps
+DOMAIN=api.yourdomain.com ./modular-vps/setup.sh
+```
+
+This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, PocketBase, B2 backups, UFW firewall.
+
+### Step 2: Configure PocketBase
+
+1. Visit `https://api.yourdomain.com/_/` — create admin account
+2. Create collections: `codes`, `tier_configs`, `activation_attempts`
+3. Create `update_config` collection for staged rollouts
+4. Set `admin_api_token` in PocketBase app settings
+5. Upload JS hooks from `modular-vps/pb_hooks/`
+6. Seed tier configs with passwords from `/root/.tier_passwords`
+
+### Step 3: Generate & Print Codes
+
+```bash
+./scripts/generate_codes.sh https://api.yourdomain.com YOUR_TOKEN eco 50
+./scripts/print_codes.sh eco-codes.txt eco-cards.pdf
+```
+
+### Step 4: Build Client App
+
+```bash
+cd v4
+make bundle-all           # Builds for all platforms + bundles sing-box
+```
+
+Or push a `v*` tag for GitHub Actions CI/CD.
+
+### Step 5: Install & Test
+
+1. Install helper service (admin): `sudo myvpn-helper --install`
+2. Launch MyVPN app
+3. Test activation, connection, heartbeat, update
+
+---
+
+## Operations
+
+### Quick Health Check
+
+```bash
+ssh root@your-vps "
+  systemctl is-active caddy pocketbase shadowsocks-eco shadowsocks-stealth shadowsocks-strike
+  lsmod | grep tcp_brutal
+  sysctl net.ipv4.tcp_congestion_control
+  tc -s class show dev eth0 | head -10
+"
+```
+
+### Backup & Restore
+
+```bash
+# Manual backup
+/usr/local/bin/myvpn-backup.sh
+
+# Full VPS restore
+DOMAIN=api.yourdomain.com \
+  B2_APPLICATION_KEY_ID=xxx \
+  B2_APPLICATION_KEY=xxx \
+  B2_BUCKET=my-vpn-backup-bucket \
+  /root/modular-vps/restore.sh
+```
+
+### Monitoring
+
+Set up uptime monitoring on `https://api.yourdomain.com/api/health` (UptimeRobot, PingPing, etc.).
+This endpoint returns `{"message":"API is healthy.","code":200}` when PocketBase is running.
+
+---
+
+## Real-World Testing
+
+The modular-vps scripts were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
+
+| Module | Status | Notes |
+|--------|:------:|-------|
+| 00-env | ✅ | OS, arch, root, disk, memory all validated |
+| 01-bbr | ✅ | BBR active, TCP tuning params set |
+| 02-shadowsocks | ✅ | 3 instances installed and enabled |
+| 03-brutal | ✅ | Cloned from `apernet/tcp-brutal` (repo renamed from `tcp-brutal-ng`), compiled custom LD_PRELOAD wrapper from bundled C source |
+| 04-tc | ✅ | Eco 5Mbit, Strike 200Mbit classes active |
+| 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
+| 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
+| 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
+| 08-firewall | ✅ | UFW active, all ports open, SSH rate-limited |
+
+All 3 Shadowsocks services active (8443/8444/8445). Brutal CC kernel module loaded.
+Caddy + PocketBase serving API at `https://domain/_/`.

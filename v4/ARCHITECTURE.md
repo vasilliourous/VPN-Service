@@ -228,6 +228,12 @@ This is more resilient than V1's JWT-based system — the VPN tunnel doesn't dep
 
 System default CC = BBR. Only Brutal wrapper needed (no cubic-wrap).
 
+> **Important:** Brutal CC runs on the **server** (Linux VPS), not on the client.
+> The `tcp-brutal-ng` kernel module changes how the server's TCP stack sends data
+> on the Stealth port (8444). The client (Windows/macOS/Linux) uses its default
+> TCP stack and simply receives data faster. The student's operating system is
+> irrelevant — this is purely a server-side optimization.
+
 ### Activation Codes with Luhm-mod-N Checksum
 
 ```

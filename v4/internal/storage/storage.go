@@ -1,0 +1,235 @@
+// Package storage provides local persistent storage for the MyVPN client.
+//
+// All data is stored as a single JSON file in the platform-specific app data
+// directory. The file is encrypted at rest only by the OS (no app-level
+// encryption — the activation code is the only secret, and it's short enough
+// that disk encryption is assumed).
+//
+// File location by platform:
+//
+//	Linux:   ~/.config/myvpn/storage.json
+//	macOS:   ~/Library/Application Support/MyVPN/storage.json
+//	Windows: %APPDATA%\MyVPN\storage.json
+package storage
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// Data represents the persisted state of the MyVPN client.
+type Data struct {
+	// Activation state
+	Code             string `json:"code,omitempty"`
+	Tier             string `json:"tier,omitempty"`
+	DeviceFingerprint string `json:"device_fingerprint,omitempty"`
+
+	// Server config from activation
+	ServerConfig *ServerConfig `json:"server_config,omitempty"`
+	UDPRelay     bool          `json:"udp_relay,omitempty"`
+
+	// App state
+	Activated bool   `json:"activated"`
+	Version   string `json:"version,omitempty"`
+
+	// Update tracking
+	UpdatePending     bool   `json:"update_pending,omitempty"`
+	UpdateVersion     string `json:"update_version,omitempty"`
+	UpdateSHA256      string `json:"update_sha256,omitempty"`
+	UpdateTimestamp   int64  `json:"update_timestamp,omitempty"`
+
+	// Heartbeat tracking
+	LastHeartbeatOK   int64 `json:"last_heartbeat_ok,omitempty"`
+	HeartbeatFailures int   `json:"heartbeat_failures,omitempty"`
+
+	// Crash recovery
+	CrashedOnUpdate bool  `json:"crashed_on_update,omitempty"`
+	CrashTimestamp  int64 `json:"crash_timestamp,omitempty"`
+}
+
+// ServerConfig holds the Shadowsocks connection parameters.
+type ServerConfig struct {
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
+	Password   string `json:"password"`
+	Method     string `json:"method"`
+}
+
+// Store manages persistent storage with thread-safe access.
+type Store struct {
+	mu     sync.RWMutex
+	data   Data
+	path   string
+}
+
+// New creates or loads a Store at the platform-appropriate path.
+func New(appName string) (*Store, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine config directory: %w", err)
+	}
+
+	dir := filepath.Join(configDir, appName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("cannot create config directory: %w", err)
+	}
+
+	path := filepath.Join(dir, "storage.json")
+	s := &Store{path: path}
+
+	if err := s.load(); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("cannot load storage: %w", err)
+	}
+
+	return s, nil
+}
+
+// load reads the storage file from disk.
+func (s *Store) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, &s.data)
+}
+
+// save writes the storage file to disk.
+func (s *Store) save() error {
+	data, err := json.MarshalIndent(&s.data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot marshal storage: %w", err)
+	}
+
+	// Write atomically: temp file then rename
+	tmpPath := s.path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return fmt.Errorf("cannot write storage: %w", err)
+	}
+
+	return os.Rename(tmpPath, s.path)
+}
+
+// GetData returns a copy of the current stored data.
+func (s *Store) GetData() Data {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data
+}
+
+// SetActivation persists code, tier, fingerprint, and server config.
+func (s *Store) SetActivation(code, tier, fingerprint string, config *ServerConfig, udpRelay bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.Code = code
+	s.data.Tier = tier
+	s.data.DeviceFingerprint = fingerprint
+	s.data.ServerConfig = config
+	s.data.UDPRelay = udpRelay
+	s.data.Activated = true
+
+	return s.save()
+}
+
+// IsActivated returns whether the client has been activated.
+func (s *Store) IsActivated() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.Activated
+}
+
+// GetCode returns the stored activation code.
+func (s *Store) GetCode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.Code
+}
+
+// SetHeartbeat records a successful heartbeat.
+func (s *Store) SetHeartbeat(timestamp int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.LastHeartbeatOK = timestamp
+	s.data.HeartbeatFailures = 0
+	return s.save()
+}
+
+// SetHeartbeatFailure increments the heartbeat failure counter.
+func (s *Store) SetHeartbeatFailure(timestamp int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.LastHeartbeatOK = timestamp
+	s.data.HeartbeatFailures++
+	return s.save()
+}
+
+// SetUpdatePending marks an update as pending confirmation.
+func (s *Store) SetUpdatePending(version, sha256 string, timestamp int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.UpdatePending = true
+	s.data.UpdateVersion = version
+	s.data.UpdateSHA256 = sha256
+	s.data.UpdateTimestamp = timestamp
+	return s.save()
+}
+
+// ClearUpdatePending removes the pending update flag.
+func (s *Store) ClearUpdatePending() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.UpdatePending = false
+	s.data.UpdateVersion = ""
+	s.data.UpdateSHA256 = ""
+	s.data.UpdateTimestamp = 0
+	return s.save()
+}
+
+// SetCrashedOnUpdate marks that the app crashed during an update.
+func (s *Store) SetCrashedOnUpdate(timestamp int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.CrashedOnUpdate = true
+	s.data.CrashTimestamp = timestamp
+	return s.save()
+}
+
+// ClearCrashedOnUpdate clears the crash flag.
+func (s *Store) ClearCrashedOnUpdate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.CrashedOnUpdate = false
+	s.data.CrashTimestamp = 0
+	return s.save()
+}
+
+// SetVersion records the current app version.
+func (s *Store) SetVersion(version string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.Version = version
+	return s.save()
+}
+
+// Reset clears all stored data (factory reset).
+func (s *Store) Reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data = Data{}
+	return s.save()
+}

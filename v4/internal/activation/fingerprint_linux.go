@@ -1,0 +1,81 @@
+//go:build linux
+
+package activation
+
+import (
+	"os"
+	"strings"
+)
+
+func init() {
+	platformCollector = collectLinuxSources
+}
+
+// collectLinuxSources gathers hardware info on Linux.
+// Sources:
+//   - MAC address: first non-loopback physical interface
+//   - Disk serial: /sys/block/<device>/device/serial or udevadm
+//   - Motherboard UUID: /sys/class/dmi/id/product_uuid
+//   - Machine ID: /etc/machine-id or /var/lib/dbus/machine-id
+func collectLinuxSources() fingerprintSources {
+	var sources fingerprintSources
+
+	// MAC address — first non-loopback, physical interface
+	if mac, err := readFile("/sys/class/net/eth0/address"); err == nil {
+		sources.MAC = strings.TrimSpace(mac)
+	} else if mac, err := readFile("/sys/class/net/enp0s3/address"); err == nil {
+		sources.MAC = strings.TrimSpace(mac)
+	} else if mac, err := readFile("/sys/class/net/enp0s8/address"); err == nil {
+		sources.MAC = strings.TrimSpace(mac)
+	} else if interfaces, err := os.ReadDir("/sys/class/net"); err == nil {
+		for _, iface := range interfaces {
+			name := iface.Name()
+			// Skip loopback, virtual, and container interfaces
+			if name == "lo" || strings.HasPrefix(name, "docker") ||
+				strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "br-") ||
+				strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "wg") {
+				continue
+			}
+			if addr, err := readFile("/sys/class/net/" + name + "/address"); err == nil {
+				sources.MAC = strings.TrimSpace(addr)
+				break
+			}
+		}
+	}
+
+	// Disk serial — try primary disk (sda, nvme0n1, vda)
+	for _, disk := range []string{"sda", "nvme0n1", "vda", "xvda"} {
+		if serial, err := readFile("/sys/block/" + disk + "/device/serial"); err == nil {
+			sources.DiskSerial = strings.TrimSpace(serial)
+			break
+		}
+	}
+
+	// Motherboard UUID
+	if uuid, err := readFile("/sys/class/dmi/id/product_uuid"); err == nil {
+		sources.Motherboard = strings.TrimSpace(uuid)
+	}
+
+	// Hostname
+	if hostname, err := os.Hostname(); err == nil {
+		sources.Hostname = hostname
+	}
+
+	// Machine ID
+	if id, err := readFile("/etc/machine-id"); err == nil {
+		sources.MachineID = strings.TrimSpace(id)
+	} else if id, err := readFile("/var/lib/dbus/machine-id"); err == nil {
+		sources.MachineID = strings.TrimSpace(id)
+	}
+
+	return sources
+}
+
+// readFile reads a file and returns its contents, or an error.
+func readFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
