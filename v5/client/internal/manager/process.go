@@ -281,10 +281,8 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Detach slightly — allow parent to manage lifecycle
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	// Detach — allow parent to manage lifecycle (platform-specific)
+	cmd.SysProcAttr = newProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("cannot start sing-box: %w", err)
@@ -339,7 +337,7 @@ func (m *Manager) healthLoop() {
 					cmd := exec.CommandContext(newCtx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
 					cmd.Stdout = os.Stdout
 					cmd.Stderr = os.Stderr
-					cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+					cmd.SysProcAttr = newProcAttr()
 					if startErr := cmd.Start(); startErr == nil {
 						m.mu.Lock()
 						m.cmd = cmd
