@@ -169,10 +169,8 @@ jobs:
           mkdir -p dist
           BUNDLE="myvpn-${{ matrix.label }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zip -j "dist/${BUNDLE}.zip" \
-              myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe \
-              ${{ matrix.sing-box-bin }} \
-              myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+            # Windows: use PowerShell's native Compress-Archive
+            powershell -Command "Compress-Archive -Path myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe, ${{ matrix.sing-box-bin }}, myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}.exe -DestinationPath dist/${BUNDLE}.zip -Force"
           else
             zip -j "dist/${BUNDLE}.zip" \
               myvpn-${{ matrix.goos }}-${{ matrix.goarch }} \
