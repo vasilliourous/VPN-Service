@@ -389,9 +389,7 @@ func handleStartSingBox(args []string) Response {
 	cmd := exec.Command(binaryPath, "run", "-c", configPath, "-D", tempDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.SysProcAttr = newProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(tempDir)
@@ -413,7 +411,7 @@ func handleStopSingBox() Response {
 	}
 
 	// Graceful shutdown
-	singBoxCmd.Process.Signal(syscall.SIGTERM)
+	singBoxCmd.Process.Signal(signalInterrupt())
 
 	// Wait up to 5 seconds
 	done := make(chan struct{})
@@ -425,7 +423,7 @@ func handleStopSingBox() Response {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		syscall.Kill(-singBoxCmd.Process.Pid, syscall.SIGKILL)
+		killProcessGroup(singBoxCmd.Process.Pid, signalKill())
 	}
 
 	if singBoxTempDir != "" {
@@ -446,7 +444,7 @@ func handleSingBoxStatus() Response {
 	}
 
 	// Check if process is still alive
-	if err := singBoxCmd.Process.Signal(syscall.Signal(0)); err != nil {
+	if !processExists(singBoxCmd) {
 		singBoxCmd = nil
 		return Response{Success: true, Message: "stopped"}
 	}
