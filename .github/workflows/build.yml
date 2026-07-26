@@ -126,12 +126,13 @@ jobs:
         run: sudo apt-get install -y libgl1-mesa-dev xorg-dev
 
       - name: Generate go.sum
+        run: go mod tidy
+
+      - name: Update Go GL bindings (macOS)
+        if: runner.os == 'macOS'
         run: |
-          TIDY_TAGS=""
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            TIDY_TAGS="-tags ci"
-          fi
-          go mod tidy $TIDY_TAGS
+          go get github.com/go-gl/gl@master
+          go mod tidy
 
       - name: Build client
         env:
@@ -139,8 +140,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
-          BUILD_TAGS=""
           # macOS: use software renderer to avoid OpenGL dependency issues
+          BUILD_TAGS=""
           if [ "${{ runner.os }}" = "macOS" ]; then
             BUILD_TAGS="-tags ci"
           fi
