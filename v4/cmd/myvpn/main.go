@@ -34,6 +34,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *hubURL == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: --hub flag is required. Usage: myvpn --hub https://your-server.com\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	// Run update recovery check BEFORE anything else
 	// This handles the two-phase sentinel handshake:
 	//   - If .update-pending exists but .update-confirmed doesn't, auto-revert

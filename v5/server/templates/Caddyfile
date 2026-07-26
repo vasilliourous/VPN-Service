@@ -1,10 +1,14 @@
 {
     # MyVPN Caddyfile — Template
-    # Domain is injected by the setup script
+    # REPLACE "YOUR_SERVER_DOMAIN" with your actual domain before deploying.
+    # If using the automated setup (setup.sh), DOMAIN is injected automatically.
+    #
+    # Example with envsubst:
+    #   envsubst '${DOMAIN}' < templates/Caddyfile > /etc/caddy/Caddyfile
     # rate_limit is configured per-handle below
 }
 
-${DOMAIN} {
+YOUR_SERVER_DOMAIN {
     root * /var/www/html
     file_server
 
