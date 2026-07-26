@@ -47,11 +47,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev xorg-dev
 
+      - name: Download Go module dependencies
+        run: go mod download
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: ${{ env.CLIENT_DIR }}
+          only-new-issues: true
 
       - name: go vet
         run: go vet ./...
