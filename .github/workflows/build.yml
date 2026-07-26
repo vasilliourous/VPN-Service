@@ -126,7 +126,12 @@ jobs:
         run: sudo apt-get install -y libgl1-mesa-dev xorg-dev
 
       - name: Generate go.sum
-        run: go mod tidy
+        run: |
+          TIDY_TAGS=""
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            TIDY_TAGS="-tags ci"
+          fi
+          go mod tidy $TIDY_TAGS
 
       - name: Build client
         env:
@@ -134,7 +139,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" \
+          BUILD_TAGS=""
+          # macOS: use software renderer to avoid OpenGL dependency issues
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            BUILD_TAGS="-tags ci"
+          fi
+          go build $BUILD_TAGS -ldflags="-s -w -X main.version=${VERSION}" \
             -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd/myvpn/
 
