@@ -98,9 +98,13 @@ func main() {
 func cleanup() {
 	singBoxMu.Lock()
 	if singBoxCmd != nil && singBoxCmd.Process != nil {
-		singBoxCmd.Process.Signal(syscall.SIGTERM)
+		if err := singBoxCmd.Process.Signal(signalInterrupt()); err != nil {
+			log.Printf("Failed to send interrupt signal: %v", err)
+		}
 		time.Sleep(3 * time.Second)
-		singBoxCmd.Process.Kill()
+		if err := singBoxCmd.Process.Kill(); err != nil {
+			log.Printf("Failed to kill process: %v", err)
+		}
 	}
 	if singBoxTempDir != "" {
 		os.RemoveAll(singBoxTempDir)
@@ -411,7 +415,9 @@ func handleStopSingBox() Response {
 	}
 
 	// Graceful shutdown
-	singBoxCmd.Process.Signal(signalInterrupt())
+	if err := singBoxCmd.Process.Signal(signalInterrupt()); err != nil {
+		log.Printf("Failed to send interrupt signal: %v", err)
+	}
 
 	// Wait up to 5 seconds
 	done := make(chan struct{})
@@ -423,7 +429,9 @@ func handleStopSingBox() Response {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		killProcessGroup(singBoxCmd.Process.Pid, signalKill())
+		if err := killProcessGroup(singBoxCmd.Process.Pid, signalKill()); err != nil {
+			log.Printf("Failed to kill process group: %v", err)
+		}
 	}
 
 	if singBoxTempDir != "" {
