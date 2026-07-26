@@ -56,6 +56,8 @@ jobs:
           version: latest
           working-directory: ${{ env.CLIENT_DIR }}
           only-new-issues: true
+        env:
+          CGO_ENABLED: 1
 
       - name: go vet
         run: go vet ./...
