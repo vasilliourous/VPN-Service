@@ -47,8 +47,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev xorg-dev
 
-      - name: Download Go module dependencies
-        run: go mod download
+      - name: Tidy Go modules (generate go.sum)
+        run: go mod tidy
 
       - name: Build first (prime module cache for CGO packages)
         run: CGO_ENABLED=1 go build ./...
