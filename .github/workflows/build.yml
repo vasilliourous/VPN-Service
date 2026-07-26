@@ -50,20 +50,19 @@ jobs:
       - name: Download Go module dependencies
         run: go mod download
 
+      - name: Build first (prime module cache for CGO packages)
+        run: CGO_ENABLED=1 go build ./...
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: ${{ env.CLIENT_DIR }}
           only-new-issues: true
-        env:
-          CGO_ENABLED: 1
+          skip-cache: true
 
       - name: go vet
         run: go vet ./...
-
-      - name: Build check (compilation test)
-        run: go build ./...
 
       - name: Run unit tests
         run: go test ./... -v -count=1
