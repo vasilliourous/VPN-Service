@@ -78,8 +78,7 @@ type App struct {
 	mainContent  *fyne.Container
 	activateContent *fyne.Container
 
-	// Tray
-	trayIcon fyne.TrayIcon
+	// Tray (optional — not all platforms/versions support it)
 }
 
 // Run launches the MyVPN desktop application.
@@ -299,8 +298,9 @@ func (a *App) showMainScreen() {
 }
 
 func (a *App) setupTray() {
-	// System tray with disconnect/quit options
-	a.fyneApp.SetSystemTrayMenu(fyne.NewMenu("MyVPN",
+	// System tray setup — available on most desktop platforms
+	// Use type assertion to check if the app supports system tray
+	menu := fyne.NewMenu("MyVPN",
 		fyne.NewMenuItem("Show", func() {
 			a.mainWindow.Show()
 		}),
@@ -312,7 +312,12 @@ func (a *App) setupTray() {
 		fyne.NewMenuItem("Quit", func() {
 			a.shutdown()
 		}),
-	))
+	)
+
+	// Attempt to set the system tray menu (silent if unavailable)
+	if appWithTray, ok := interface{}(a.fyneApp).(interface{ SetSystemTrayMenu(*fyne.Menu) }); ok {
+		appWithTray.SetSystemTrayMenu(menu)
+	}
 }
 
 // ── Actions ──
