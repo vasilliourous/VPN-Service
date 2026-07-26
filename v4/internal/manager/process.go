@@ -163,9 +163,17 @@ func (m *Manager) Start(config *EngineConfig) error {
 
 	m.config = config
 
+	// Create temp directory for config file
+	tmpDir, err := os.MkdirTemp("", "myvpn-*")
+	if err != nil {
+		return fmt.Errorf("cannot create temp dir: %w", err)
+	}
+	configPath := filepath.Join(tmpDir, "config.json")
+
 	// Generate JSON config
 	cfg, err := m.generateConfig(config)
 	if err != nil {
+		os.RemoveAll(tmpDir)
 		return fmt.Errorf("cannot generate config: %w", err)
 	}
 

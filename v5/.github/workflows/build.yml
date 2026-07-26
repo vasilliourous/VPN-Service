@@ -1,0 +1,230 @@
+# MyVPN V5 CI/CD Pipeline
+#
+# Builds and releases the MyVPN desktop client from v5/client/.
+# Uses native platform runners (no cross-compilation issues with CGO/Fyne).
+#
+# Triggered by:
+#   - Push to main (test build only)
+#   - Tag push v* (full build + release)
+#   - Pull request (test build)
+#
+# Working directory: v5/client/
+
+name: Build MyVPN V5
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  CLIENT_DIR: v5/client
+
+jobs:
+  # ── Lint + Test + Vet (Ubuntu) ──
+  lint:
+    name: Lint & Vet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.CLIENT_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install Fyne dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: ${{ env.CLIENT_DIR }}
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build check (compile test)
+        run: go build ./...
+
+      - name: Run unit tests
+        run: go test ./... -v -count=1
+
+  # ── Build + Bundle for all platforms ──
+  build:
+    name: Build ${{ matrix.label }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux-amd64
+            os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            ext: ""
+          - label: macOS-amd64
+            os: macos-latest
+            goos: darwin
+            goarch: amd64
+            ext: ""
+          - label: macOS-arm64
+            os: macos-latest
+            goos: darwin
+            goarch: arm64
+            ext: ""
+          - label: Windows-amd64
+            os: windows-latest
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.CLIENT_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install Fyne deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: Build client app
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          [ -z "$VERSION" ] && VERSION="dev"
+          go build -ldflags="-s -w -X main.version=${VERSION}" \
+            -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
+            ./cmd/myvpn/
+
+      - name: Build TUN helper (no CGO)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          CGO_ENABLED=0 go build \
+            -o myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
+            ./internal/helper/
+
+      - name: Download sing-box engine
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          SING_VERSION="1.10.0"
+          case "${{ runner.os }}" in
+            Linux)
+              curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-linux-amd64.tar.gz"
+              tar -xzf "sing-box-${SING_VERSION}-linux-amd64.tar.gz"
+              cp "sing-box-${SING_VERSION}-linux-amd64/sing-box" .
+              ;;
+            macOS)
+              curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}.tar.gz"
+              tar -xzf "sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}.tar.gz"
+              cp "sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}/sing-box" .
+              ;;
+            Windows)
+              curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-windows-amd64.zip"
+              unzip -qo "sing-box-${SING_VERSION}-windows-amd64.zip"
+              cp "sing-box-${SING_VERSION}-windows-amd64/sing-box.exe" .
+              ;;
+          esac
+
+      - name: Bundle into platform ZIP
+        run: |
+          mkdir -p dist
+          BUNDLE="myvpn-${{ matrix.label }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            zip -j "dist/${BUNDLE}.zip" \
+              myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe \
+              sing-box.exe \
+              myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+          else
+            zip -j "dist/${BUNDLE}.zip" \
+              myvpn-${{ matrix.goos }}-${{ matrix.goarch }} \
+              sing-box \
+              myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: myvpn-${{ matrix.label }}
+          path: ${{ env.CLIENT_DIR }}/dist/*.zip
+
+  # ── Release (tag pushes only) ──
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: myvpn-*
+          merge-multiple: true
+
+      - name: Generate release checksums
+        run: |
+          sha256sum *.zip > checksums.sha256
+          cat checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.zip
+            checksums.sha256
+          generate_release_notes: true
+          body: |
+            ## MyVPN ${{ github.ref_name }}
+
+            ### Bundles
+
+            | Platform | File |
+            |----------|------|
+            | Windows | `myvpn-Windows-amd64.zip` |
+            | macOS Intel | `myvpn-macOS-amd64.zip` |
+            | macOS ARM | `myvpn-macOS-arm64.zip` |
+            | Linux | `myvpn-Linux-amd64.zip` |
+
+            ### What's Included
+
+            - `myvpn` — Desktop client application (Go + Fyne)
+            - `sing-box` — Tunnel engine (Shadowsocks + TUN)
+            - `myvpn-helper` — Privileged TUN helper service
+
+            ### Quick Install
+
+            1. Download the bundle for your platform
+            2. Extract the zip
+            3. Install the helper service (requires admin):
+               - **Linux**: `sudo ./myvpn-helper-linux-amd64 --install`
+               - **macOS**: `sudo ./myvpn-helper-darwin-arm64 --install`
+               - **Windows**: Run as Admin: `myvpn-helper-windows-amd64.exe --install`
+            4. Launch `myvpn`
+            5. Enter your activation code
+
+            See `v5/docs/CLIENT-GUIDE.md` for full build and install instructions.

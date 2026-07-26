@@ -1,11 +1,12 @@
-// MyVPN Heartbeat Hook
+// MyVPN Heartbeat Hook (PocketBase 0.22+)
 //
 // Checks suspension status, signals staged rollout updates,
 // and returns refreshed tier config.
 //
-// IMPORTANT: This hook does NOT use Node.js APIs (require, fs, etc.)
-// PocketBase runs on goja, which has its own global APIs.
-// Filesystem reads use $os.readFile() — a PocketBase-specific API.
+// PocketBase 0.22 JSVM notes:
+//   $app.dao() → $app (direct)
+//   c.query() → e.request.url.query()
+//   c.json() → e.json()
 
 function sanitizeFilter(val) {
     if (typeof val !== "string") return "";
@@ -23,16 +24,16 @@ function hashMod(str, modulus) {
     return Math.abs(hash) % modulus;
 }
 
-routerAdd("GET", "/api/heartbeat", (c) => {
-    const code = c.query().get("code");
-    const fingerprint = c.query().get("fp") || "";
+routerAdd("GET", "/api/heartbeat", (e) => {
+    const code = e.request.url.query().get("code");
+    const fingerprint = e.request.url.query().get("fp") || "";
 
     if (!code) {
-        return c.json(400, { code: 400, message: "Missing code" });
+        return e.json(400, { code: 400, message: "Missing code" });
     }
 
     const safeCode = sanitizeFilter(code);
-    const records = $app.dao().findRecordsByFilter(
+    const records = $app.findRecordsByFilter(
         "codes",
         "code={:code}",
         "", 0, 1,
@@ -40,14 +41,14 @@ routerAdd("GET", "/api/heartbeat", (c) => {
     );
 
     if (records.length === 0) {
-        return c.json(404, { code: 404, message: "Code not found" });
+        return e.json(404, { code: 404, message: "Code not found" });
     }
 
     const record = records[0];
 
     // ── Suspension check ──
     if (record.getBool("suspended")) {
-        return c.json(403, { code: 403, message: "Account suspended — contact your middleman" });
+        return e.json(403, { code: 403, message: "Account suspended — contact your middleman" });
     }
 
     const response = {
@@ -57,7 +58,7 @@ routerAdd("GET", "/api/heartbeat", (c) => {
 
     // ── Staged rollout: read update signal from update_config collection ──
     try {
-        const updateRecords = $app.dao().findRecordsByFilter(
+        const updateRecords = $app.findRecordsByFilter(
             "update_config",
             "active={:active}",
             "", 0, 1,
@@ -93,15 +94,15 @@ routerAdd("GET", "/api/heartbeat", (c) => {
                 }
             }
         }
-    } catch (e) {
+    } catch (err) {
         // No update_config collection or no active records — skip
-        $app.logger().warn("Update check skipped: " + (e.message || "no config"));
+        $app.logger().warn("Update check skipped: " + (err.message || "no config"));
     }
 
     // ── Return tier config (parameterized query) ──
     const tier = record.getString("tier");
     const safeTier = sanitizeFilter(tier);
-    const configs = $app.dao().findRecordsByFilter(
+    const configs = $app.findRecordsByFilter(
         "tier_configs",
         "tier={:tier} && active={:active}",
         "", 0, 1,
@@ -115,5 +116,5 @@ routerAdd("GET", "/api/heartbeat", (c) => {
 
     response.tier = tier;
 
-    return c.json(200, response);
+    return e.json(200, response);
 });

@@ -56,18 +56,20 @@ luhn_mod_n_checksum() {
             fi
         fi
         sum=$(( sum + val ))
-        double=!$double
+        if $double; then double=false; else double=true; fi
     done
 
     local checksum=$(( (N - (sum % N)) % N ))
     echo "${CHARSET:$checksum:1}"
 }
 
-# ── Generate a single random segment ──
+# ── Generate a single random segment using openssl (cryptographically secure) ──
 random_segment() {
     local len=$1 result=""
+    # Generate a random index for each character using openssl rand
     for (( i = 0; i < len; i++ )); do
-        local idx=$(( RANDOM % N ))
+        local idx
+        idx=$(($(od -An -N1 -tu1 < /dev/urandom 2>/dev/null | tr -d ' ') % N))
         result="${result}${CHARSET:$idx:1}"
     done
     echo "$result"

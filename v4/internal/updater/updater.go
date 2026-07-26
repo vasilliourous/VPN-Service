@@ -48,6 +48,7 @@ const (
 type UpdateInfo struct {
 	Version        string `json:"version"`
 	RolloutPercent int    `json:"rollout_percent"`
+	Linux          *Asset `json:"linux_amd64,omitempty"`
 	Windows        *Asset `json:"windows,omitempty"`
 	MacOSIntel     *Asset `json:"macos_intel,omitempty"`
 	MacOSARM       *Asset `json:"macos_arm,omitempty"`
@@ -74,8 +75,8 @@ func (info *UpdateInfo) URLForCurrentPlatform() (url, sha256 string, ok bool) {
 			return info.MacOSIntel.URL, info.MacOSIntel.SHA256, true
 		}
 	default: // linux
-		if info.Windows != nil {
-			// Linux fallback to Windows? No — try the first non-nil asset
+		if info.Linux != nil {
+			return info.Linux.URL, info.Linux.SHA256, true
 		}
 	}
 	// Fallback: return empty (caller should check ok)

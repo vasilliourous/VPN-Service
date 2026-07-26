@@ -102,18 +102,12 @@ After=network.target
 Type=simple
 User=${PB_USER}
 Group=${PB_USER}
+EnvironmentFile=/etc/environment
 ExecStart=${PB_BINARY} serve --http=127.0.0.1:${PB_PORT} --dir=${PB_DATA_DIR} --hooksDir=${PB_HOOKS_DIR}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-ReadWritePaths=${PB_DATA_DIR} ${PB_HOOKS_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -133,14 +127,13 @@ init_sqlite() {
 
     # The hook will be applied on next PocketBase start
     cat > "$pragma_hook" << 'JSHOOK'
-// SQLite WAL mode + busy_timeout
+// SQLite WAL mode + busy_timeout (PocketBase 0.22+)
 on("app", "ready", (e) => {
-    const dao = $app.dao();
     try {
-        dao.db().exec("PRAGMA journal_mode=WAL;");
-        dao.db().exec("PRAGMA busy_timeout=5000;");
-        dao.db().exec("PRAGMA synchronous=NORMAL;");
-        dao.db().exec("PRAGMA foreign_keys=ON;");
+        $app.db().newQuery("PRAGMA journal_mode=WAL;").execute();
+        $app.db().newQuery("PRAGMA busy_timeout=5000;").execute();
+        $app.db().newQuery("PRAGMA synchronous=NORMAL;").execute();
+        $app.db().newQuery("PRAGMA foreign_keys=ON;").execute();
         $app.logger().info("SQLite pragmas applied (WAL mode)");
     } catch (err) {
         $app.logger().error("Failed to apply SQLite pragmas: " + err.message);
@@ -184,217 +177,25 @@ else
 fi
 
 # ═══════════════════════════════════════════
-# Automated Admin & Collection Setup
+# Automated Admin + Collection + Data Seeding
 # ═══════════════════════════════════════════
-# On a fresh PocketBase install, we can create the first admin via API
-# (no auth required before first admin exists).
+# Uses Python script to avoid bash heredoc escaping issues with JSON.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SEED_SCRIPT="${SCRIPT_DIR}/../scripts/seed-pb.py"
 
-PB_API="http://127.0.0.1:${PB_PORT}"
-PB_ADMIN_CREDS="/root/.pb_admin_creds"
-PB_ADMIN_EMAIL="admin@${DOMAIN}"
-PB_ADMIN_PASS=""
-
-# Generate random admin password
-if [ ! -f "$PB_ADMIN_CREDS" ]; then
-    PB_ADMIN_PASS=$(openssl rand -base64 24)
-
-    log "Creating initial PocketBase admin..."
-    ADMIN_RESP=$(curl -sf -X POST "${PB_API}/api/admins" \
-        -H "Content-Type: application/json" \
-        -d "{\"email\": \"${PB_ADMIN_EMAIL}\", \"password\": \"${PB_ADMIN_PASS}\", \"passwordConfirm\": \"${PB_ADMIN_PASS}\"}" 2>/dev/null || echo "FAILED")
-
-    if [ "$ADMIN_RESP" != "FAILED" ]; then
-        # Extract admin token from response
-        PB_TOKEN=$(echo "$ADMIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
-
-        if [ -n "$PB_TOKEN" ]; then
-            log "✓ Admin created: ${PB_ADMIN_EMAIL}"
-            # Save credentials
-            cat > "$PB_ADMIN_CREDS" << CREDS
-# MyVPN PocketBase Admin Credentials
-# Created: $(date)
-# IMPORTANT: Change this password via the admin UI after first login!
-PB_ADMIN_EMAIL=${PB_ADMIN_EMAIL}
-PB_ADMIN_PASS=${PB_ADMIN_PASS}
-PB_TOKEN=${PB_TOKEN}
-CREDS
-            chmod 600 "$PB_ADMIN_CREDS"
-            log "✓ Admin credentials saved to ${PB_ADMIN_CREDS}"
-
-            # ── Create collections via API ──
-            log "Creating PocketBase collections..."
-
-            # Collection: codes
-            COLL_RESP=$(curl -sf -X POST "${PB_API}/api/collections" \
-                -H "Authorization: Bearer ${PB_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "name": "codes",
-                    "type": "base",
-                    "listRule": "@request.auth.admin = true",
-                    "viewRule": "@request.auth.admin = true",
-                    "createRule": "@request.auth.admin = true",
-                    "updateRule": "@request.auth.admin = true",
-                    "deleteRule": "@request.auth.admin = true",
-                    "schema": [
-                        {"name": "code", "type": "text", "required": true, "unique": true},
-                        {"name": "tier", "type": "select", "required": true, "options": {"values": ["eco", "stealth", "strike"]}},
-                        {"name": "used", "type": "bool"},
-                        {"name": "suspended", "type": "bool"},
-                        {"name": "bound_fingerprint", "type": "text"},
-                        {"name": "expires_at", "type": "date"},
-                        {"name": "activated_at", "type": "date"},
-                        {"name": "middleman", "type": "text"}
-                    ]
-                }' 2>/dev/null || echo "FAILED")
-            if [ "$COLL_RESP" != "FAILED" ]; then
-                log "✓ Collection 'codes' created"
-            else
-                warn "Collection 'codes' may already exist (harmless)"
-            fi
-
-            # Collection: tier_configs
-            COLL_RESP=$(curl -sf -X POST "${PB_API}/api/collections" \
-                -H "Authorization: Bearer ${PB_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "name": "tier_configs",
-                    "type": "base",
-                    "listRule": "@request.auth.admin = true",
-                    "viewRule": "@request.auth.admin = true",
-                    "createRule": "@request.auth.admin = true",
-                    "updateRule": "@request.auth.admin = true",
-                    "deleteRule": "@request.auth.admin = true",
-                    "schema": [
-                        {"name": "tier", "type": "select", "required": true, "unique": true, "options": {"values": ["eco", "stealth", "strike"]}},
-                        {"name": "config", "type": "json", "required": true},
-                        {"name": "active", "type": "bool"},
-                        {"name": "udp_relay", "type": "bool"}
-                    ]
-                }' 2>/dev/null || echo "FAILED")
-            if [ "$COLL_RESP" != "FAILED" ]; then
-                log "✓ Collection 'tier_configs' created"
-            else
-                warn "Collection 'tier_configs' may already exist (harmless)"
-            fi
-
-            # Collection: activation_attempts
-            COLL_RESP=$(curl -sf -X POST "${PB_API}/api/collections" \
-                -H "Authorization: Bearer ${PB_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "name": "activation_attempts",
-                    "type": "base",
-                    "listRule": "@request.auth.admin = true",
-                    "viewRule": "@request.auth.admin = true",
-                    "createRule": "",
-                    "updateRule": "@request.auth.admin = true",
-                    "deleteRule": "@request.auth.admin = true",
-                    "schema": [
-                        {"name": "ip", "type": "text"},
-                        {"name": "rate_key", "type": "text"},
-                        {"name": "fingerprint", "type": "text"},
-                        {"name": "code_attempted", "type": "text"}
-                    ]
-                }' 2>/dev/null || echo "FAILED")
-            if [ "$COLL_RESP" != "FAILED" ]; then
-                log "✓ Collection 'activation_attempts' created"
-            else
-                warn "Collection 'activation_attempts' may already exist (harmless)"
-            fi
-
-            # Collection: update_config
-            COLL_RESP=$(curl -sf -X POST "${PB_API}/api/collections" \
-                -H "Authorization: Bearer ${PB_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "name": "update_config",
-                    "type": "base",
-                    "listRule": "@request.auth.admin = true",
-                    "viewRule": "@request.auth.admin = true",
-                    "createRule": "@request.auth.admin = true",
-                    "updateRule": "@request.auth.admin = true",
-                    "deleteRule": "@request.auth.admin = true",
-                    "schema": [
-                        {"name": "version", "type": "text", "required": true},
-                        {"name": "rollout_percent", "type": "number"},
-                        {"name": "active", "type": "bool"},
-                        {"name": "update_url", "type": "text"},
-                        {"name": "update_sha256", "type": "text"},
-                        {"name": "download_windows", "type": "text"},
-                        {"name": "download_macos_intel", "type": "text"},
-                        {"name": "download_macos_arm", "type": "text"}
-                    ]
-                }' 2>/dev/null || echo "FAILED")
-            if [ "$COLL_RESP" != "FAILED" ]; then
-                log "✓ Collection 'update_config' created"
-            else
-                warn "Collection 'update_config' may already exist (harmless)"
-            fi
-
-            # ── Seed default update_config record ──
-            log "Seeding default update_config..."
-            SEED_RESP=$(curl -sf -X POST "${PB_API}/api/collections/update_config/records" \
-                -H "Authorization: Bearer ${PB_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "version": "1.0.0",
-                    "rollout_percent": 0,
-                    "active": true
-                }' 2>/dev/null || echo "FAILED")
-            if [ "$SEED_RESP" != "FAILED" ]; then
-                log "✓ Default update_config record seeded (rollout_percent=0)"
-            else
-                warn "Default update_config seed failed — create manually via admin UI"
-            fi
-
-            # ── Seed tier configs if passwords exist ──
-            if [ -f "/root/.tier_passwords" ]; then
-                log "Seeding tier configs from /root/.tier_passwords..."
-                source /root/.tier_passwords
-
-                # Eco
-                curl -sf -X POST "${PB_API}/api/collections/tier_configs/records" \
-                    -H "Authorization: Bearer ${PB_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"tier\": \"eco\", \"active\": true, \"udp_relay\": false, \"config\": {\"server\": \"${DOMAIN}\", \"server_port\": 8443, \"password\": \"${ECO_PASS:-}\", \"method\": \"aes-256-gcm\"}}" \
-                    2>/dev/null && log "✓ Eco tier config seeded" || warn "Eco tier config seed failed"
-
-                # Stealth
-                curl -sf -X POST "${PB_API}/api/collections/tier_configs/records" \
-                    -H "Authorization: Bearer ${PB_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"tier\": \"stealth\", \"active\": true, \"udp_relay\": false, \"config\": {\"server\": \"${DOMAIN}\", \"server_port\": 8444, \"password\": \"${STEALTH_PASS:-}\", \"method\": \"aes-256-gcm\"}}" \
-                    2>/dev/null && log "✓ Stealth tier config seeded" || warn "Stealth tier config seed failed"
-
-                # Strike
-                curl -sf -X POST "${PB_API}/api/collections/tier_configs/records" \
-                    -H "Authorization: Bearer ${PB_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"tier\": \"strike\", \"active\": true, \"udp_relay\": true, \"config\": {\"server\": \"${DOMAIN}\", \"server_port\": 8445, \"password\": \"${STRIKE_PASS:-}\", \"method\": \"aes-256-gcm\"}}" \
-                    2>/dev/null && log "✓ Strike tier config seeded" || warn "Strike tier config seed failed"
-            else
-                warn "/root/.tier_passwords not found — tier configs NOT auto-seeded."
-                warn "  Seed manually after setup via the PocketBase admin UI or POCKETBASE-SETUP.md"
-            fi
-        else
-            warn "Admin created but could not extract token. Manual setup required."
-        fi
+if [ -f "$SEED_SCRIPT" ]; then
+    log "Running automated PocketBase bootstrap..."
+    if DOMAIN="$DOMAIN" python3 "$SEED_SCRIPT" 2>&1; then
+        log "✓ PocketBase bootstrap completed"
     else
-        # Admin creation failed — likely an admin already exists
-        log "Admin may already exist (first-run only). Skipping auto-setup."
-        log "  If this is a reinstall, use existing admin credentials."
-        # Try to load existing creds
-        if [ -f "$PB_ADMIN_CREDS" ]; then
-            log "  Existing credentials at: ${PB_ADMIN_CREDS}"
-        fi
+        warn "PocketBase bootstrap encountered errors — check output above"
     fi
 else
-    log "Admin credentials file already exists — skipping automated setup."
+    fail "Seed script not found at ${SEED_SCRIPT} — must deploy scripts/seed-pb.py alongside modules/"
 fi
 
 log "✓ PocketBase setup complete"
 log "   Admin UI: https://${DOMAIN}/_/"
-log "   Admin credentials: ${PB_ADMIN_CREDS} (if auto-created, change password!)"
+log "   Admin credentials: /root/.pb_admin_creds (if auto-created, change password!)"
 log "   API:      http://127.0.0.1:${PB_PORT}/api/"
 exit 0

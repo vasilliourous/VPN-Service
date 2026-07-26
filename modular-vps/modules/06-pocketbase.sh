@@ -133,14 +133,13 @@ init_sqlite() {
 
     # The hook will be applied on next PocketBase start
     cat > "$pragma_hook" << 'JSHOOK'
-// SQLite WAL mode + busy_timeout
+// SQLite WAL mode + busy_timeout (PocketBase 0.22+)
 on("app", "ready", (e) => {
-    const dao = $app.dao();
     try {
-        dao.db().exec("PRAGMA journal_mode=WAL;");
-        dao.db().exec("PRAGMA busy_timeout=5000;");
-        dao.db().exec("PRAGMA synchronous=NORMAL;");
-        dao.db().exec("PRAGMA foreign_keys=ON;");
+        $app.db().newQuery("PRAGMA journal_mode=WAL;").execute();
+        $app.db().newQuery("PRAGMA busy_timeout=5000;").execute();
+        $app.db().newQuery("PRAGMA synchronous=NORMAL;").execute();
+        $app.db().newQuery("PRAGMA foreign_keys=ON;").execute();
         $app.logger().info("SQLite pragmas applied (WAL mode)");
     } catch (err) {
         $app.logger().error("Failed to apply SQLite pragmas: " + err.message);

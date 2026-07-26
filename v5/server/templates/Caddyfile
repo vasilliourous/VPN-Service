@@ -1,7 +1,7 @@
 {
     # MyVPN Caddyfile — Template
     # Domain is injected by the setup script
-    order rate_limit after basic_auth
+    # rate_limit is configured per-handle below
 }
 
 ${DOMAIN} {
@@ -17,40 +17,48 @@ ${DOMAIN} {
         Permissions-Policy "geolocation=(), microphone=(), camera=()"
     }
 
-    # Rate limiting — each zone has a single key
-    # Activation: rate-limited by client IP (5 attempts per 10 min)
-    # Heartbeat: rate-limited by client IP (1 per 10s)
-    # Default: rate-limited by client IP (100 per 10s)
-    rate_limit {
-        zone activation_zone {
-            key {remote_host}
-            events 5
-            window 10m
+    # Activation endpoint: 5 attempts per 10 min per IP
+    handle /api/activate {
+        rate_limit {
+            zone activation {
+                key {remote_host}
+                events 5
+                window 10m
+            }
         }
-        zone heartbeat_zone {
-            key {remote_host}
-            events 1
-            window 10s
-        }
-        zone default {
-            key {remote_host}
-            events 100
-            window 10s
-        }
-    }
-
-    handle /api/* {
         reverse_proxy 127.0.0.1:8090
     }
 
+    # Heartbeat: 1 request per 10s per IP
     handle /api/heartbeat {
+        rate_limit {
+            zone heartbeat {
+                key {remote_host}
+                events 1
+                window 10s
+            }
+        }
         reverse_proxy 127.0.0.1:8090
     }
 
+    # General API: 100 requests per 10s per IP
+    handle /api/* {
+        rate_limit {
+            zone api_default {
+                key {remote_host}
+                events 100
+                window 10s
+            }
+        }
+        reverse_proxy 127.0.0.1:8090
+    }
+
+    # PocketBase admin UI (no rate limit)
     handle /_/* {
         reverse_proxy 127.0.0.1:8090
     }
 
+    # Static files
     handle /update.json {
         file_server
     }

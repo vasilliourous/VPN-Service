@@ -13,15 +13,21 @@
 // The generated fingerprint is stable for the lifetime of the process.
 // The caller (storage layer) persists the first generated fingerprint
 // so it remains stable across app restarts.
+//
+// Hardening: thread-safe, error wrapping, minimum-entropy check.
 package activation
 
 import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
+
+// Minimum number of characters needed in source material for a meaningful fingerprint.
+const minFingerprintEntropy = 8
 
 // fingerprintSources collects all available hardware identifiers.
 type fingerprintSources struct {
@@ -47,6 +53,7 @@ func GenerateFingerprint() string {
 	fingerprintOnce.Do(func() {
 		collectorOnce.Do(func() {
 			if platformCollector == nil {
+				log.Println("WARNING: No platform collector registered, using fallback fingerprint")
 				platformCollector = func() fingerprintSources {
 					return fingerprintSources{}
 				}
@@ -54,7 +61,12 @@ func GenerateFingerprint() string {
 		})
 
 		sources := platformCollector()
-		cachedFingerprint = hashSources(sources)
+		fp := hashSources(sources)
+		if fp == "" {
+			log.Println("WARNING: Generated empty fingerprint, using random UUID fallback")
+			fp = generateRandomUUID()
+		}
+		cachedFingerprint = fp
 	})
 	return cachedFingerprint
 }
@@ -65,38 +77,38 @@ func ResetFingerprint() {
 }
 
 // hashSources combines source strings into a SHA256 fingerprint.
-// It tries progressively weaker combinations until one works.
+// It tries progressively weaker combinations until one has sufficient entropy.
 func hashSources(s fingerprintSources) string {
 	// 1. Strongest: MAC + disk serial + motherboard UUID
 	input := s.MAC + s.DiskSerial + s.Motherboard
-	if len(input) > 3 {
+	if len(input) >= minFingerprintEntropy {
 		return sha256Hex(input)
 	}
 
 	// 2. Medium: MAC + motherboard UUID
 	input = s.MAC + s.Motherboard
-	if len(input) > 3 {
+	if len(input) >= minFingerprintEntropy {
 		return sha256Hex(input)
 	}
 
 	// 3. Weak: MAC + hostname + machine_id
 	input = s.MAC + s.Hostname + s.MachineID
-	if len(input) > 3 {
+	if len(input) >= minFingerprintEntropy {
 		return sha256Hex(input)
 	}
 
 	// 4. Fallback: generate a random UUID (persistent per install via storage layer)
-	uuid := generateRandomUUID()
-	return sha256Hex(uuid)
+	return ""
 }
 
 // generateRandomUUID creates a version 4 UUID string.
 func generateRandomUUID() string {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// Cryptographic randomness unavailable — use nanosecond timestamp
+		// Cryptographic randomness unavailable — use nanosecond timestamp + PID
 		// (extremely unlikely on any modern OS — would only happen in a sandbox)
-		return fmt.Sprintf("fallback-%x", time.Now().UnixNano())
+		log.Printf("WARNING: crypto/rand unavailable, using time-based UUID fallback: %v", err)
+		return fmt.Sprintf("fallback-%x-%x", time.Now().UnixNano(), time.Now().UnixMilli())
 	}
 
 	// Set version 4 bits
@@ -112,4 +124,10 @@ func generateRandomUUID() string {
 func sha256Hex(input string) string {
 	h := sha256.Sum256([]byte(input))
 	return fmt.Sprintf("%x", h)
+}
+
+// ValidateFingerprint checks that a fingerprint string is non-empty and has
+// minimum expected length for a SHA256 hex digest.
+func ValidateFingerprint(fp string) bool {
+	return len(fp) >= 16
 }

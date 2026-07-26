@@ -89,8 +89,7 @@ deploy_caddyfile() {
 # Domain: ${DOMAIN}
 
 {
-    # Change directive ordering: rate_limit after basic_auth
-    order rate_limit after basic_auth
+    # rate_limit is configured per-handle below
 }
 
 # ── Main site block ──
@@ -107,43 +106,43 @@ ${DOMAIN} {
         Permissions-Policy "geolocation=(), microphone=(), camera=()"
     }
 
-    # ── Rate limiting (site-level, applies to all routes below) ──
-    # Activation zone: 5 attempts per 10 min per fingerprint/IP
-    # Heartbeat zone: 1 request per 10s per IP
-    # Default zone: 100 requests per 10s per IP
-    # Rate limiting — each zone has a single key
-    # Activation: rate-limited by client IP (5 attempts per 10 min)
-    # Heartbeat: rate-limited by client IP (1 per 10s)
-    # Default: rate-limited by client IP (100 per 10s)
-    rate_limit {
-        zone activation_zone {
-            key {remote_host}
-            events 5
-            window 10m
+    # ── Activation endpoint (rate limited: 5 per 10 min per IP) ──
+    handle /api/activate {
+        rate_limit {
+            zone activation {
+                key {remote_host}
+                events 5
+                window 10m
+            }
         }
-        zone heartbeat_zone {
-            key {remote_host}
-            events 1
-            window 10s
-        }
-        zone default {
-            key {remote_host}
-            events 100
-            window 10s
-        }
-    }
-
-    # ── Main API reverse proxy (includes activation endpoint) ──
-    handle /api/* {
         reverse_proxy 127.0.0.1:8090
     }
 
-    # ── Heartbeat endpoint ──
+    # ── Heartbeat endpoint (rate limited: 1 per 10s per IP) ──
     handle /api/heartbeat {
+        rate_limit {
+            zone heartbeat {
+                key {remote_host}
+                events 1
+                window 10s
+            }
+        }
         reverse_proxy 127.0.0.1:8090
     }
 
-    # ── PocketBase admin UI ──
+    # ── General API (rate limited: 100 per 10s per IP) ──
+    handle /api/* {
+        rate_limit {
+            zone api_default {
+                key {remote_host}
+                events 100
+                window 10s
+            }
+        }
+        reverse_proxy 127.0.0.1:8090
+    }
+
+    # ── PocketBase admin UI (no rate limit) ──
     handle /_/* {
         reverse_proxy 127.0.0.1:8090
     }
@@ -172,11 +171,13 @@ CADDY
 # ── Create update.json placeholder ──
 deploy_update_json() {
     local update_file="${CADDY_DATA_DIR}/update.json"
+    # Only write if missing or version changed
     if [ ! -f "$update_file" ]; then
         cat > "$update_file" <<'EOF'
 {
   "version": "1.0.0",
   "rollout_percent": 0,
+  "linux_amd64": null,
   "windows": null,
   "macos_intel": null,
   "macos_arm": null
@@ -189,15 +190,65 @@ EOF
     chmod 644 "$update_file"
 }
 
+# ── Create systemd service (if not installed via APT) ──
+create_systemd_service() {
+    local service_file="/etc/systemd/system/caddy.service"
+    if [ -f "$service_file" ]; then
+        log "Caddy systemd service already exists"
+        return 0
+    fi
+
+    # Create caddy user if not exists
+    if ! id -u caddy &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin caddy 2>/dev/null || true
+    fi
+
+    mkdir -p /var/lib/caddy /var/log/caddy /var/www/html /etc/caddy
+    chown -R caddy:caddy /var/lib/caddy /var/log/caddy /var/www/html
+    chmod 755 /var/www/html
+
+    cat > "$service_file" << 'SERVICE'
+[Unit]
+Description=Caddy Web Server
+Documentation=https://caddyserver.com/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+LimitNPROC=512
+PrivateTmp=true
+Environment=XDG_CONFIG_HOME=/var/lib/caddy
+Environment=XDG_DATA_HOME=/var/lib/caddy
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+    log "✓ Created systemd service: ${service_file}"
+
+    # Grant capability to bind to low ports (<1024) as non-root
+    setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null && \
+        log "✓ Granted cap_net_bind_service to caddy binary" || \
+        warn "Could not set cap_net_bind_service (Caddy will need root to bind :80/:443)"
+}
+
 # ═══════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════
 
 install_caddy
+create_systemd_service
 deploy_caddyfile
 deploy_update_json
 
 # ── Enable and start Caddy ──
+systemctl daemon-reload
 systemctl enable caddy 2>/dev/null || true
 systemctl restart caddy 2>&1 | tail -5 || {
     warn "Caddy restart failed. Checking config..."

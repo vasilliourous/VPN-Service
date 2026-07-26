@@ -25,6 +25,8 @@ type Diagnostics struct {
 	SingBoxExists  bool   `json:"sing_box_exists"`
 	FingerprintSet bool   `json:"fingerprint_set"`
 	ReportTime     string `json:"report_time"`
+	HeartbeatOK    int64  `json:"heartbeat_ok"`
+	FailCount      int    `json:"heartbeat_failures"`
 }
 
 // collectDiagnostics gathers diagnostic information.
@@ -41,6 +43,8 @@ func collectDiagnostics(store *storage.Store, version string, connected bool) st
 		Tier:           data.Tier,
 		UpdatePending:  data.UpdatePending,
 		FingerprintSet: data.DeviceFingerprint != "",
+		HeartbeatOK:    data.LastHeartbeatOK,
+		FailCount:      data.HeartbeatFailures,
 		ReportTime:     time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -65,6 +69,8 @@ Status:
   Connected:      %v
   Tier:           %s
   Update Pending: %v
+  Heartbeats OK:  %d
+  Failures:       %d
 
 Files:
   Storage:        %v
@@ -82,13 +88,22 @@ Config:
 		d.Connected,
 		d.Tier,
 		d.UpdatePending,
+		d.HeartbeatOK,
+		d.FailCount,
 		d.StorageExists,
 		d.SingBoxExists,
 		d.FingerprintSet,
-		data.ServerConfig.Server,
+		displayServer(data.ServerConfig),
 	)
 
 	return report
+}
+
+func displayServer(cfg *storage.ServerConfig) string {
+	if cfg == nil {
+		return "Not configured"
+	}
+	return fmt.Sprintf("%s:%d (%s)", cfg.Server, cfg.ServerPort, cfg.Method)
 }
 
 func fileExists(path string) bool {

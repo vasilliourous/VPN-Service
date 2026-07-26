@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=pocketbase
 Group=pocketbase
+EnvironmentFile=/etc/environment
 ExecStart=/opt/pocketbase/pocketbase serve --http=127.0.0.1:8090 --dir=/opt/pocketbase/pb_data --hooksDir=/opt/pocketbase/pb_hooks
 Restart=on-failure
 RestartSec=5

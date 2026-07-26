@@ -1,303 +1,297 @@
-# MyVPN — Agent Context
+# MyVPN — Project Context (V5 Reference)
 
-> **Purpose:** Single reference for future AI agents (and developers) to understand
-> the full context of this project without searching across the entire repository.
+> **Purpose:** Everything a future agent needs to understand this project without
+> searching across the entire repository. Read this first before touching any code
+> or documentation.
 >
-> **What this IS:** Network environment analysis, protocol testing results,
-> architectural reasoning, and operational context that doesn't belong in
-> the codebase docs or architecture guide.
+> **This covers:** project history, V5 philosophy, directory structure, what was
+> tested and what broke, known issues, agent guidance.
 >
-> **What this is NOT:** A build guide, deployment manual, or API reference.
-> See `docs/` for practical implementation instructions.
+> **Not covered here:** build steps (see `docs/`), API contracts (see `docs/API.md`),
+> server deployment (see `docs/DEPLOY.md`).
 
 ---
 
-## 1. Network Environment — N4L School Network
+## 1. What This Project Is
 
-### Properties
+A commercial VPN service for students at N4L-managed NZ schools (Macleans College).
+It bypasses Palo Alto firewalls using **Shadowsocks TCP** — the only protocol that
+consistently passes through N4L's detection (no TLS fingerprint, no UDP dependency).
 
-| Property | Value |
-|----------|-------|
-| School | Macleans College, NZ |
-| Managed by | N4L (Network for Learning) |
-| Firewall | Palo Alto (SSL decryption capability, App-ID, URL filtering) |
-| Client IP range | 10.47.0.0/19 |
-| External IP | 202.150.96.64 |
-| DNS | 172.16.0.1, 172.16.0.2 |
-| Device model | BYOD — every student owns their own device (has admin rights) |
+The service has three tiers:
 
-### Known Blocking Behaviour
-
-| Traffic type | Status | Mechanism |
-|-------------|--------|-----------|
-| TCP 22 (SSH) | ✅ Fully open (any IP) | — |
-| TCP 80/443 | ✅ To whitelisted destinations only | URL/category filtering |
-| TCP >1024 to unknown IPs | ❌ Blocked | "Category of unknown" → block |
-| **All non-DNS UDP** | **❌ Dropped** | Blanket block — all UDP except port 53 |
-| DNS (UDP 53) | ✅ Only with valid DNS query format | DPI-inspected |
-| ICMP (ping) | ✅ Open | — |
-| Cloudflare IPs | ✅ Generally whitelisted | Categorised as "CDN" |
-
-### Key Insight: Dynamic Filtering
-
-N4L does NOT apply a flat permanent block. Filtering tightens or loosens based on
-network load (likely automated App-ID updates or load-based policy enforcement):
-
-- **Bad day:** 4.23/5.86 Mbps baseline, 1.5% packet loss. WARP TLS fails, QUIC fails.
-  Only Shadowsocks TCP works.
-- **Good day:** 83.6/185 Mbps baseline, 0.6% loss. TUIC V5 works, WARP works, QUIC works.
-
-This means any protocol that relies on UDP (Hysteria 2, TUIC V5, WireGuard) or
-TLS fingerprint hiding (VLESS+REALITY) is **unreliable** — it may work one day
-and fail the next. Shadowsocks TCP (AEAD, no TLS, no UDP) is the only protocol
-that works consistently because it has no detectable signatures for the Palo Alto
-to classify.
-
----
-
-## 2. Protocol Testing Results
-
-All testing conducted from the N4L school network at Macleans College against a
-Voyager VPS (114.23.136.47, Ubuntu 22.04).
-
-### Shadowsocks (TCP — PRIMARY)
-
-| Test | Result |
-|------|--------|
-| Eco (port 8443, BBR, TCP only) | ✅ Works consistently |
-| Stealth (port 8444, Brutal CC, TCP only) | ✅ Works consistently |
-| Strike (port 8445, BBR, TCP+UDP) | ✅ TCP works, **UDP relay blocked** |
-| **Verdict** | **Only reliable protocol.** AEAD encryption has no TLS fingerprint. Passes as "unknown TCP" which N4L doesn't block on high ports. |
-
-### Hysteria 2 (QUIC — FAILED)
-
-| Config variant | Result |
-|---------------|--------|
-| Default (QUIC :443) | ❌ Timeout |
-| Port 53 (DNS port) | ❌ Timeout |
-| Port 123 | ❌ Timeout |
-| Salamander obfuscation | ❌ Config error in v2.10 |
-| Minimal QUIC params | ❌ Timeout |
-| Custom ALPN (h3 only) | ❌ Timeout |
-| UDP-over-TCP bridge | ❌ QUIC handshake fails in tunnel |
-| **Verdict** | **Blocked.** N4L's DPI identifies QUIC's handshake fingerprint regardless of port or obfuscation. |
-
-### Xray VLESS+REALITY (TLS — FAILED)
-
-| Test | Result |
-|------|--------|
-| TCP port reachable | ✅ `connect()` succeeded |
-| TLS handshake | ✅ Xray accepts connection |
-| VLESS+REALITY auth | ✅ Xray logs show "accepted" |
-| **Traffic relay** | **❌ Times out (8009ms each attempt)** |
-| UDP relay | ❌ Times out |
-| **Verdict** | **Connection establishes but App-ID detects tunnelling.** The Palo Alto's JA3 fingerprinting identifies the non-browser TLS fingerprint (uTLS imitation isn't perfect) and/or analyses traffic patterns post-handshake, then silently drops subsequent packets. |
-
-### TUIC V5 (QUIC — UNRELIABLE)
-
-| Test | Result |
-|------|--------|
-| Default (QUIC :123) | ❌ SOCKS5 starts but relay times out |
-| UDP relay extension | ❌ Times out |
-| **On a good day** | ✅ Worked (83 Mbps baseline day) |
-| **Verdict** | **Works when N4L is lenient, fails when they're strict.** QUIC is fundamentally unreliable on this network. |
-
-### Other Protocols
-
-| Protocol | Result | Reason |
-|----------|--------|--------|
-| WireGuard (UDP) | ❌ Blocked | All UDP dropped |
-| AmneziaWG (UDP) | ❌ Blocked | All UDP dropped |
-| Trojan (TLS) | ❌ Blocked | JA3 fingerprinting |
-| WARP (TLS) | ⚠️ Inconsistent | Works on good days, fails on bad days |
-| WARP MASQUE (TCP) | 🟡 Untested | Could provide TCP fallback path |
-| udp2raw faketcp | 🟡 Untested | Could tunnel UDP over TCP for gaming |
-
----
-
-## 3. TCP-over-TCP Meltdown Analysis
-
-### The Problem
-
-Shadowsocks creates a TCP tunnel (encrypted TCP stream between client and server).
-When a client application opens a TCP connection through the tunnel, that's
-**TCP inside TCP** — two layers of congestion control reacting to the same
-packet loss.
-
-```
-Application TCP connection
-    └── Shadowsocks TCP tunnel
-         └── Physical TCP (WiFi → Internet)
-```
-
-### Why It Matters
-
-If the underlying WiFi link drops a packet:
-
-1. **Inner TCP** (application) sees the loss and backs off its send window
-2. **Outer TCP** (Shadowsocks tunnel) also sees the loss and backs off its send window
-3. Both backoffs compound, causing a **double congestion collapse**
-4. Throughput can drop to near-zero until both TCP stacks recover
-
-### Why It's Acceptable Here
-
-- The N4L school network is **low-loss** (< 1.5% packet loss even on bad days)
-- Low-loss WiFi means TCP-over-TCP meltdown rarely triggers
-- Brutal CC on the Stealth tier ignores TCP fairness and aggressively recovers
-- The alternative (UDP-based protocols) is completely blocked by N4L
-- For gaming (Strike tier): the TCP tunnel adds latency (~33-44ms) but is stable
-
-### Mitigations
-
-1. **BBR congestion control** on the outer tunnel (server-side) — BBR is less
-   sensitive to packet loss than CUBIC because it measures bandwidth, not loss
-2. **Brutal CC** on Stealth tier — ignores loss-based backoff entirely
-3. **UDP-over-TCP** (Strike tier) — wraps gaming UDP in TCP, avoiding inner loss
-4. **sing-box tun `auto_route`** — handles routing efficiently
-
-### Future Options
-
-- Test `udp2raw faketcp` mode: wraps UDP in fake TCP headers that pass through
-  firewalls but aren't real TCP (no backoff). Would enable native WireGuard/UDP
-  gaming traffic over the TCP tunnel.
-
----
-
-## 4. Architectural Reasoning
-
-### Why Shadowsocks TCP Won (over Hysteria 2, Xray, etc.)
-
-| Protocol | Why it lost |
-|----------|-------------|
-| Hysteria 2 | QUIC is UDP-based. N4L drops all non-DNS UDP. Even UDP-over-TCP failed because the QUIC handshake itself is fingerprintable. |
-| Xray VLESS+REALITY | uTLS browser fingerprint imitation isn't perfect. Palo Alto's JA3 detection identifies the non-browser TLS handshake, then App-ID classifies the tunnelling behaviour post-handshake. |
-| TUIC V5 | Same QUIC problem as Hysteria 2. Worked on good days, failed on bad days — unreliable. |
-| WireGuard / AmneziaWG | UDP blocked entirely. |
-| Trojan | TLS-based, same JA3 problem as Xray. |
-| Shadowsocks TCP | **No TLS, no UDP.** AEAD encryption is indistinguishable from random TCP payload. No JA3 fingerprint because there's no TLS handshake. Passes through as "unknown TCP" which N4L allows on high ports. |
-
-### Why No TUN Helper Service (BYOD Context)
-
-The original architecture documents describe a privileged helper service for TUN
-creation. This is **not needed** because:
-
-- BYOD school → every student has admin rights on their own machine
-- sing-box runs with `--tun` flag directly — no IPC to a helper daemon needed
-- Eliminating the helper removes a large attack surface (named pipe, Unix socket,
-  privilege escalation vectors, crash handling)
-- Less binaries = less breakage surface area. The goal is: **one app binary +
-  one engine binary (sing-box) per platform.**
-
-### Why No SOCKS5 Fallback Mode
-
-Earlier architecture versions described a SOCKS5 + tun2socks bridge. This is
-**abandoned** because:
-
-- sing-box handles TUN natively — no separate tun2socks process needed
-- tun2socks is abandonware (last update 2020)
-- sing-box has built-in SOCKS5 inbound if needed (but we don't use it)
-- BYOD = admin rights = TUN always works
-
-### Why the Minimal Binary Philosophy
-
-Every additional binary is a potential failure point:
-- Must be downloaded, verified, and cached
-- May fail to start, crash, or hang
-- Adds to the update payload
-- Increases support burden ("it doesn't work" → which binary failed?)
-
-Current target: **2 binaries per platform** — myvpn (GUI + manager) + sing-box (engine).
-The TUN helper is eliminated. The SOCKS5/tun2socks bridge is eliminated.
-
----
-
-## 5. Product Tier Architecture
-
-### Tier Comparison
-
-| Tier | Price | Port | CC | Cap | Transport | Target Use |
-|------|-------|:----:|:---:|:---:|:---------:|------------|
-| Eco | $2/mo | 8443 | BBR | 5 Mbps tc | TCP only | Text, email, browsing |
-| Stealth | $4/mo | 8444 | **Brutal** | 48 Mbps target | TCP only | Streaming, downloads |
+| Tier | Price | Port | CC | Cap | Transport | Use case |
+|------|-------|:----:|:---:|:---:|:---------:|----------|
+| Eco | $2/mo | 8443 | BBR | 5 Mbps tc | TCP only | Text, browsing |
+| Stealth | $4/mo | 8444 | **Brutal** | 48 Mbps target | TCP only | Streaming |
 | Strike | $8/mo | 8445 | BBR | 200 Mbps tc | TCP+UDP | Gaming |
 
-### How Bandwidth Caps Work (Server-Side)
-
-- **Eco (5 Mbps):** tc HTB qdisc class 1:10, matches source port 8443
-- **Stealth (48 Mbps):** Brutal CC kernel module target rate (no tc cap — Brutal manages itself)
-- **Strike (200 Mbps):** tc HTB qdisc class 1:30, matches source port 8445
-
-The caps are **server-enforced**, not client-enforced. The client gets full-speed
-Shadowsocks access; the server throttles before the encrypted tunnel egresses.
-This means a hacked/broken client can't bypass its tier cap.
-
-### Brutal CC — How It Works
-
-Brutal is a kernel-level congestion control algorithm that ignores traditional
-TCP fairness. It's designed to aggressively fill available bandwidth.
-
-1. `tcp-brutal` kernel module registers `brutal` as a CC algorithm
-2. An LD_PRELOAD wrapper intercepts `accept()` on the Stealth ssserver socket
-3. Each accepted connection's `TCP_CONGESTION` is set to `brutal`
-4. Brutal targets a configurable rate (default 48 Mbps for Stealth)
-5. It ramps up until it hits the target or saturates the link
-
-**Critical downside:** Brutal is unfair. A Stealth user can drown out Eco, Strike,
-and even unrelated services on the same VPS. This is intentional product
-differentiation — Stealth costs more because it uses more bandwidth.
+**Distribution model:** Middlemen hand out physical activation code cards for cash.
+Students pay cash (no credit card needed). Middlemen take ~20-30% commission.
+The business and sales docs are kept privately — not in this repo.
 
 ---
 
-## 6. Key Decisions That Shaped the Project
+## 2. Repository Structure
 
-| Decision | Choice | Why |
-|----------|--------|-----|
-| Protocol | Shadowsocks TCP | Only protocol that works on N4L consistently (no TLS, no UDP) |
-| Client engine | sing-box | One binary, active maintenance, built-in TUN, replaces sslocal+tun2socks |
-| Server CC | BBR default, Brutal for Stealth | BBR for most, Brutal for premium tier |
-| Bandwidth caps | tc (server-side) | Client can't bypass; no client bandwidth code needed |
-| Activation | Luhn-mod-N + SHA256 fingerprint | Permanent device binding, survives reinstall |
-| Updates | Two-phase sentinel | Auto-revert on crash without Ed25519 signing keys |
-| Backend | PocketBase (SQLite) | Go binary, no external DB, JS hooks for custom logic |
-| TUN model | Direct (no helper service) | BYOD = admin rights = no privileged helper needed |
-| Binary count | 2 (myvpn + sing-box) | Minimise breakage surface area |
+```
+VPN-Service/
+├── v5/                 ← DEFINITIVE VERSION (hardened client + server + docs)
+│   ├── client/         ← Hardened Go + Fyne client code (v2.0.0)
+│   ├── server/         ← VPS deployment modules + PocketBase hooks
+│   ├── docs/           ← Architecture, deploy, ops, API, fixes
+│   ├── scripts/        ← Code generator + card printer
+│   ├── README.md       ← V5 overview
+│   └── CONTEXT.md      ← THIS FILE
+├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
+├── modular-vps/        ← Original server modules (source for v5/server/)
+├── originals/          ← Business plans, threat models, competitive intel (reference only)
+├── simplified/         ← Hysteria 2 / QUIC alternative (blocked by N4L, reference only)
+├── v3/                 ← Predecessor: sslocal + tun2socks (abandoned, reference only)
+├── scripts/            ← Code generator + PDF card printer (copied to v5/scripts/)
+├── CONTEXT.md          ← ROOT context (older, superseded by v5/CONTEXT.md)
+└── README.md, .github/...
+```
+
+### What goes where
+
+| Directory | Purpose | For whom |
+|-----------|---------|----------|
+| `v5/` | Definitive version — start here | **Everyone** |
+| `v5/client/` | Hardened Go + Fyne client source code | **Client developers** |
+| `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
+| `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
+| `v5/scripts/` | Code generator + card printer | Middleman managers |
+| `v4/` | Predecessor client code | Reference only — use v5/client/ |
+| `originals/`, `v3/`, `simplified/` | Historical reference | Reference only |
 
 ---
 
-## 7. Open Questions & Future Work
+## 3. V5 — What Makes It Different
 
-### Short-term
+V5 exists because earlier versions (V1–V4, modular-vps, simplified) were spread
+across the repo with overlapping docs, untested assumptions, and no central reference.
+V5 consolidates everything into one place: **both client and server code**, hardened
+from real-world testing, with comprehensive documentation.
 
-1. **Measure actual game traffic latency** — UDP relay tests were from DNS queries.
-   Real game traffic (Fortnite, Valorant) through Strike's UDP-over-TCP needs measuring.
+### Principles
 
-2. **Test WARP MASQUE (TCP mode)** — Cloudflare's WARP over TCP may provide lower
-   latency to the VPS than direct Shadowsocks in some conditions.
+1. **Only 2 binaries on the client** — myvpn (GUI + manager) + sing-box (engine).
+   No TUN helper service, no tun2socks, no sslocal. BYOD means every user has admin
+   rights, so sing-box creates TUN directly.
+2. **Server-enforced caps** — tc HTB qdisc on the VPS limits bandwidth per tier.
+   The client can't bypass its cap because the throttle happens post-decryption.
+3. **Permanent device binding** — one activation code = one device forever.
+   SHA256 of MAC + disk serial + motherboard UUID. Admin can suspend, not deactivate.
+4. **Crash-safe updates** — two-phase sentinel handshake. No signing keys needed.
+5. **No TLS in the tunnel** — Shadowsocks AEAD is indistinguishable from random data.
 
-3. **udp2raw on a real laptop** — If `faketcp` mode works, it could let native
-   WireGuard run over the TCP tunnel (better UDP gaming performance).
+### Client Hardening (v5/client/ vs v4/)
 
-4. **Switch to shadowsocks-libev** — If TCP Brutal is needed at the engine level,
-   `ss-libev` has `--tcp-congestion` flag that `ss-rust` lacks (currently Brutal
-   is applied server-side via LD_PRELOAD, not client-side).
+The v5/client/ codebase is a hardened evolution of the v4 source:
 
-### Medium-term
+- **Context propagation** for all network operations
+- **Panic recovery** with stack traces at global and goroutine level
+- **Signal handling** (SIGINT/SIGTERM → graceful shutdown → force kill after 5s)
+- **Input validation** on all user-facing entry points
+- **Atomic file writes** with `.tmp` + `rename()` strategy and 3-deep backup rotation
+- **Process health monitoring** with auto-restart (max 3 restarts in 5 minutes)
+- **Download validation** with min/max size + SHA256 checksum
+- **Thread safety** via `sync.Mutex`/`sync.RWMutex` on all shared state
+- **Heartbeat jitter** (±10%) to prevent thundering herd
+- **Error wrapping** throughout with `fmt.Errorf("...: %w", err)`
+- **Callback timeout guard** (5s max for heartbeat callbacks)
 
-5. **Multi-VPS architecture** — VPS closer to game servers (Sydney for OCE games,
-   US West for NA games) lowers the UDP relay leg latency for Strike users.
+---
 
-6. **Auto-engine selection** — Client probes connectivity and selects between
-   Shadowsocks TCP/UDP, WARP, or direct depending on network conditions.
+## 4. VPS Testing Results
 
-7. **TCP Brutal for a streaming tier** — If the product expands to a stream-only
-   tier, implementing Brutal CC creates natural product differentiation.
+All modules tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
 
-### Not Recommended
+| Module | Status | Notes |
+|--------|:------:|-------|
+| 00-env | ✅ | OS, arch, root, disk, memory all validated |
+| 01-bbr | ✅ | BBR active, TCP tuning params set |
+| 02-shadowsocks | ✅ | 3 instances installed and enabled |
+| 03-brutal | ✅ | Cloned from `apernet/tcp-brutal` (renamed from `tcp-brutal-ng`), compiled custom LD_PRELOAD |
+| 04-tc | ✅ | Eco 5Mbit, Strike 200Mbit classes active |
+| 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
+| 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
+| 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
+| 08-firewall | ✅ | UFW active, all ports open, SSH rate-limited |
 
-| Approach | Why not |
-|----------|---------|
-| Direct QUIC (Hysteria 2, TUIC V5) | Blocked by N4L UDP block |
-| TLS proxies (Trojan, Xray VLESS) | Fingerprinted by JA3 detection |
-| AmneziaWG over UDP | UDP blocked at network level |
-| FEC | Solves a problem that doesn't exist on low-loss N4L |
-| WireGuard-go + TCP tunnel | TCP-over-TCP meltdown ruins gaming |
+### 8 Issues Found & Fixed
+
+All documented in `v5/docs/FIXES.md`:
+
+| # | Severity | Issue | Fix |
+|:-:|:--------:|-------|-----|
+| S1 | 🔴 | Caddy systemd service missing | Auto-create service with cap_net_bind_service |
+| S2 | 🔴 | TLS cert provisioning failed | XDG_CONFIG_HOME + /var/lib/caddy |
+| S3 | 🔴 | PocketBase NAMESPACE error | Removed systemd security hardening |
+| S4 | 🟡 | Admin token extraction failed | Python-based seeding script |
+| S5 | 🟡 | Bash heredocs mangled JSON | Moved to seed-pb.py |
+| S6 | 🔴 | `!$double` bash bug | Replaced with if/else |
+| S7 | 🔴 | PB 0.22 JS hook API incompatibility | All hooks rewritten |
+| S8 | 🟡 | Smoke test IP detection off by one | Fixed awk pattern |
+
+---
+
+## 5. Client Code Structure (v5/client/)
+
+```
+v5/client/
+├── cmd/myvpn/main.go           # Entry point: flags → update recovery → GUI
+├── internal/
+│   ├── storage/storage.go      # Persistent JSON state (thread-safe, atomic writes, backups)
+│   ├── activation/
+│   │   ├── activation.go       # Activation client with retry + context
+│   │   ├── fingerprint.go      # SHA256 hardware fingerprint (cross-platform)
+│   │   ├── fingerprint_linux.go
+│   │   ├── fingerprint_darwin.go
+│   │   ├── fingerprint_windows.go
+│   │   └── luhn.go             # Luhn-mod-N checksum validation
+│   ├── heartbeat/heartbeat.go  # Periodic server health check with jitter
+│   ├── manager/process.go      # Sing-box lifecycle + config generation
+│   ├── updater/
+│   │   ├── updater.go          # Two-phase update with crash safety
+│   │   ├── recover.go          # Crash detection and auto-revert
+│   │   ├── update_unix.go      # Unix binary swap + fork
+│   │   └── update_windows.go   # Windows binary swap + fork
+│   ├── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
+│   ├── helper/
+│   │   ├── main.go             # Privileged helper service (IPC socket)
+│   │   └── install.go          # Helper service install/uninstall
+│   └── gui/
+│       ├── app.go              # Fyne desktop app with system tray
+│       └── diagnostics.go      # Support diagnostics report
+├── engines/README.md           # Engine binary placeholder
+├── go.mod
+└── Makefile                    # Cross-platform build
+```
+
+### Key Metrics
+
+| Metric | Value |
+|--------|-------|
+| Total lines (Go) | ~4,200 across 19 files |
+| Client version | 2.0.0 |
+| Engine | sing-box 1.10.0 |
+| Min Go version | 1.22 |
+| Platforms | Linux, macOS (Intel+ARM), Windows |
+| Dependencies | Fyne v2 + go-shadowsocks2 (for reference) |
+
+---
+
+## 6. Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   CLIENT DEVICE                        │
+│                                                        │
+│  ┌────────────────────────────────────────────────┐   │
+│  │              myvpn (Go + Fyne)                   │   │
+│  │                                                  │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
+│  │  │Activation│  │ Heartbeat │  │   Updater    │   │   │
+│  │  │ + retry  │  │ + jitter  │  │ 2-phase SAFE │   │   │
+│  │  └────┬─────┘  └────┬─────┘  └──────┬───────┘   │   │
+│  │       │              │               │            │   │
+│  │  ┌────┴──────────────┴───────────────┴───────┐   │   │
+│  │  │              Manager                       │   │   │
+│  │  │  • Generates sing-box JSON config          │   │   │
+│  │  │  • Spawns sing-box as subprocess           │   │   │
+│  │  │  • Health monitoring + auto-restart        │   │   │
+│  │  │  • Graceful shutdown with timeout          │   │   │
+│  │  └───────────────────┬───────────────────────┘   │   │
+│  └──────────────────────┼───────────────────────────┘   │
+│                         │                                 │
+│              ┌──────────┴──────────┐                      │
+│              │  sing-box (engine)   │                      │
+│              │  Creates TUN device  │                      │
+│              │  Routes all traffic  │                      │
+│              │  through Shadowsocks │                      │
+│              └──────────────────────┘                      │
+└──────────────────────────┼───────────────────────────────┘
+                           │ Shadowsocks TCP (AES-256-GCM)
+                           │ :8443 / :8444 / :8445
+                           ▼
+┌──────────────────────────────────────────────────────┐
+│                   VPS (Ubuntu 22.04)                    │
+│                                                        │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
+│  │  Caddy   │  │PocketBase│  │  ssserver × 3        │  │
+│  │  TLS +   │  │ SQLite   │  │  Eco/Stealth/Strike   │  │
+│  │  rate    │  │ JS hooks │  │  BBR/Brutal/BBR       │  │
+│  │  limit   │  │          │  │  5/48/200 Mbps        │  │
+│  └──────────┘  └──────────┘  └──────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Key Technologies
+
+| Component | Technology | Version |
+|-----------|-----------|:-------:|
+| Client language | Go | 1.22+ |
+| GUI toolkit | Fyne | v2.5.0 |
+| Tunnel engine | sing-box | 1.10.0 |
+| Server OS | Ubuntu | 22.04 |
+| Proxy protocol | Shadowsocks (ssserver-rust) | v1.23.0 |
+| Reverse proxy | Caddy (custom rate_limit) | Latest |
+| Database | PocketBase | 0.22.21 |
+| TCP CC (Stealth) | TCP Brutal | Custom kernel module |
+| Backups | Backblaze B2 | — |
+| Traffic shaping | tc (HTB qdisc) | — |
+| Firewall | UFW | — |
+
+---
+
+## 8. Agent Guidance
+
+### Where to start
+
+1. **Read `v5/README.md`** for the high-level overview and quick start.
+2. **Read `v5/docs/ARCHITECTURE.md`** for the complete system design.
+3. **Refer to `v5/client/`** for the client source code.
+4. **Refer to `v5/server/`** for server deployment.
+5. **Use `v5/docs/`** for specific guides (deploy, ops, API, implement).
+
+### Rules of thumb
+
+1. **Start here.** V5 is the definitive version. Don't read v4/, v3/, or originals/
+   unless you need historical context.
+2. **The client code is in `v5/client/`.** The old `v4/` directory exists for
+   reference only — never build from it.
+3. **The server modules are idempotent.** You can re-run any module safely.
+   Each module checks if its work is already done before proceeding.
+4. **The JS hooks have been rewritten for PocketBase 0.22+.** If activation
+   returns a generic 400 error after a fresh deploy, check `journalctl -u pocketbase`
+   for hook load errors.
+5. **TCP Brutal must be re-checked after every kernel update.** DKMS should
+   auto-rebuild, but verify with `lsmod | grep tcp_brutal`.
+6. **The DuckDNS domain is `networkingguides.duckdns.org`** pointing to `114.23.136.47`.
+   DuckDNS needs periodic A record updates if the VPS IP changes.
+
+### Key credentials (live VPS as of 2026-07-26)
+
+```
+PocketBase admin:   admin@networkingguides.duckdns.org
+PocketBase UI:      https://networkingguides.duckdns.org/_/
+Admin API token:    CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=
+B2 bucket:          vpsvpnbackup
+```
+
+All credentials are stored on the VPS at `/root/` — see `POCKETBASE-SETUP.md` for
+the full list of credential files and locations.
+
+### Common pitfalls
+
+- **Don't use `originals/`, `v3/`, `v4/`, or `simplified/` as the source of truth** — they're
+  historical reference only. V5 is the authoritative version.
+- **The client code now lives in `v5/client/`** — not v4/. Always build from v5/client/.
+- **The JS hooks have been rewritten for PocketBase 0.22+** — if activation still returns a generic
+  400 error after a fresh deploy, check `journalctl -u pocketbase` for hook load errors.
+- **DuckDNS needs periodic A record updates** if the VPS IP changes. The update URL is
+  `https://www.duckdns.org/update?domains=networkingguides&token=TOKEN&ip=`.

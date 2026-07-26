@@ -327,6 +327,10 @@ func (a *App) onConnect() {
 		LocalPort:  1080,
 	}
 
+	if a.tunnel == nil {
+		dialog.ShowError(fmt.Errorf("Tunnel not available — sing-box binary missing"), a.mainWindow)
+		return
+	}
 	if err := a.tunnel.Start(cfg); err != nil {
 		dialog.ShowError(fmt.Errorf("Connection failed: %w", err), a.mainWindow)
 		return

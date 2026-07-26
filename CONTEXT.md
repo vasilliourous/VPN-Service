@@ -1,5 +1,15 @@
 # VPN-Service — Full Session Context
 
+> **⚠️ LEGACY DOCUMENT — Superseded by `v5/CONTEXT.md`**
+> This document was generated 2026-07-24 and is kept for historical reference.
+> **For the current authoritative context, read `v5/CONTEXT.md` and `v5/README.md`.**
+>
+> **Key changes since this was written:**
+> - The client source code has moved from `v4/` to `v5/client/` with hardening improvements
+> - V5 now contains both hardened client code AND server code in one definitive directory
+> - 8 VPS deployment bugs have been fixed (see `v5/docs/FIXES.md`)
+> - The JS hooks have been rewritten for PocketBase 0.22
+
 > **Generated:** 2026-07-24
 > **Purpose:** Single reference document capturing all implementation decisions, testing results, configurations, and architectural reasoning for the VPN-Service project.
 > **Audience:** Future AI agents (and human developers) who need to understand the complete context without re-running tests.
@@ -743,15 +753,22 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 | `/usr/local/bin/xray` | Xray binary |
 | `/etc/sysctl.conf` | Kernel tuning parameters |
 
-### In Workspace (school-network-analysis.md)
+### In Workspace VPN-Service/ (Current Structure)
 
-| File | Purpose |
-|------|---------|
-| `school-network-analysis.md` | Original school network analysis |
-| `VPN-Service/CONTEXT.md` | This document |
-| `VPN-Service/simplified/ARCHITECTURE.md` | Simplified architecture plan |
-| `VPN-Service/simplified/IMPLEMENT.md` | Implementation guide |
-| `VPN-Service/simplified/OPS.md` | Operations manual |
+| Location | Purpose | Status |
+|----------|---------|:------:|
+| `v5/CONTEXT.md` | **Authoritative project context** | ✅ Current |
+| `v5/README.md` | V5 overview and quick start | ✅ Current |
+| `v5/client/` | **Hardened client source code** (Go + Fyne, ~4,200 lines) | ✅ Current |
+| `v5/server/` | Hardened VPS deployment modules + PocketBase hooks | ✅ Current |
+| `v5/docs/` | Architecture, deploy, ops, API, fixes | ✅ Current |
+| `v5/scripts/` | Code generator + card printer | ✅ Current |
+| `v4/` | Predecessor client source (superseded by v5/client/) | 📚 Reference |
+| `modular-vps/` | Original VPS modules (source for v5/server/) | 📚 Reference |
+| `simplified/` | Hysteria 2 / QUIC alternative (blocked by N4L) | 📚 Reference |
+| `v3/` | sslocal + tun2socks architecture (abandoned) | 📚 Reference |
+| `originals/` | Business plans, threat models, VPN blocklists | 📚 Reference |
+| `CONTEXT.md` | This legacy document | 📚 Reference |
 
 ---
 

@@ -97,7 +97,7 @@ fi
 
 # Check via Caddy (HTTPS) — skip if DNS doesn't point here
 log "Step 6b/9: Checking HTTPS health endpoint..."
-VPS_IP=$(ip -4 route show default | awk '{print $3}' | head -1)
+VPS_IP=$(ip -4 addr show | grep -oP 'inet \K[\d.]+' | grep -v '^127\.' | head -1)
 DOMAIN_IP=$(host "$DOMAIN" 2>/dev/null | awk '/has address/ {print $4; exit}' || echo "")
 if [ -n "$DOMAIN_IP" ] && [ "$DOMAIN_IP" = "$VPS_IP" ]; then
     if curl -sf "https://${DOMAIN}/api/health" >/dev/null 2>&1; then
