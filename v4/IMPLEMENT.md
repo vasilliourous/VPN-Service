@@ -348,7 +348,7 @@ apt update && apt install caddy
 
 **`/etc/caddy/Caddyfile`:**
 ```
-api.yourdomain.com {
+jeanette-qh9zbe.cloudserver.nz {
     reverse_proxy 127.0.0.1:8090
 
     # Coarse IP-based throttle (DDoS protection only).
@@ -412,7 +412,7 @@ systemctl reload caddy
 
 ### Step 2.8 — PocketBase Collections
 
-Open `https://api.yourdomain.com/_/` and create admin account. Create these collections:
+Open `https://jeanette-qh9zbe.cloudserver.nz/_/` and create admin account. Create these collections:
 
 **`codes`:**
 | Field | Type | Notes |
@@ -459,7 +459,7 @@ Enter these in PocketBase `tier_configs`. Match passwords from `/root/.tier_pass
 {
   "tier": "eco",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8443,
     "password": "<ECO_PASS>",
     "method": "aes-256-gcm"
@@ -475,7 +475,7 @@ Enter these in PocketBase `tier_configs`. Match passwords from `/root/.tier_pass
 {
   "tier": "stealth",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8444,
     "password": "<STEALTH_PASS>",
     "method": "aes-256-gcm"
@@ -491,7 +491,7 @@ Enter these in PocketBase `tier_configs`. Match passwords from `/root/.tier_pass
 {
   "tier": "strike",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8445,
     "password": "<STRIKE_PASS>",
     "method": "aes-256-gcm"
@@ -1087,7 +1087,7 @@ type AppConfig struct {
     {
       "type": "shadowsocks",
       "tag": "ss-out",
-      "server": "api.yourdomain.com",
+      "server": "jeanette-qh9zbe.cloudserver.nz",
       "server_port": 8443,
       "method": "aes-256-gcm",
       "password": "eco-password"
@@ -1427,7 +1427,7 @@ import (
 
 var (
     version     = "1.0.0"
-    adminHubURL = flag.String("hub", "https://api.yourdomain.com", "Admin hub URL")
+    adminHubURL = flag.String("hub", "https://jeanette-qh9zbe.cloudserver.nz", "Admin hub URL")
     revertFlag  = flag.Bool("revert", false, "Revert to previous version")
 )
 

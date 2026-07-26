@@ -5,9 +5,9 @@ Same as V2 but with Shadowsocks-specific commands and three server instances.
 ## Quick Reference
 
 ```bash
-export PB_API="https://api.yourdomain.com"
+export PB_API="https://jeanette-qh9zbe.cloudserver.nz"
 export PB_TOKEN="your-pocketbase-admin-token"
-export VPS="root@api.yourdomain.com"
+export VPS="root@jeanette-qh9zbe.cloudserver.nz"
 ```
 
 ### Server Health
@@ -51,21 +51,21 @@ WIN_SHA=$(sha256sum dist/myvpn-windows.zip | cut -d' ' -f1)
 MAC_INTEL_SHA=$(sha256sum dist/myvpn-macos-intel.zip | cut -d' ' -f1)
 MAC_ARM_SHA=$(sha256sum dist/myvpn-macos-arm.zip | cut -d' ' -f1)
 
-scp dist/*.zip root@api.yourdomain.com:/var/www/html/
+scp dist/*.zip root@jeanette-qh9zbe.cloudserver.nz:/var/www/html/
 
-ssh root@api.yourdomain.com "cat > /var/www/html/update.json << EOF
+ssh root@jeanette-qh9zbe.cloudserver.nz "cat > /var/www/html/update.json << EOF
 {
   \"version\": \"$VERSION\",
   \"windows\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-windows.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-windows.zip\",
     \"sha256\": \"$WIN_SHA\"
   },
   \"macos_intel\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-intel.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-macos-intel.zip\",
     \"sha256\": \"$MAC_INTEL_SHA\"
   },
   \"macos_arm\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-arm.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-macos-arm.zip\",
     \"sha256\": \"$MAC_ARM_SHA\"
   }
 }
@@ -90,7 +90,7 @@ ssh $VPS "nano /etc/shadowsocks/strike.json && systemctl restart shadowsocks-str
 curl -X PATCH "$PB_API/api/collections/tier_configs/records/CONFIG_ID" \
   -H "Authorization: Bearer $PB_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"config": {"server":"api.yourdomain.com","server_port":8443,...}}'
+  -d '{"config": {"server":"jeanette-qh9zbe.cloudserver.nz","server_port":8443,...}}'
 ```
 
 ### Change an Eco User's Password

@@ -15,13 +15,13 @@ Utility scripts for MyVPN code generation, printing, and operations.
 
 ```bash
 # Generate 50 Eco codes and import to PocketBase
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
 
 # Dry run (no import)
-DRY_RUN=1 ./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50
+DRY_RUN=1 ./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
 
 # Custom expiry (30 days)
-EXPIRY_DAYS=30 ./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 10
+EXPIRY_DAYS=30 ./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 10
 ```
 
 ### Print Code Cards

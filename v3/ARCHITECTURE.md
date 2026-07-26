@@ -219,7 +219,7 @@ The `speed` and `udp_relay` fields are NOT shadowsocks config — they're consum
 {
   "tier": "eco",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8443,
     "password": "eco-random-password",
     "method": "aes-256-gcm",
@@ -236,7 +236,7 @@ The `speed` and `udp_relay` fields are NOT shadowsocks config — they're consum
 {
   "tier": "stealth",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8444,
     "password": "stealth-random-password",
     "method": "aes-256-gcm",
@@ -253,7 +253,7 @@ The `speed` and `udp_relay` fields are NOT shadowsocks config — they're consum
 {
   "tier": "strike",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8445,
     "password": "strike-random-password",
     "method": "aes-256-gcm",

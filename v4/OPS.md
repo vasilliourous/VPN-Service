@@ -3,10 +3,10 @@
 ## Quick Reference
 
 ```bash
-export PB_API="https://api.yourdomain.com"
+export PB_API="https://jeanette-qh9zbe.cloudserver.nz"
 export PB_TOKEN="your-pocketbase-admin-token"
 export ADMIN_TOKEN="your-admin-api-token"
-export VPS="root@api.yourdomain.com"
+export VPS="root@jeanette-qh9zbe.cloudserver.nz"
 ```
 
 ---
@@ -139,22 +139,22 @@ WIN_SHA=$(sha256sum dist/myvpn-windows.zip | cut -d' ' -f1)
 MAC_INTEL_SHA=$(sha256sum dist/myvpn-macos-intel.zip | cut -d' ' -f1)
 MAC_ARM_SHA=$(sha256sum dist/myvpn-macos-arm.zip | cut -d' ' -f1)
 
-scp dist/*.zip root@api.yourdomain.com:/var/www/html/
+scp dist/*.zip root@jeanette-qh9zbe.cloudserver.nz:/var/www/html/
 
-ssh root@api.yourdomain.com "cat > /var/www/html/update.json << EOF
+ssh root@jeanette-qh9zbe.cloudserver.nz "cat > /var/www/html/update.json << EOF
 {
   \"version\": \"$VERSION\",
   \"rollout_percent\": $ROLLOUT_PERCENT,
   \"windows\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-windows.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-windows.zip\",
     \"sha256\": \"$WIN_SHA\"
   },
   \"macos_intel\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-intel.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-macos-intel.zip\",
     \"sha256\": \"$MAC_INTEL_SHA\"
   },
   \"macos_arm\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-arm.zip\",
+    \"url\": \"https://jeanette-qh9zbe.cloudserver.nz/myvpn-macos-arm.zip\",
     \"sha256\": \"$MAC_ARM_SHA\"
   }
 }
@@ -176,12 +176,12 @@ Clients will check within 5 minutes of the heartbeat detecting the new version.
 To advance stages without rebuilding:
 ```bash
 # Use jq to safely update rollout_percent (more reliable than sed on JSON)
-ssh root@api.yourdomain.com "jq '.rollout_percent = 25' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+ssh root@jeanette-qh9zbe.cloudserver.nz "jq '.rollout_percent = 25' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
 ```
 
 To halt a bad rollout:
 ```bash
-ssh root@api.yourdomain.com "jq '.rollout_percent = 0' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+ssh root@jeanette-qh9zbe.cloudserver.nz "jq '.rollout_percent = 0' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
 # Existing clients already on the bad version will auto-revert on next crash/restart
 ```
 
@@ -189,7 +189,7 @@ ssh root@api.yourdomain.com "jq '.rollout_percent = 0' /var/www/html/update.json
 
 ```bash
 # Set to 100% — all clients get it on next heartbeat
-ssh root@api.yourdomain.com "jq '.rollout_percent = 100' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
+ssh root@jeanette-qh9zbe.cloudserver.nz "jq '.rollout_percent = 100' /var/www/html/update.json > /tmp/update.json && mv /tmp/update.json /var/www/html/update.json"
 ```
 
 1. All active clients get `update_available` on their next heartbeat
@@ -263,7 +263,7 @@ b2 download-file-by-name my-vpn-backup-bucket backups/data-20260724-143000.db /t
 ssh $VPS "systemctl stop pocketbase"
 
 # 3. Restore
-scp /tmp/restore.db root@api.yourdomain.com:/opt/pocketbase/pb_data/data.db
+scp /tmp/restore.db root@jeanette-qh9zbe.cloudserver.nz:/opt/pocketbase/pb_data/data.db
 
 # 4. Start PocketBase
 ssh $VPS "systemctl start pocketbase"

@@ -7,7 +7,7 @@
 
 ## Base URL
 
-`https://api.yourdomain.com`
+`https://networkingguides.duckdns.org`
 
 All endpoints are served through Caddy reverse proxy to PocketBase on `127.0.0.1:8090`.
 
@@ -42,7 +42,7 @@ Activates a device with an activation code and binds it to the hardware fingerpr
   "tier": "eco",
   "device_fingerprint": "a1b2c3d4e5f6...abcdef",
   "server_config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8443,
     "password": "...",
     "method": "aes-256-gcm"
@@ -99,7 +99,7 @@ and refreshed tier config.
   "server_time": "2026-07-24T14:30:00.000Z",
   "tier": "eco",
   "server_config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8443,
     "password": "...",
     "method": "aes-256-gcm"
@@ -115,7 +115,7 @@ and refreshed tier config.
   "server_time": "2026-07-24T14:30:00.000Z",
   "tier": "eco",
   "update_available": "1.1.0",
-  "update_url": "https://api.yourdomain.com/updates/v1.1.0/myvpn-linux-amd64",
+  "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
   "update_sha256": "abc123...",
   "update_windows": "https://...myvpn.exe",
   "update_macos_intel": "https://...myvpn-darwin-amd64",
@@ -224,7 +224,7 @@ Static file served by Caddy. Contains the current update manifest for staged rol
 
 ### `GET /_/`
 
-PocketBase admin interface at `https://api.yourdomain.com/_/`.
+PocketBase admin interface at `https://networkingguides.duckdns.org/_/`.
 
 ---
 

@@ -448,15 +448,15 @@ via Caddy. This is not a full website — just files on disk.
 {
   "version": "1.1.0",
   "windows": {
-    "url": "https://api.yourdomain.com/myvpn-windows.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-windows.zip",
     "sha256": "abc123def456..."
   },
   "macos_intel": {
-    "url": "https://api.yourdomain.com/myvpn-macos-intel.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-macos-intel.zip",
     "sha256": "789ghi..."
   },
   "macos_arm": {
-    "url": "https://api.yourdomain.com/myvpn-macos-arm.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-macos-arm.zip",
     "sha256": "..."
   }
 }
@@ -820,8 +820,8 @@ Run a single Hysteria 2 server with three auth pools:
 # /etc/hysteria/server.yaml
 listen: :443
 tls:
-  cert: /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem
-  key: /etc/letsencrypt/live/api.yourdomain.com/privkey.pem
+  cert: /etc/letsencrypt/live/networkingguides.duckdns.org/fullchain.pem
+  key: /etc/letsencrypt/live/networkingguides.duckdns.org/privkey.pem
 auth:
   type: password
   password:

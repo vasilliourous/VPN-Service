@@ -131,7 +131,7 @@ Manages the sing-box process lifecycle.
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
                  "address": "10.0.0.2/30", "mtu": 1500, "auto_route": true, "strict_route": true }],
   "outbounds": [{ "type": "shadowsocks", "tag": "proxy",
-                  "server": "api.yourdomain.com", "server_port": 8443,
+                  "server": "networkingguides.duckdns.org", "server_port": 8443,
                   "method": "aes-256-gcm", "password": "..." }],
   "route": { "rules": [{"rule": "geoip:private", "outbound_tag": "direct"}],
              "auto_detect_interface": true, "final": "proxy" }

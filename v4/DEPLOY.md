@@ -15,13 +15,13 @@ Any works. 2GB RAM is plenty for 20 users.
 ### 2. Point DNS
 
 ```
-A record: api.yourdomain.com → YOUR_VPS_IP
+A record: jeanette-qh9zbe.cloudserver.nz → YOUR_VPS_IP
 ```
 
 ### 3. Run Setup Script
 
 ```bash
-DOMAIN=api.yourdomain.com ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
+DOMAIN=jeanette-qh9zbe.cloudserver.nz ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
 ```
 
 The script does everything:
@@ -48,7 +48,7 @@ b2 authorize-application-key
 
 ### 5. Open PocketBase Admin
 
-Visit `https://api.yourdomain.com/_/`. Create admin account.
+Visit `https://jeanette-qh9zbe.cloudserver.nz/_/`. Create admin account.
 Create collections: `codes`, `tier_configs`, `activation_attempts`.
 
 ### 6. Upload JS Hooks
@@ -67,9 +67,9 @@ ssh root@your-vps "systemctl restart pocketbase"
 ### 8. Generate Initial Codes
 
 ```bash
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN stealth 30
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN strike 20
+./scripts/generate_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN eco 50
+./scripts/generate_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN stealth 30
+./scripts/generate_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN strike 20
 ```
 
 ### 9. Print Code Cards

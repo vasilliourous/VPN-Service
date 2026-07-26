@@ -61,7 +61,7 @@ Hetzner CCX13, DigitalOcean Droplet, or Vultr — Ubuntu 22.04, 2GB RAM minimum.
 ### 2. Point your domain
 
 ```
-A record: api.yourdomain.com → VPS_IP
+A record: jeanette-qh9zbe.cloudserver.nz → VPS_IP
 ```
 
 ### 3. SSH in and run base setup
@@ -121,7 +121,7 @@ systemctl enable --now pocketbase
 
 ```bash
 cat > /etc/caddy/Caddyfile << 'CADDYEOF'
-api.yourdomain.com {
+jeanette-qh9zbe.cloudserver.nz {
     reverse_proxy 127.0.0.1:8090
 
     rate_limit {
@@ -151,7 +151,7 @@ CADDYEOF
 systemctl restart caddy
 ```
 
-> ⚠️ Replace `api.yourdomain.com` with your actual domain. Let Caddy auto-provision TLS from Let's Encrypt.
+> ⚠️ Replace `jeanette-qh9zbe.cloudserver.nz` with your actual domain. Let Caddy auto-provision TLS from Let's Encrypt.
 
 ### 6. Set SQLite WAL mode + busy_timeout
 
@@ -216,7 +216,7 @@ chmod 644 /etc/cron.d/pocketbase-backup
 Sign up for a free uptime monitor (UptimeRobot, BetterUptime, or PingPong). Point it at:
 
 ```
-https://api.yourdomain.com/_/health
+https://jeanette-qh9zbe.cloudserver.nz/_/health
 ```
 
 Configure email/SMS alerts. This is the only way you'll know the hub is down before customers complain.
@@ -375,7 +375,7 @@ function validateCode(code) {
 
 ### 12. Create PocketBase collections
 
-In the PocketBase admin UI (`https://api.yourdomain.com/_/`), create these collections:
+In the PocketBase admin UI (`https://jeanette-qh9zbe.cloudserver.nz/_/`), create these collections:
 
 **`activation_codes`** — the codes middlemen hand out:
 - `code` (text, unique) — e.g. `MYVPN-A7X3-K9M2-Q5P1-C`
@@ -434,7 +434,7 @@ cat << JSONEOF
     "platform": "$PLATFORM",
     "version": "$VERSION",
     "sha256": "$SHA256",
-    "url": "https://api.yourdomain.com/files/updates/$FILENAME"
+    "url": "https://jeanette-qh9zbe.cloudserver.nz/files/updates/$FILENAME"
 }
 JSONEOF
 PUBEOF
@@ -1492,7 +1492,7 @@ import (
 // ── Certificate Pinning ──
 
 // Generate with:
-//   openssl s_client -connect api.yourdomain.com:443 -servername api.yourdomain.com < /dev/null 2>/dev/null \
+//   openssl s_client -connect jeanette-qh9zbe.cloudserver.nz:443 -servername jeanette-qh9zbe.cloudserver.nz < /dev/null 2>/dev/null \
 //     | openssl x509 -pubkey -noout \
 //     | openssl pkey -pubin -outform der \
 //     | openssl dgst -sha256 -binary \
@@ -4549,7 +4549,7 @@ import (
 var version string // set via ldflags
 
 func main() {
-    apiBase := flag.String("api", "https://api.yourdomain.com", "Admin hub URL")
+    apiBase := flag.String("api", "https://jeanette-qh9zbe.cloudserver.nz", "Admin hub URL")
     flag.Parse()
 
     // --- Rollback safety: must run before any other initialization ---

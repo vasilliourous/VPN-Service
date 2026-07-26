@@ -67,7 +67,7 @@ Insert these into `tier_configs`:
         "display_name": "Speed Mode",
         "binary_name": "speedmode",
         "config_json": {
-            "server": "sgp1.api.yourdomain.com:443",
+            "server": "sgp1.jeanette-qh9zbe.cloudserver.nz:443",
             "auth": "stealth-pool-1",
             "tls": { "sni": "www.cloudflare.com", "insecure": false },
             "obfs": "salamander",
@@ -90,7 +90,7 @@ Insert these into `tier_configs`:
         "display_name": "Speed Mode",
         "binary_name": "speedmode",
         "config_json": {
-            "server": "sgp1.api.yourdomain.com:443",
+            "server": "sgp1.jeanette-qh9zbe.cloudserver.nz:443",
             "auth": "gaming-mid-pool-1",
             "tls": { "sni": "www.cloudflare.com", "insecure": false },
             "obfs": "salamander",
@@ -113,7 +113,7 @@ Insert these into `tier_configs`:
         "display_name": "Speed Mode",
         "binary_name": "speedmode",
         "config_json": {
-            "server": "sgp1.api.yourdomain.com:443",
+            "server": "sgp1.jeanette-qh9zbe.cloudserver.nz:443",
             "auth": "gaming-max-pool-1",
             "tls": { "sni": "www.cloudflare.com", "insecure": false },
             "obfs": "salamander",

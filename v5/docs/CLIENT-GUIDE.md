@@ -232,7 +232,7 @@ Or platform-appropriate app data directory.
   "tier": "eco",
   "device_fingerprint": "<sha256>",
   "server_config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8443,
     "password": "...",
     "method": "aes-256-gcm"
@@ -272,7 +272,7 @@ The manager generates a config like this:
   ],
   "outbounds": [
     { "type": "shadowsocks", "tag": "proxy",
-      "server": "api.yourdomain.com",
+      "server": "networkingguides.duckdns.org",
       "server_port": 8443,
       "method": "aes-256-gcm",
       "password": "..." }

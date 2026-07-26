@@ -2,7 +2,7 @@
 # MyVPN Modular VPS Setup — Orchestrator
 # Usage:
 #   1. scp -r modular-vps root@your-vps:/root/
-#   2. ssh root@your-vps "DOMAIN=api.yourdomain.com /root/modular-vps/setup.sh"
+#   2. ssh root@your-vps "DOMAIN=networkingguides.duckdns.org /root/modular-vps/setup.sh"
 #
 # Each module is idempotent and can be re-run independently.
 set -euo pipefail
@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULES_DIR="${SCRIPT_DIR}/modules"
 LOGFILE="/var/log/myvpn-setup.log"
 
-: "${DOMAIN:?DOMAIN is required (e.g. api.yourdomain.com)}"
+: "${DOMAIN:?DOMAIN is required (e.g. networkingguides.duckdns.org)}"
 : "${FORCE:=}"  # Set to 1 to continue on module failure
 
 # ── Colors ──

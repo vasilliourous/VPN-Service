@@ -193,14 +193,14 @@ scp -r modular-vps root@your-vps:/root/
 
 # Run setup (takes 10-15 minutes)
 ssh root@your-vps
-DOMAIN=api.yourdomain.com ./modular-vps/setup.sh
+DOMAIN=networkingguides.duckdns.org ./modular-vps/setup.sh
 ```
 
 This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, PocketBase, B2 backups, UFW firewall.
 
 ### Step 2: Configure PocketBase
 
-1. Visit `https://api.yourdomain.com/_/` — create admin account
+1. Visit `https://networkingguides.duckdns.org/_/` — create admin account
 2. Create collections: `codes`, `tier_configs`, `activation_attempts`
 3. Create `update_config` collection for staged rollouts
 4. Set `admin_api_token` in PocketBase app settings
@@ -210,7 +210,7 @@ This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, Pocke
 ### Step 3: Generate & Print Codes
 
 ```bash
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_TOKEN eco 50
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_TOKEN eco 50
 ./scripts/print_codes.sh eco-codes.txt eco-cards.pdf
 ```
 
@@ -251,7 +251,7 @@ ssh root@your-vps "
 /usr/local/bin/myvpn-backup.sh
 
 # Full VPS restore
-DOMAIN=api.yourdomain.com \
+DOMAIN=networkingguides.duckdns.org \
   B2_APPLICATION_KEY_ID=xxx \
   B2_APPLICATION_KEY=xxx \
   B2_BUCKET=my-vpn-backup-bucket \
@@ -260,7 +260,7 @@ DOMAIN=api.yourdomain.com \
 
 ### Monitoring
 
-Set up uptime monitoring on `https://api.yourdomain.com/api/health` (UptimeRobot, PingPing, etc.).
+Set up uptime monitoring on `https://networkingguides.duckdns.org/api/health` (UptimeRobot, PingPing, etc.).
 This endpoint returns `{"message":"API is healthy.","code":200}` when PocketBase is running.
 
 ---

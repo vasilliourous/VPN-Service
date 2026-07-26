@@ -247,7 +247,7 @@ POST /api/heartbeat
   "platform": "windows_amd64",
   "version": "1.0.1",
   "sha256": "abcdef1234...",
-  "url": "https://api.yourdomain.com/files/updates/myvpn.exe"
+  "url": "https://jeanette-qh9zbe.cloudserver.nz/files/updates/myvpn.exe"
 }
 ```
 

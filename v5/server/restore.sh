@@ -5,7 +5,7 @@
 #     B2_APPLICATION_KEY_ID=xxx \
 #     B2_APPLICATION_KEY=xxx \
 #     B2_BUCKET=my-vpn-backup-bucket \
-#     DOMAIN=api.yourdomain.com \
+#     DOMAIN=networkingguides.duckdns.org \
 #     ssh root@new-vps 'bash -s' < restore.sh
 #
 #   Use specific backup:

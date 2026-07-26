@@ -102,13 +102,13 @@ remains as reference but all active development is on `v5/client/`.
 
 ```bash
 # 1. Deploy server (requires a blank Ubuntu 22.04 VPS + domain)
-DOMAIN=api.yourdomain.com ./v5/server/setup.sh
+DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
 
-# 2. Create PocketBase admin account at https://api.yourdomain.com/_/
+# 2. Create PocketBase admin account at https://networkingguides.duckdns.org/_/
 #    Then create collections: codes, tier_configs, activation_attempts, update_config
 
 # 3. Generate activation codes
-./v5/scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
 
 # 4. Build client
 cd v5/client && make build

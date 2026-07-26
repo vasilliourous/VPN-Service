@@ -12,9 +12,9 @@
 #   ./scripts/generate_codes.sh <hub_url> <admin_token> <tier> <count>
 #
 # Examples:
-#   ./scripts/generate_codes.sh https://api.yourdomain.com my-token eco 50
-#   ./scripts/generate_codes.sh https://api.yourdomain.com my-token stealth 30
-#   ./scripts/generate_codes.sh https://api.yourdomain.com my-token strike 20
+#   ./scripts/generate_codes.sh https://networkingguides.duckdns.org my-token eco 50
+#   ./scripts/generate_codes.sh https://networkingguides.duckdns.org my-token stealth 30
+#   ./scripts/generate_codes.sh https://networkingguides.duckdns.org my-token strike 20
 #
 # Output: Prints codes to stdout AND saves to <tier>-codes.txt
 #   Also creates a JSON array for PocketBase import if requested.
@@ -128,7 +128,7 @@ if [ -z "$HUB_URL" ] || [ -z "$ADMIN_TOKEN" ] || [ -z "$TIER" ] || [ -z "$COUNT"
     echo "Usage: $0 <hub_url> <admin_token> <tier> <count>"
     echo ""
     echo "Arguments:"
-    echo "  hub_url      Admin hub URL (e.g. https://api.yourdomain.com)"
+    echo "  hub_url      Admin hub URL (e.g. https://networkingguides.duckdns.org)"
     echo "  admin_token  PocketBase admin API token"
     echo "  tier         eco | stealth | strike"
     echo "  count        Number of codes to generate"

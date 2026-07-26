@@ -34,7 +34,7 @@ log "✓ Running as root"
 
 # ── Required variables ──
 if [ -z "${DOMAIN:-}" ]; then
-    fail "DOMAIN is not set. Usage: DOMAIN=api.yourdomain.com bash $0"
+    fail "DOMAIN is not set. Usage: DOMAIN=networkingguides.duckdns.org bash $0"
 fi
 log "✓ Domain: ${DOMAIN}"
 

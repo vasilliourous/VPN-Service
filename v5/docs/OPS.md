@@ -7,8 +7,8 @@
 ## Quick Reference
 
 ```bash
-export VPS="root@api.yourdomain.com"
-export PB_API="https://api.yourdomain.com"
+export VPS="root@networkingguides.duckdns.org"
+export PB_API="https://networkingguides.duckdns.org"
 export PB_TOKEN="your-pocketbase-admin-token"
 export ADMIN_TOKEN="your-admin-api-token"
 ```
@@ -134,7 +134,7 @@ curl -X POST "$PB_API/api/admin/unbind-code" \
 scp -r v5/server root@new-vps:/root/
 
 # 2. Run setup
-ssh root@new-vps "DOMAIN=api.yourdomain.com /root/server/setup.sh"
+ssh root@new-vps "DOMAIN=networkingguides.duckdns.org /root/server/setup.sh"
 
 # 3. Create PocketBase collections, seed tier configs, generate codes
 # See docs/DEPLOY.md for detailed steps
@@ -146,7 +146,7 @@ ssh root@new-vps "DOMAIN=api.yourdomain.com /root/server/setup.sh"
 B2_APPLICATION_KEY_ID=xxx \
 B2_APPLICATION_KEY=xxx \
 B2_BUCKET=my-vpn-backup-bucket \
-DOMAIN=api.yourdomain.com \
+DOMAIN=networkingguides.duckdns.org \
 ssh root@new-vps 'bash -s' < v5/server/restore.sh
 ```
 
@@ -181,7 +181,7 @@ In PocketBase admin UI → `update_config` collection → create record:
   "version": "1.1.0",
   "rollout_percent": 5,
   "active": true,
-  "update_url": "https://api.yourdomain.com/updates/v1.1.0/myvpn-linux-amd64",
+  "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
   "update_sha256": "sha256-of-the-binary",
   "download_windows": "https://...myvpn-windows-amd64.exe",
   "download_macos_intel": "https://...myvpn-darwin-amd64",
@@ -233,7 +233,7 @@ head -c 16 /tmp/restore.db | xxd  # Should show "SQLite format 3\000"
 
 # Restore
 ssh $VPS "systemctl stop pocketbase"
-scp /tmp/restore.db root@api.yourdomain.com:/opt/pocketbase/pb_data/data.db
+scp /tmp/restore.db root@networkingguides.duckdns.org:/opt/pocketbase/pb_data/data.db
 ssh $VPS "chown pocketbase:pocketbase /opt/pocketbase/pb_data/data.db && systemctl start pocketbase"
 
 # Verify

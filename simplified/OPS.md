@@ -15,9 +15,9 @@ All commands an agent needs to manage the service. Run these from anywhere with
 ### Environment Variables (set these once)
 
 ```bash
-export PB_API="https://api.yourdomain.com"
+export PB_API="https://networkingguides.duckdns.org"
 export PB_TOKEN="your-pocketbase-admin-token"   # From admin UI → Settings → API tokens
-export VPS="root@api.yourdomain.com"
+export VPS="root@networkingguides.duckdns.org"
 ```
 
 ### User Management
@@ -125,7 +125,7 @@ it generates 20 more (10 Eco, 6 Stealth, 4 Strike).
 ssh $VPS "cat > /usr/local/bin/refill-codes.sh << 'SCRIPT'
 #!/bin/bash
 # Auto-refill codes when pool runs low
-PB_API='https://api.yourdomain.com'
+PB_API='https://networkingguides.duckdns.org'
 PB_TOKEN='YOUR_PB_ADMIN_TOKEN'   # ← Agent: set this from admin UI
 
 UNUSED=\$(curl -s \"\$PB_API/api/collections/codes/records?filter=(used=false)&count=1\" \
@@ -199,7 +199,7 @@ routerAdd("POST", "/api/middleman/request-codes", (c) => {
 
 Middlemen just need one shared token. They hit the endpoint with:
 ```bash
-curl -X POST https://api.yourdomain.com/api/middleman/request-codes \
+curl -X POST https://networkingguides.duckdns.org/api/middleman/request-codes \
   -H "Content-Type: application/json" \
   -d '{"token":"your-middleman-secret","tier":"stealth","count":5}'
 ```
@@ -246,7 +246,7 @@ curl -s "$PB_API/api/collections/codes/records/abc123..." \
 # Then: cat eco-cards.txt → print → cut → staple to instruction card
 
 # Or use the middleman self-service endpoint (if set up)
-curl -X POST https://api.yourdomain.com/api/middleman/request-codes \
+curl -X POST https://networkingguides.duckdns.org/api/middleman/request-codes \
   -H "Content-Type: application/json" \
   -d '{"token":"your-middleman-secret","tier":"strike","count":10}'
 ```
@@ -263,7 +263,7 @@ curl -s "$PB_API/api/collections/tier_configs/records" \
 curl -X PATCH "$PB_API/api/collections/tier_configs/records/ECO_CONFIG_ID" \
   -H "Authorization: Bearer $PB_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"config_json": {"server":"api.yourdomain.com:443","auth":"eco-pool-auth-token","tls":{"sni":"www.cloudflare.com","insecure":false},"obfs":"salamander","obfs-password":"eco-obfs-key","recv_window_conn":1048576,"recv_window":4194304,"disable_mtu_discovery":true,"speed":5000000}}'
+  -d '{"config_json": {"server":"networkingguides.duckdns.org:443","auth":"eco-pool-auth-token","tls":{"sni":"www.cloudflare.com","insecure":false},"obfs":"salamander","obfs-password":"eco-obfs-key","recv_window_conn":1048576,"recv_window":4194304,"disable_mtu_discovery":true,"speed":5000000}}'
 
 # 3. Update Hysteria 2 server config (SSH)
 ssh $VPS "sed -i 's/sni: www.bing.com/sni: www.cloudflare.com/g' /etc/hysteria/server.yaml && systemctl restart hysteria"
@@ -292,30 +292,30 @@ MAC_INTEL_SHA=$(sha256sum dist/myvpn-macos-intel.zip | cut -d' ' -f1)
 MAC_ARM_SHA=$(sha256sum dist/myvpn-macos-arm.zip | cut -d' ' -f1)
 
 # 4. Upload to VPS
-scp dist/*.zip root@api.yourdomain.com:/var/www/html/
+scp dist/*.zip root@networkingguides.duckdns.org:/var/www/html/
 
 # 5. Update version and deploy
 read -p "New version number (e.g. 1.1.0): " VERSION
-ssh root@api.yourdomain.com "cat > /var/www/html/update.json << 'EOF'
+ssh root@networkingguides.duckdns.org "cat > /var/www/html/update.json << 'EOF'
 {
   \"version\": \"$VERSION\",
   \"windows\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-windows.zip\",
+    \"url\": \"https://networkingguides.duckdns.org/myvpn-windows.zip\",
     \"sha256\": \"$WIN_SHA\"
   },
   \"macos_intel\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-intel.zip\",
+    \"url\": \"https://networkingguides.duckdns.org/myvpn-macos-intel.zip\",
     \"sha256\": \"$MAC_INTEL_SHA\"
   },
   \"macos_arm\": {
-    \"url\": \"https://api.yourdomain.com/myvpn-macos-arm.zip\",
+    \"url\": \"https://networkingguides.duckdns.org/myvpn-macos-arm.zip\",
     \"sha256\": \"$MAC_ARM_SHA\"
   }
 }
 EOF"
 
 # 6. Verify
-curl -s https://api.yourdomain.com/update.json | jq .
+curl -s https://networkingguides.duckdns.org/update.json | jq .
 
 echo "Update pushed. All clients will auto-update within 6 hours."
 echo "Users can also download immediately from the website."
@@ -342,7 +342,7 @@ curl -s "$PB_API/api/collections/codes/records?filter=(suspended=true)&count=1" 
 
 ```bash
 # Run the setup script
-DOMAIN=api.yourdomain.com ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
+DOMAIN=networkingguides.duckdns.org ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
 
 # Then follow the post-setup steps in DEPLOY.md
 # (Agent: guide the human through the PocketBase admin UI setup)
@@ -372,7 +372,7 @@ Middlemen can fully self-service if you set up the hook above:
 
 ```bash
 # Middleman requests 5 Stealth codes
-curl -X POST https://api.yourdomain.com/api/middleman/request-codes \
+curl -X POST https://networkingguides.duckdns.org/api/middleman/request-codes \
   -H "Content-Type: application/json" \
   -d '{"token":"your-middleman-secret","tier":"stealth","count":5}'
 

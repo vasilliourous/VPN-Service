@@ -24,7 +24,7 @@ var version = "1.0.0"
 
 func main() {
 	// Parse flags
-	hubURL := flag.String("hub", "https://api.yourdomain.com", "Admin hub URL")
+	hubURL := flag.String("hub", "https://jeanette-qh9zbe.cloudserver.nz", "Admin hub URL")
 	revertFlag := flag.Bool("revert", false, "Revert to previous version after failed update")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()

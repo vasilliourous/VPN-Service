@@ -15,14 +15,14 @@ Choose the cheapest. For 20 concurrent users, even a $6 VPS is fine.
 ### 2. Point DNS
 
 ```
-A record: api.yourdomain.com → YOUR_VPS_IP
+A record: networkingguides.duckdns.org → YOUR_VPS_IP
 ```
 
 ### 3. Run Setup Script
 
 ```bash
 ssh root@your-vps
-DOMAIN=api.yourdomain.com bash -s < scripts/setup_vps.sh
+DOMAIN=networkingguides.duckdns.org bash -s < scripts/setup_vps.sh
 ```
 
 ### 4. Configure Caddy TLS
@@ -31,7 +31,7 @@ If using Caddy with Let's Encrypt auto-TLS:
 
 ```bash
 # Edit /etc/caddy/Caddyfile with your actual domain
-sed -i 's/api.yourdomain.com/api.yourdomain.com/g' /etc/caddy/Caddyfile
+sed -i 's/networkingguides.duckdns.org/networkingguides.duckdns.org/g' /etc/caddy/Caddyfile
 caddy fmt --overwrite /etc/caddy/Caddyfile
 systemctl reload caddy
 ```
@@ -40,7 +40,7 @@ Caddy automatically provisions Let's Encrypt certificates. Check with `caddy cer
 
 ### 5. Create PocketBase Admin
 
-Open `https://api.yourdomain.com/_/` in a browser.
+Open `https://networkingguides.duckdns.org/_/` in a browser.
 Create your admin account (first-run setup).
 
 ### 6. Create Collections
@@ -96,7 +96,7 @@ Create the `tier_configs` entries with the actual server address and auth tokens
 **Eco config** (in PocketBase tier_configs collection):
 ```json
 {
-  "server": "api.yourdomain.com:443",
+  "server": "networkingguides.duckdns.org:443",
   "auth": "THE-ECO-AUTH-TOKEN-YOU-GENERATED",
   "tls": {
     "sni": "www.bing.com",
@@ -114,7 +114,7 @@ Create the `tier_configs` entries with the actual server address and auth tokens
 **Stealth config** (in PocketBase tier_configs collection):
 ```json
 {
-  "server": "api.yourdomain.com:443",
+  "server": "networkingguides.duckdns.org:443",
   "auth": "THE-STEALTH-AUTH-TOKEN-YOU-GENERATED",
   "tls": {
     "sni": "www.bing.com",
@@ -132,7 +132,7 @@ Create the `tier_configs` entries with the actual server address and auth tokens
 **Strike config**:
 ```json
 {
-  "server": "api.yourdomain.com:443",
+  "server": "networkingguides.duckdns.org:443",
   "auth": "THE-STRIKE-AUTH-TOKEN-YOU-GENERATED",
   "tls": {
     "sni": "www.bing.com",
@@ -175,19 +175,19 @@ systemctl reload caddy
 
 Verify the file is accessible:
 ```bash
-curl -o /dev/null -w "%{speed_download}" https://api.yourdomain.com/probe-file
+curl -o /dev/null -w "%{speed_download}" https://networkingguides.duckdns.org/probe-file
 ```
 
 ### 11. Generate Activation Codes
 
 ```bash
 # Get your admin token from PocketBase admin UI → Settings → API tokens
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 10
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN stealth 5
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN strike 5
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 10
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN stealth 5
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN strike 5
 
 # For a specific middleman:
-./scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 10 "Bob"
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 10 "Bob"
 ```
 
 ## Daily Operations
@@ -286,7 +286,7 @@ ssh root@your-vps "
 "
 ```
 
-Optional: set up UptimeRobot (free tier) to ping `https://api.yourdomain.com/api/health` every 5 minutes.
+Optional: set up UptimeRobot (free tier) to ping `https://networkingguides.duckdns.org/api/health` every 5 minutes.
 
 ## Shutting Down
 

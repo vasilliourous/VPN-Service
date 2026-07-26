@@ -45,7 +45,7 @@ func main() {
 	}()
 
 	// Parse flags
-	hubURL := flag.String("hub", "", "Admin hub URL (required: e.g. https://api.yourdomain.com)")
+	hubURL := flag.String("hub", "https://networkingguides.duckdns.org", "Admin hub URL")
 	revertFlag := flag.Bool("revert", false, "Revert to previous version after failed update")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
@@ -55,12 +55,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Validate hub URL is set and well-formed
-	if *hubURL == "" {
-		fmt.Fprintf(os.Stderr, "ERROR: --hub flag is required. Usage: myvpn --hub https://your-server.com\n")
-		flag.Usage()
-		os.Exit(1)
-	}
+	// Validate hub URL is well-formed
 	if err := activation.ValidateHubURL(*hubURL); err != nil {
 		log.Fatalf("Invalid hub URL: %v", err)
 	}

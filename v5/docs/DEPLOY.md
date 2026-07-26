@@ -26,7 +26,7 @@
 Create an A record for your VPS IP:
 
 ```
-api.yourdomain.com  A  YOUR_VPS_IP
+networkingguides.duckdns.org  A  YOUR_VPS_IP
 ```
 
 TTL of 60s recommended during initial setup. Increase to 300s+ after stable.
@@ -43,13 +43,13 @@ scp -r v5/server root@your-vps:/root/
 
 # SSH in and run
 ssh root@your-vps
-DOMAIN=api.yourdomain.com /root/server/setup.sh
+DOMAIN=networkingguides.duckdns.org /root/server/setup.sh
 ```
 
 ### Option B: Pipe from Local Machine
 
 ```bash
-DOMAIN=api.yourdomain.com ssh root@your-vps 'bash -s' < v5/server/setup.sh
+DOMAIN=networkingguides.duckdns.org ssh root@your-vps 'bash -s' < v5/server/setup.sh
 ```
 
 The setup script does **everything** automatically:
@@ -69,7 +69,7 @@ The setup script does **everything** automatically:
 
 ### 4.1 Create PocketBase Admin
 
-1. Visit `https://api.yourdomain.com/_/` in a browser
+1. Visit `https://networkingguides.duckdns.org/_/` in a browser
 2. Create your admin account (first-run wizard)
 
 ### 4.2 Create Collections
@@ -139,7 +139,7 @@ Create entries in the `tier_configs` PocketBase collection:
 {
   "tier": "eco",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8443,
     "password": "<ECO_PASS>",
     "method": "aes-256-gcm"
@@ -154,7 +154,7 @@ Create entries in the `tier_configs` PocketBase collection:
 {
   "tier": "stealth",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8444,
     "password": "<STEALTH_PASS>",
     "method": "aes-256-gcm"
@@ -169,7 +169,7 @@ Create entries in the `tier_configs` PocketBase collection:
 {
   "tier": "strike",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "networkingguides.duckdns.org",
     "server_port": 8445,
     "password": "<STRIKE_PASS>",
     "method": "aes-256-gcm"
@@ -183,9 +183,9 @@ Create entries in the `tier_configs` PocketBase collection:
 
 ```bash
 # From your local machine
-./v5/scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50
-./v5/scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN stealth 30
-./v5/scripts/generate_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN strike 20
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN stealth 30
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN strike 20
 ```
 
 ### 4.6 Print Code Cards
@@ -229,9 +229,9 @@ After deployment, verify:
 - [ ] `lsmod | grep tcp_brutal` → loaded
 - [ ] `sysctl net.ipv4.tcp_congestion_control` → bbr
 - [ ] `tc -s class show dev eth0` → classes for 8443 and 8445
-- [ ] `curl -sf https://api.yourdomain.com/api/health` → 200
+- [ ] `curl -sf https://networkingguides.duckdns.org/api/health` → 200
 - [ ] `ufw status` → active with all rules
-- [ ] `openssl s_client -connect api.yourdomain.com:443 -servername api.yourdomain.com </dev/null 2>/dev/null | openssl x509 -noout -dates` → valid cert
+- [ ] `openssl s_client -connect networkingguides.duckdns.org:443 -servername networkingguides.duckdns.org </dev/null 2>/dev/null | openssl x509 -noout -dates` → valid cert
 
 ---
 
@@ -243,7 +243,7 @@ See `v5/server/restore.sh` for full restore from B2 backup.
 B2_APPLICATION_KEY_ID=xxx \
 B2_APPLICATION_KEY=xxx \
 B2_BUCKET=my-vpn-backup-bucket \
-DOMAIN=api.yourdomain.com \
+DOMAIN=networkingguides.duckdns.org \
 ssh root@new-vps 'bash -s' < v5/server/restore.sh
 ```
 

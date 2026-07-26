@@ -307,7 +307,7 @@ The `config` object is now a sing-box outbound configuration, not sslocal.
 {
   "tier": "eco",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8443,
     "password": "eco-password",
     "method": "aes-256-gcm",
@@ -324,7 +324,7 @@ The `config` object is now a sing-box outbound configuration, not sslocal.
 {
   "tier": "stealth",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8444,
     "password": "stealth-password",
     "method": "aes-256-gcm",
@@ -341,7 +341,7 @@ The `config` object is now a sing-box outbound configuration, not sslocal.
 {
   "tier": "strike",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8445,
     "password": "strike-password",
     "method": "aes-256-gcm",

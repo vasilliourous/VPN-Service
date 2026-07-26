@@ -15,20 +15,20 @@ Any works. 2GB RAM is plenty for 20 users.
 ### 2. Point DNS
 
 ```
-A record: api.yourdomain.com → YOUR_VPS_IP
+A record: jeanette-qh9zbe.cloudserver.nz → YOUR_VPS_IP
 ```
 
 ### 3. Run Setup Script
 
 ```bash
-DOMAIN=api.yourdomain.com ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
+DOMAIN=jeanette-qh9zbe.cloudserver.nz ssh root@your-vps 'bash -s' < scripts/setup_vps.sh
 ```
 
 The script does everything: installs shadowsocks, enables BBR as system default, builds CUBIC and Brutal LD_PRELOAD wrappers, compiles TCP Brutal kernel module, configures tc traffic shaping for Eco (5 Mbps), sets Brutal target rate (48 Mbps), sets up three ssserver instances (eco:8443, stealth:8444, strike:8445), installs PocketBase + Caddy, opens firewall ports.
 
 ### 4. Open PocketBase Admin
 
-Visit `https://api.yourdomain.com/_/` in a browser. Create admin account. Create `codes` and `tier_configs` collections.
+Visit `https://jeanette-qh9zbe.cloudserver.nz/_/` in a browser. Create admin account. Create `codes` and `tier_configs` collections.
 
 ### 5. Upload JS Hooks
 
@@ -44,9 +44,9 @@ Enter the three Shadowsocks configs in the `tier_configs` collection (see ARCHIT
 ### 7. Generate Initial Codes
 
 ```bash
-./scripts/print_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN eco 50 eco-cards.txt
-./scripts/print_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN stealth 30 stealth-cards.txt
-./scripts/print_codes.sh https://api.yourdomain.com YOUR_ADMIN_TOKEN strike 20 strike-cards.txt
+./scripts/print_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN eco 50 eco-cards.txt
+./scripts/print_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN stealth 30 stealth-cards.txt
+./scripts/print_codes.sh https://jeanette-qh9zbe.cloudserver.nz YOUR_ADMIN_TOKEN strike 20 strike-cards.txt
 ```
 
 ## Daily Ops
@@ -76,7 +76,7 @@ curl -X PATCH "$PB_API/api/collections/codes/records/$ID" \
 ```bash
 make bundle-all
 # Upload zips to VPS
-scp dist/*.zip root@api.yourdomain.com:/var/www/html/
+scp dist/*.zip root@jeanette-qh9zbe.cloudserver.nz:/var/www/html/
 # Update update.json with new version + SHA256 hashes
 ```
 

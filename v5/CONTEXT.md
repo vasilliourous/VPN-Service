@@ -271,8 +271,8 @@ v5/client/
    for hook load errors.
 5. **TCP Brutal must be re-checked after every kernel update.** DKMS should
    auto-rebuild, but verify with `lsmod | grep tcp_brutal`.
-6. **The DuckDNS domain is `networkingguides.duckdns.org`** pointing to `114.23.136.47`.
-   DuckDNS needs periodic A record updates if the VPS IP changes.
+6. **The server domain is `networkingguides.duckdns.org`** pointing to `114.23.136.47`.
+   This is the VPS hostname — DNS is managed by the hosting provider.
 
 ### Key credentials (live VPS as of 2026-07-26)
 
@@ -293,5 +293,5 @@ the full list of credential files and locations.
 - **The client code now lives in `v5/client/`** — not v4/. Always build from v5/client/.
 - **The JS hooks have been rewritten for PocketBase 0.22+** — if activation still returns a generic
   400 error after a fresh deploy, check `journalctl -u pocketbase` for hook load errors.
-- **DuckDNS needs periodic A record updates** if the VPS IP changes. The update URL is
-  `https://www.duckdns.org/update?domains=networkingguides&token=TOKEN&ip=`.
+- **DNS is managed by the hosting provider** — the VPS hostname `networkingguides.duckdns.org`
+  resolves to the VPS IP automatically. No DuckDNS updates needed.

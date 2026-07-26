@@ -42,7 +42,7 @@ Deploy using `scripts/setup_vps.sh` (see Phase 7).
 
 ### Step 2.2 — PocketBase Collections
 
-Create in PocketBase admin UI (`https://api.yourdomain.com/_/`):
+Create in PocketBase admin UI (`https://networkingguides.duckdns.org/_/`):
 
 **Collection: `codes`**
 - `code` (text, required, unique) — format `XXXX-XXXX-XXXX`
@@ -202,7 +202,7 @@ routerAdd("POST", "/api/middleman/request-codes", (c) => {
 **File:** `server/Caddyfile`
 
 ```caddy
-api.yourdomain.com {
+networkingguides.duckdns.org {
     # Static files (probe file for bandwidth detection)
     root * /var/www/html
 
@@ -629,7 +629,7 @@ import (
 
 var (
     version     = "0.1.0"
-    adminHubURL = flag.String("hub", "https://api.yourdomain.com", "Admin hub URL")
+    adminHubURL = flag.String("hub", "https://networkingguides.duckdns.org", "Admin hub URL")
 )
 
 func main() {
@@ -706,7 +706,7 @@ One-command VPS bootstrap:
 
 set -euo pipefail
 
-DOMAIN="${DOMAIN:-api.yourdomain.com}"
+DOMAIN="${DOMAIN:-networkingguides.duckdns.org}"
 HYSTERIA_VERSION="${HYSTERIA_VERSION:-v2.4.0}"
 
 # 1. System update + firewall
@@ -759,7 +759,7 @@ chmod 644 /var/www/html/probe-file
 
 # 4b. Configure Caddy
 cat > /etc/caddy/Caddyfile <<'EOF'
-api.yourdomain.com {
+networkingguides.duckdns.org {
     root * /var/www/html
 
     handle_path /api/* {
@@ -776,7 +776,7 @@ api.yourdomain.com {
 }
 EOF
 
-# Note: Replace api.yourdomain.com with your actual domain
+# Note: Replace networkingguides.duckdns.org with your actual domain
 # Run: caddy fmt --overwrite /etc/caddy/Caddyfile
 # Run: systemctl reload caddy
 
@@ -790,8 +790,8 @@ mkdir -p /etc/hysteria
 cat > /etc/hysteria/server.yaml <<'EOF'
 listen: :443
 tls:
-  cert: /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem
-  key: /etc/letsencrypt/live/api.yourdomain.com/privkey.pem
+  cert: /etc/letsencrypt/live/networkingguides.duckdns.org/fullchain.pem
+  key: /etc/letsencrypt/live/networkingguides.duckdns.org/privkey.pem
 quic:
   initStreamReceiveWindow: 8388608
   maxStreamReceiveWindow: 8388608
@@ -829,7 +829,7 @@ cat > /usr/local/bin/refill-codes.sh <<'REFILL'
 #!/bin/bash
 # Auto-refill codes when fewer than 10 unused remain
 # Change PB_TOKEN + MIDDLEMAN_TOKEN after first PocketBase admin setup
-PB_API='https://api.yourdomain.com'
+PB_API='https://networkingguides.duckdns.org'
 PB_TOKEN='CHANGE_ME_TO_YOUR_PB_ADMIN_TOKEN'
 MIDDLEMAN_TOKEN='your-middleman-secret'
 
@@ -856,7 +856,7 @@ echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "1. Set your DNS A record to this server's IP"
-echo "2. Open https://api.yourdomain.com/_/ and create admin account"
+echo "2. Open https://networkingguides.duckdns.org/_/ and create admin account"
 echo "3. Create 'codes' and 'tier_configs' collections"
 echo "4. Copy pb_hooks/ to /opt/pocketbase/pb_hooks/"
 echo "5. Update auth passwords in /etc/hysteria/server.yaml + PB_TOKEN in /usr/local/bin/refill-codes.sh"
@@ -872,7 +872,7 @@ echo "7. Generate initial codes via admin UI or ./scripts/generate_codes.sh"
 # Usage: ./generate_codes.sh <api_base> <admin_token> <tier> <count> [middleman]
 #
 # Example:
-#   ./generate_codes.sh https://api.yourdomain.com myadmintoken strike 10
+#   ./generate_codes.sh https://networkingguides.duckdns.org myadmintoken strike 10
 
 API_BASE="${1}"
 TOKEN="${2}"
@@ -943,8 +943,8 @@ into card strips.
 # Usage: ./print_codes.sh <api_base> <admin_token> <tier> <count> [output_file]
 #
 # Example:
-#   ./print_codes.sh https://api.yourdomain.com myadmintoken eco 50 cards.txt
-#   ./print_codes.sh https://api.yourdomain.com myadmintoken strike 30
+#   ./print_codes.sh https://networkingguides.duckdns.org myadmintoken eco 50 cards.txt
+#   ./print_codes.sh https://networkingguides.duckdns.org myadmintoken strike 30
 
 API_BASE="${1}"
 TOKEN="${2}"
@@ -991,7 +991,7 @@ fi
         echo "│       ${CODE}        │"
         echo "│                             │"
         echo "│  Tier: ${TIER}                    │"
-        echo "│  Download: api.yourdomain.com  │"
+        echo "│  Download: networkingguides.duckdns.org  │"
         echo "│                             │"
         echo "└─────────────────────────────┘"
         echo ""
@@ -1051,15 +1051,15 @@ No website — just files on disk that the auto-updater checks.
 {
   "version": "0.1.0",
   "windows": {
-    "url": "https://api.yourdomain.com/myvpn-windows.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-windows.zip",
     "sha256": ""
   },
   "macos_intel": {
-    "url": "https://api.yourdomain.com/myvpn-macos-intel.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-macos-intel.zip",
     "sha256": ""
   },
   "macos_arm": {
-    "url": "https://api.yourdomain.com/myvpn-macos-arm.zip",
+    "url": "https://networkingguides.duckdns.org/myvpn-macos-arm.zip",
     "sha256": ""
   }
 }

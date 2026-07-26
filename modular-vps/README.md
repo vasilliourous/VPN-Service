@@ -252,21 +252,21 @@ scp -r modular-vps root@your-vps:/root/
 
 # 2. SSH in and run the orchestrator
 ssh root@your-vps
-DOMAIN=api.yourdomain.com ./modular-vps/setup.sh
+DOMAIN=networkingguides.duckdns.org ./modular-vps/setup.sh
 ```
 
 Or in one command:
 
 ```bash
 scp -r modular-vps root@your-vps:/root/ && \
-ssh root@your-vps "DOMAIN=api.yourdomain.com /root/modular-vps/setup.sh"
+ssh root@your-vps "DOMAIN=networkingguides.duckdns.org /root/modular-vps/setup.sh"
 ```
 
 ### Setup With Backup Restore (VPS Switch)
 
 ```bash
 scp -r modular-vps root@your-vps:/root/
-ssh root@your-vps "DOMAIN=api.yourdomain.com \
+ssh root@your-vps "DOMAIN=networkingguides.duckdns.org \
   B2_APPLICATION_KEY_ID=your_key \
   B2_APPLICATION_KEY=your_key \
   B2_BUCKET=my-vpn-backup-bucket \
@@ -279,7 +279,7 @@ Omitting `BACKUP_PATH` auto-selects the latest backup in the bucket.
 
 ```bash
 scp modular-vps/modules/04-tc.sh root@your-vps:/root/modular-vps/modules/
-ssh root@your-vps "DOMAIN=api.yourdomain.com /root/modular-vps/modules/04-tc.sh"
+ssh root@your-vps "DOMAIN=networkingguides.duckdns.org /root/modular-vps/modules/04-tc.sh"
 ```
 
 Useful for re-applying traffic shaping after a network interface change,

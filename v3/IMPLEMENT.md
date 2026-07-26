@@ -350,7 +350,7 @@ systemctl enable --now pocketbase
 
 **Caddyfile** (`/etc/caddy/Caddyfile`):
 ```
-api.yourdomain.com {
+jeanette-qh9zbe.cloudserver.nz {
     reverse_proxy 127.0.0.1:8090
     rate_limit {
         zone dynamic {
@@ -372,7 +372,7 @@ systemctl reload caddy
 
 ### Step 2.11 — PocketBase Collections
 
-Open `https://api.yourdomain.com/_/` in a browser and create admin account.
+Open `https://jeanette-qh9zbe.cloudserver.nz/_/` in a browser and create admin account.
 
 **Collection: `codes`**
 - `code` (text, required, unique) — format `XXXX-XXXX-XXXX`
@@ -402,7 +402,7 @@ the ones generated in step 2.2 (stored in `/root/.tier_passwords`).
 {
   "tier": "eco",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8443,
     "password": "<ECO_PASS>",
     "method": "aes-256-gcm",
@@ -421,7 +421,7 @@ the ones generated in step 2.2 (stored in `/root/.tier_passwords`).
 {
   "tier": "stealth",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8444,
     "password": "<STEALTH_PASS>",
     "method": "aes-256-gcm",
@@ -440,7 +440,7 @@ the ones generated in step 2.2 (stored in `/root/.tier_passwords`).
 {
   "tier": "strike",
   "config": {
-    "server": "api.yourdomain.com",
+    "server": "jeanette-qh9zbe.cloudserver.nz",
     "server_port": 8445,
     "password": "<STRIKE_PASS>",
     "method": "aes-256-gcm",
@@ -634,7 +634,7 @@ import (
 
 var (
     version     = "1.0.0"
-    adminHubURL = flag.String("hub", "https://api.yourdomain.com", "Admin hub URL")
+    adminHubURL = flag.String("hub", "https://jeanette-qh9zbe.cloudserver.nz", "Admin hub URL")
 )
 
 func main() {
