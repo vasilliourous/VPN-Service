@@ -19,12 +19,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
 
-	"path/filepath"
-
+	"myvpn/internal/activation"
 	"myvpn/internal/gui"
 	"myvpn/internal/updater"
 )

@@ -9,6 +9,11 @@ import (
 	"syscall"
 )
 
+func init() {
+	swapFile = swapUnix
+	forkExec = forkUnix
+}
+
 // swapUnix performs an atomic rename on Unix systems.
 func swapUnix(newPath, currentPath string) error {
 	// On Unix, we can atomically rename the new binary over the current one.

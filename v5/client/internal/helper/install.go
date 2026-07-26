@@ -1,4 +1,5 @@
-// Package helper provides installation and management of the MyVPN TUN helper service.
+// Package main — installation and management of the MyVPN TUN helper service.
+// This file is part of the standalone myvpn-helper binary (same package as main.go).
 //
 // The helper runs with elevated privileges and is installed as:
 //   - Linux: systemd service
@@ -6,7 +7,7 @@
 //   - Windows: Windows Service
 //
 // Hardening: service file validation, platform-specific safety checks.
-package helper
+package main
 
 import (
 	"fmt"

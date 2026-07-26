@@ -30,7 +30,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 )
 
@@ -400,16 +399,6 @@ func forkNewProcess(binaryPath string) error {
 }
 
 // Platform-specific implementations
+// These are set by init() in each platform file (update_unix.go, update_windows.go)
 var swapFile func(newPath, currentPath string) error
 var forkExec func(binaryPath string) error
-
-func init() {
-	switch runtime.GOOS {
-	case "windows":
-		swapFile = swapWindows
-		forkExec = forkWindows
-	default:
-		swapFile = swapUnix
-		forkExec = forkUnix
-	}
-}

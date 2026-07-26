@@ -9,6 +9,11 @@ import (
 	"syscall"
 )
 
+func init() {
+	swapFile = swapWindows
+	forkExec = forkWindows
+}
+
 // swapWindows renames the current binary to .old, then renames the new one in place.
 // Windows doesn't support atomic rename of a running executable, so we use the .old trick.
 func swapWindows(newPath, currentPath string) error {
