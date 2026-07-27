@@ -1,0 +1,11 @@
+# MyVPN Server — Secrets and transient files
+
+# Age-encrypted secrets key (NEVER commit the private key)
+age-key.txt
+
+# Plain-text secrets file (NEVER commit — encrypt before committing)
+.secrets.env
+
+# VPS-specific runtime files (created by setup.sh on the VPS)
+*.tmp
+/tmp/myvpn-*

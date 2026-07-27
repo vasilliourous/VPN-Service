@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # MyVPN VPS Restore — Provision + restore from B2 backup
 # Usage:
-#   From-scratch restore (interactive):
+#   From-scratch restore (age key file on VPS):
+#     scp -r v5/server age-key.txt root@new-vps:/root/server/
+#     ssh root@new-vps "/root/server/restore.sh"
+#
+#   From-scratch restore (pipe with AGE_KEY):
+#     AGE_KEY=$(cat age-key.txt) \
+#       ssh root@new-vps 'bash -s' < restore.sh
+#
+#   Manual override (no secrets file):
 #     B2_APPLICATION_KEY_ID=xxx \
 #     B2_APPLICATION_KEY=xxx \
 #     B2_BUCKET=my-vpn-backup-bucket \
@@ -19,19 +27,55 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGFILE="/var/log/myvpn-restore.log"
 
-: "${DOMAIN:?DOMAIN is required}"
-export DOMAIN
-: "${B2_APPLICATION_KEY_ID:?B2 application key ID required}"
-: "${B2_APPLICATION_KEY:?B2 application key required}"
-: "${B2_BUCKET:?B2 bucket name required}"
-: "${BACKUP_PATH:=}"  # Optional: specific backup path. Auto-detects latest if empty.
-
 # ── Colors ──
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)]${NC} $*" | tee -a "$LOGFILE"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOGFILE"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*" | tee -a "$LOGFILE"; exit 1; }
+
+# ── Age-encrypted secrets auto-decrypt (same logic as setup.sh) ──
+# Decrypts secrets.env.age so B2 credentials and DOMAIN are available.
+# See docs/SECRETS-MANAGEMENT.md for full setup guide.
+SECRETS_FILE="${SCRIPT_DIR}/secrets.env.age"
+if [ -f "$SECRETS_FILE" ]; then
+    log "Decrypting ${SECRETS_FILE}..."
+    if [ -n "${AGE_KEY:-}" ]; then
+        echo "$AGE_KEY" > "/tmp/age-key-$$.tmp"
+        set -a
+        source <(age -d -i "/tmp/age-key-$$.tmp" "$SECRETS_FILE" 2>/dev/null) || \
+            fail "Failed to decrypt secrets. Check AGE_KEY."
+        set +a
+        rm -f "/tmp/age-key-$$.tmp"
+    elif [ -f "${SCRIPT_DIR}/age-key.txt" ]; then
+        set -a
+        source <(age -d -i "${SCRIPT_DIR}/age-key.txt" "$SECRETS_FILE" 2>/dev/null) || \
+            fail "Failed to decrypt secrets. Check age-key.txt."
+        set +a
+    else
+        cat >&2 << 'KEYERR'
+
+╔══════════════════════════════════════════════════════════════╗
+║  FATAL: secrets.env.age found but no age key available.     ║
+║                                                            ║
+║  Provide the key in one of these ways:                     ║
+║    1. Set AGE_KEY environment variable (CI/CD / pipe)      ║
+║    2. Place age-key.txt in the server/ directory            ║
+║                                                            ║
+║  See docs/SECRETS-MANAGEMENT.md for setup instructions.    ║
+╚══════════════════════════════════════════════════════════════╝
+KEYERR
+        fail "No age key available for secrets.env.age"
+    fi
+    log "✓ Secrets decrypted from ${SECRETS_FILE}"
+fi
+
+: "${DOMAIN:?DOMAIN is required}"
+export DOMAIN
+: "${B2_APPLICATION_KEY_ID:?B2 application key ID required}"
+: "${B2_APPLICATION_KEY:?B2 application key required}"
+: "${B2_BUCKET:?B2 bucket name required}"
+: "${BACKUP_PATH:=}"  # Optional: specific backup path. Auto-detects latest if empty.
 
 log "══════════════════════════════════════════"
 log " MyVPN VPS — Full Restore from B2 Backup"

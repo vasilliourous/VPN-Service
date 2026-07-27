@@ -51,27 +51,37 @@ install_ssserver() {
     log "✓ ssserver installed"
 }
 
-# ── Generate or load tier passwords ──
+# ── Load or generate tier passwords ──
+# Priority: 1) env vars from decrypted secrets  2) existing file on VPS  3) auto-generate
 setup_passwords() {
-    if [ -f "$PASS_FILE" ]; then
+    ECO_PASS="${ECO_PASS:-}"
+    STEALTH_PASS="${STEALTH_PASS:-}"
+    STRIKE_PASS="${STRIKE_PASS:-}"
+
+    if [ -n "$ECO_PASS" ] && [ -n "$STEALTH_PASS" ] && [ -n "$STRIKE_PASS" ]; then
+        log "Using tier passwords from environment (decrypted secrets)."
+    elif [ -f "$PASS_FILE" ]; then
         log "Loading existing passwords from ${PASS_FILE}"
         . "$PASS_FILE"
     else
-        log "Generating new tier passwords..."
+        log "WARNING: No secrets file and no existing password file found."
+        log "Auto-generating tier passwords (non-reproducible — existing clients will break on re-deploy)."
         ECO_PASS=$(openssl rand -hex 16)
         STEALTH_PASS=$(openssl rand -hex 16)
         STRIKE_PASS=$(openssl rand -hex 16)
-        cat > "$PASS_FILE" <<EOF
+    fi
+
+    # Persist to file so seed-pb.py and later runs can find them
+    cat > "$PASS_FILE" <<EOF
 ECO_PASS=$ECO_PASS
 STEALTH_PASS=$STEALTH_PASS
 STRIKE_PASS=$STRIKE_PASS
 EOF
-        chmod 600 "$PASS_FILE"
-        log "✓ Passwords generated and saved to ${PASS_FILE}"
-    fi
+    chmod 600 "$PASS_FILE"
 
     # Export for use in config files
     export ECO_PASS STEALTH_PASS STRIKE_PASS
+    log "✓ Tier passwords ready (eco/stealth/strike)"
 }
 
 # ── Create Shadowsocks config ──

@@ -183,18 +183,22 @@ SERVICE
 # ── Save B2 credentials (with export!) ──
 save_creds() {
     if [ "$B2_CREDS_FOUND" -eq 0 ]; then
-        # No environment vars — use defaults if creds file doesn't exist
+        # No environment vars — check if creds file exists from a previous deploy
         if [ ! -f "$CREDS_FILE" ]; then
-            warn "No B2 credentials provided via environment. Checking defaults..."
-            # The user's B2 credentials are configured as defaults below.
-            # If you need to override, pass env vars or edit /root/.b2-creds
-            : "${B2_APPLICATION_KEY_ID:=0058c80cba5a7810000000001}"
-            : "${B2_APPLICATION_KEY:=K005YSwyd/yW2kYZKJHfC78w3DlaX5k}"
-            : "${B2_BUCKET:=vpsvpnbackup}"
-            B2_CREDS_FOUND=1
-            log "Using configured B2 credentials (bucket: ${B2_BUCKET})"
-        else
-            return 0  # creds file exists, use that
+            cat >&2 << 'B2WARN'
+╔══════════════════════════════════════════════════════════════╗
+║  WARNING: B2 credentials not found.                         ║
+║                                                            ║
+║  Backups will NOT be configured until B2 credentials are    ║
+║  provided. Set them in secrets.env.age:                     ║
+║    B2_APPLICATION_KEY_ID=your_key_id                        ║
+║    B2_APPLICATION_KEY=your_key                              ║
+║    B2_BUCKET=your-bucket                                    ║
+║                                                            ║
+║  Or pass them as environment variables to setup.sh.         ║
+╚══════════════════════════════════════════════════════════════╝
+B2WARN
+            return 0  # Skip B2 setup gracefully
         fi
     fi
 

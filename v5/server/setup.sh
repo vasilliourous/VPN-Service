@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # MyVPN Modular VPS Setup — Orchestrator
 # Usage:
-#   1. scp -r modular-vps root@your-vps:/root/
-#   2. ssh root@your-vps "DOMAIN=networkingguides.duckdns.org /root/modular-vps/setup.sh"
+#   1. scp -r v5/server age-key.txt root@your-vps:/root/server/
+#   2. ssh root@your-vps "/root/server/setup.sh"
+#
+# Secrets are auto-decrypted from secrets.env.age using age.
+# See docs/SECRETS-MANAGEMENT.md for setup instructions.
 #
 # Each module is idempotent and can be re-run independently.
 set -euo pipefail
@@ -11,15 +14,57 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULES_DIR="${SCRIPT_DIR}/modules"
 LOGFILE="/var/log/myvpn-setup.log"
 
-: "${DOMAIN:?DOMAIN is required (e.g. networkingguides.duckdns.org)}"
-: "${FORCE:=}"  # Set to 1 to continue on module failure
-
 # ── Colors ──
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)]${NC} $*" | tee -a "$LOGFILE"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOGFILE"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*" | tee -a "$LOGFILE"; exit 1; }
+
+# ── Age-encrypted secrets auto-decrypt ──
+# Decrypts secrets.env.age at startup so all modules see the credentials.
+# Key sources (in order of precedence):
+#   1. AGE_KEY environment variable (CI/CD, SSH pipe)
+#   2. age-key.txt file alongside this script (local deploy)
+# See docs/SECRETS-MANAGEMENT.md for full setup guide.
+SECRETS_FILE="${SCRIPT_DIR}/secrets.env.age"
+if [ -f "$SECRETS_FILE" ]; then
+    log "Decrypting ${SECRETS_FILE}..."
+    if [ -n "${AGE_KEY:-}" ]; then
+        echo "$AGE_KEY" > "/tmp/age-key-$$.tmp"
+        # Use set -a so decrypted variables are exported to all subprocesses (modules)
+        set -a
+        source <(age -d -i "/tmp/age-key-$$.tmp" "$SECRETS_FILE" 2>/dev/null) || \
+            fail "Failed to decrypt secrets. Check AGE_KEY."
+        set +a
+        rm -f "/tmp/age-key-$$.tmp"
+    elif [ -f "${SCRIPT_DIR}/age-key.txt" ]; then
+        # Use set -a so decrypted variables are exported to all subprocesses (modules)
+        set -a
+        source <(age -d -i "${SCRIPT_DIR}/age-key.txt" "$SECRETS_FILE" 2>/dev/null) || \
+            fail "Failed to decrypt secrets. Check age-key.txt."
+        set +a
+    else
+        cat >&2 << 'KEYERR'
+
+╔══════════════════════════════════════════════════════════════╗
+║  FATAL: secrets.env.age found but no age key available.     ║
+║                                                            ║
+║  Provide the key in one of these ways:                     ║
+║    1. Set AGE_KEY environment variable (CI/CD / pipe)      ║
+║    2. Place age-key.txt in the server/ directory            ║
+║                                                            ║
+║  See docs/SECRETS-MANAGEMENT.md for setup instructions.    ║
+╚══════════════════════════════════════════════════════════════╝
+KEYERR
+        fail "No age key available for secrets.env.age"
+    fi
+    log "✓ Secrets decrypted from ${SECRETS_FILE}"
+fi
+
+# ── Required variables (may be set by decrypted secrets or environment) ──
+: "${DOMAIN:?DOMAIN is required (e.g. networkingguides.duckdns.org)}"
+: "${FORCE:=}"  # Set to 1 to continue on module failure
 
 # ── Detect if running interactively ──
 if [ -t 0 ]; then
@@ -152,24 +197,28 @@ done
 
 # ── Generate ADMIN_API_TOKEN (if not already set) ──
 ADMIN_API_TOKEN_FILE="/root/.admin_api_token"
-if [ ! -f "$ADMIN_API_TOKEN_FILE" ]; then
-    ADMIN_API_TOKEN="CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4="
+if [ -n "${ADMIN_API_TOKEN:-}" ]; then
+    # Use pre-configured value (from decrypted secrets, env, or fallback)
     echo "$ADMIN_API_TOKEN" > "$ADMIN_API_TOKEN_FILE"
     chmod 600 "$ADMIN_API_TOKEN_FILE"
-    log "✓ ADMIN_API_TOKEN generated and saved to ${ADMIN_API_TOKEN_FILE}"
-    
-    # Add to environment if not already present
     if ! grep -q "ADMIN_API_TOKEN" /etc/environment 2>/dev/null; then
         echo "ADMIN_API_TOKEN=${ADMIN_API_TOKEN}" >> /etc/environment
-        log "✓ ADMIN_API_TOKEN added to /etc/environment"
+        systemctl restart pocketbase 2>/dev/null || true
     fi
-    
-    # Restart PocketBase to pick it up
+    log "✓ ADMIN_API_TOKEN configured from secrets"
+elif [ ! -f "$ADMIN_API_TOKEN_FILE" ]; then
+    # Fallback: generate a random token if no secrets file was used
+    ADMIN_API_TOKEN=$(openssl rand -base64 24 | tr '/+' '_-')
+    echo "$ADMIN_API_TOKEN" > "$ADMIN_API_TOKEN_FILE"
+    chmod 600 "$ADMIN_API_TOKEN_FILE"
+    echo "ADMIN_API_TOKEN=${ADMIN_API_TOKEN}" >> /etc/environment
     systemctl restart pocketbase 2>/dev/null || true
-    log "✓ PocketBase restarted to pick up ADMIN_API_TOKEN"
+    log "✓ ADMIN_API_TOKEN generated (random) and saved to ${ADMIN_API_TOKEN_FILE}"
+    log "  ⚠  This is a random fallback. For reproducible deploys, set ADMIN_API_TOKEN"
+    log "  ⚠  in secrets.env.age. See docs/SECRETS-MANAGEMENT.md"
 else
     ADMIN_API_TOKEN=$(cat "$ADMIN_API_TOKEN_FILE")
-    log "ADMIN_API_TOKEN already exists"
+    log "ADMIN_API_TOKEN loaded from ${ADMIN_API_TOKEN_FILE}"
 fi
 
 # ── Run post-deploy smoke test ──

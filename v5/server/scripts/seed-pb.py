@@ -151,13 +151,25 @@ resp = api("POST", "/api/collections/update_config/records", {
 log(f"  update_config: {'seeded' if resp.get('id') else resp.get('message', '')}")
 
 # ── Step 4: Seed tier configs ──
+# Priority: 1) Already in os.environ (from decrypted secrets via setup.sh)
+#           2) /root/.tier_passwords file (from 02-shadowsocks.sh)
 pw_file = "/root/.tier_passwords"
-if os.path.exists(pw_file):
+tiers_seeded = 0
+pw_from_file = False
+
+# Check if any tier passwords are already set in environment
+for t_name in ["ECO_PASS", "STEALTH_PASS", "STRIKE_PASS"]:
+    if os.environ.get(t_name, ""):
+        pw_from_file = True  # actually from env, but indicates they're available
+if not pw_from_file and os.path.exists(pw_file):
     with open(pw_file) as f:
         for line in f:
             if "=" in line and not line.startswith("#"):
                 k, v = line.strip().split("=", 1)
                 os.environ[k] = v
+    pw_from_file = True
+
+if pw_from_file:
     for t, port, udp in [("eco", 8443, False), ("stealth", 8444, False), ("strike", 8445, True)]:
         pw = os.environ.get(f"{t.upper()}_PASS", "")
         if not pw:
@@ -171,7 +183,10 @@ if os.path.exists(pw_file):
             "tier": t, "config": config_str, "active": True, "udp_relay": udp,
         })
         log(f"  {t}: {'seeded' if resp.get('id') else resp.get('message', '')}")
+        tiers_seeded += 1
 else:
-    log("  tier_passwords not found — skipping tier config seeding")
+    log("  No tier passwords found in environment or /root/.tier_passwords — skipping tier config seeding")
+    log("  This is expected on a fresh deploy without secrets.env.age.")
+    log("  Run 02-shadowsocks.sh first or provide secrets.env.age with tier passwords.")
 
 log("✓ Bootstrap complete")
