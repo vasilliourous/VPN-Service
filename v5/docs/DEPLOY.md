@@ -9,6 +9,7 @@
 - **VPS:** Ubuntu 22.04, x86_64, 2GB RAM minimum, 20GB disk
 - **Domain:** A domain name pointing to your VPS IP (A record)
 - **Backblaze B2 account** (optional, for backups)
+- **Age encryption key** (see `SECRETS-MANAGEMENT.md` for one-time setup)
 
 ### Recommended VPS Providers
 
@@ -33,23 +34,75 @@ TTL of 60s recommended during initial setup. Increase to 300s+ after stable.
 
 ---
 
-## 3. Deploy
+## 3. Secrets Setup (One-Time)
 
-### Option A: One-Command Deploy
+Before your first deploy, create an age-encrypted secrets file. This eliminates
+the need to manually pass environment variables on every deploy.
+
+**See the full guide:** [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md)
+
+Quick summary:
 
 ```bash
-# Copy the server directory to your VPS
-scp -r v5/server root@your-vps:/root/
+# 1. Install age
+curl -sLO "https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz"
+tar -xzf age-v1.2.1-linux-amd64.tar.gz
+sudo cp age/age age/age-keygen /usr/local/bin/
 
-# SSH in and run
-ssh root@your-vps
-DOMAIN=networkingguides.duckdns.org /root/server/setup.sh
+# 2. Generate a key pair
+age-keygen -o age-key.txt
+
+# 3. Create .secrets.env with all credentials:
+#    DOMAIN, ADMIN_API_TOKEN, B2_APPLICATION_KEY_ID/KEY, B2_BUCKET,
+#    ECO_PASS, STEALTH_PASS, STRIKE_PASS, PB_ADMIN_EMAIL, PB_ADMIN_PASS
+#    (See SECRETS-MANAGEMENT.md for the full template)
+
+# 4. Encrypt it
+age -r "$(age-keygen -y age-key.txt)" -o v5/server/secrets.env.age .secrets.env
+shred -u .secrets.env
+
+# 5. Commit the encrypted file
+git add v5/server/secrets.env.age
 ```
 
-### Option B: Pipe from Local Machine
+Once this is done, **all credentials are auto-injected at deploy time** from
+`secrets.env.age`. You never type them again.
+
+---
+
+## 4. Deploy
+
+### Option A: Local Machine with Key File (Recommended)
 
 ```bash
-DOMAIN=networkingguides.duckdns.org ssh root@your-vps 'bash -s' < v5/server/setup.sh
+# Copy server code AND age key to the VPS
+scp -r v5/server age-key.txt root@your-vps:/root/server/
+
+# One-command deploy — secrets auto-decrypt from age-key.txt
+ssh root@your-vps "/root/server/setup.sh"
+```
+
+No environment variables needed — `DOMAIN`, `ADMIN_API_TOKEN`, B2 creds,
+tier passwords, and PB admin credentials are all decrypted from
+`secrets.env.age` automatically.
+
+### Option B: Pipe with AGE_KEY (CI/CD or no key file on disk)
+
+```bash
+AGE_KEY=$(cat age-key.txt) ssh root@your-vps 'bash -s' < v5/server/setup.sh
+```
+
+### Option C: Manual Env Vars (No Secrets File)
+
+If you haven't set up the age-encrypted secrets file yet:
+
+```bash
+DOMAIN=networkingguides.duckdns.org \
+ADMIN_API_TOKEN=your-token \
+B2_APPLICATION_KEY_ID=xxx \
+B2_APPLICATION_KEY=xxx \
+B2_BUCKET=my-vpn-backup-bucket \
+ssh root@your-vps 'bash -s' < v5/server/setup.sh
 ```
 
 The setup script does **everything** automatically:
@@ -65,159 +118,7 @@ The setup script does **everything** automatically:
 
 ---
 
-## 4. Post-Deployment Configuration
-
-### 4.1 Create PocketBase Admin
-
-1. Visit `https://networkingguides.duckdns.org/_/` in a browser
-2. Create your admin account (first-run wizard)
-
-### 4.2 Create Collections
-
-In PocketBase admin UI, create these collections:
-
-**Collection: `codes`**
-- `code` (text, required, unique) — activation code string
-- `tier` (select, required, options: `eco`, `stealth`, `strike`)
-- `used` (bool, default: false) — whether code has been used
-- `suspended` (bool, default: false) — admin suspension
-- `bound_fingerprint` (text) — SHA256 device fingerprint
-- `expires_at` (datetime) — code expiry
-- `activated_at` (datetime) — first activation timestamp
-- `middleman` (text) — distributor identifier
-- API rules: only admins can create/update/delete; public can read with filter
-
-**Collection: `tier_configs`**
-- `tier` (text, required, unique) — `eco`, `stealth`, `strike`
-- `config` (json, required) — Shadowsocks server config
-- `active` (bool, default: true)
-- `udp_relay` (bool, default: false) — whether tier supports UDP
-- API rules: public can read
-
-**Collection: `activation_attempts`**
-- `ip` (text) — client IP
-- `rate_key` (text) — fingerprint hash or IP
-- `fingerprint` (text, optional) — partial fingerprint for audit
-- `code_attempted` (text, optional) — partial code for audit
-- Auto-created: `created`, `updated`
-- API rules: no public access (internal use only)
-
-**Collection: `update_config`** (optional, for staged rollouts)
-- `version` (text) — version string e.g. `1.1.0`
-- `rollout_percent` (number, 0-100)
-- `active` (bool)
-- `update_url` (text) — generic download URL
-- `update_sha256` (text) — generic SHA256
-- `download_windows` (text) — Windows-specific URL
-- `download_macos_intel`, `download_macos_arm` (text)
-- API rules: only admins can create/update/delete
-
-### 4.3 Configure Admin API Token
-
-Set the `ADMIN_API_TOKEN` environment variable on the VPS:
-
-```bash
-ssh root@your-vps
-echo 'ADMIN_API_TOKEN=your-secure-random-token-here' >> /etc/environment
-systemctl restart pocketbase
-```
-
-This token is used by the admin unbind endpoint and by `generate_codes.sh`.
-
-### 4.4 Seed Tier Configs
-
-Read passwords from the VPS:
-
-```bash
-ssh root@your-vps "cat /root/.tier_passwords"
-```
-
-Create entries in the `tier_configs` PocketBase collection:
-
-**Eco:**
-```json
-{
-  "tier": "eco",
-  "config": {
-    "server": "networkingguides.duckdns.org",
-    "server_port": 8443,
-    "password": "<ECO_PASS>",
-    "method": "aes-256-gcm"
-  },
-  "active": true,
-  "udp_relay": false
-}
-```
-
-**Stealth:**
-```json
-{
-  "tier": "stealth",
-  "config": {
-    "server": "networkingguides.duckdns.org",
-    "server_port": 8444,
-    "password": "<STEALTH_PASS>",
-    "method": "aes-256-gcm"
-  },
-  "active": true,
-  "udp_relay": false
-}
-```
-
-**Strike:**
-```json
-{
-  "tier": "strike",
-  "config": {
-    "server": "networkingguides.duckdns.org",
-    "server_port": 8445,
-    "password": "<STRIKE_PASS>",
-    "method": "aes-256-gcm"
-  },
-  "active": true,
-  "udp_relay": true
-}
-```
-
-### 4.5 Generate Activation Codes
-
-```bash
-# From your local machine
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN stealth 30
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN strike 20
-```
-
-### 4.6 Print Code Cards
-
-```bash
-./v5/scripts/print_codes.sh eco-codes.txt eco-cards.pdf
-./v5/scripts/print_codes.sh stealth-codes.txt stealth-cards.pdf
-./v5/scripts/print_codes.sh strike-codes.txt strike-cards.pdf
-```
-
-### 4.7 Configure Backups (Optional)
-
-```bash
-ssh root@your-vps
-# Install b2 CLI and authorize
-pip3 install b2
-b2 authorize-application-key
-
-# Set environment variables
-export B2_APPLICATION_KEY_ID="your-key-id"
-export B2_APPLICATION_KEY="your-key"
-export B2_BUCKET="my-vpn-backup-bucket"
-
-# Run backup module to enable timer
-cd /root/server
-B2_APPLICATION_KEY_ID=xxx B2_APPLICATION_KEY=xxx B2_BUCKET=my-vpn-backup-bucket \
-  bash modules/07-backups.sh
-```
-
----
-
-## 5. Verification Checklist
+## 5. Post-Deployment Verification
 
 After deployment, verify:
 
@@ -233,11 +134,71 @@ After deployment, verify:
 - [ ] `ufw status` → active with all rules
 - [ ] `openssl s_client -connect networkingguides.duckdns.org:443 -servername networkingguides.duckdns.org </dev/null 2>/dev/null | openssl x509 -noout -dates` → valid cert
 
+### Create PocketBase Admin (First Run Only)
+
+1. Visit `https://networkingguides.duckdns.org/_/` in a browser
+2. Create your admin account (first-run wizard)
+
+> If `PB_ADMIN_EMAIL` and `PB_ADMIN_PASS` were set in `secrets.env.age`, the
+> admin account is created automatically by `06-pocketbase.sh`. Check
+> `/root/.pb_admin_creds` on the VPS.
+
+### Generate Activation Codes
+
+```bash
+# The ADMIN_API_TOKEN is already on the VPS from secrets.env.age
+# Check it:
+ssh root@your-vps "cat /root/.admin_api_token"
+
+# Generate codes for each tier
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") eco 50
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") stealth 30
+./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") strike 20
+```
+
+### Print Code Cards
+
+```bash
+./v5/scripts/print_codes.sh eco-codes.txt eco-cards.pdf
+./v5/scripts/print_codes.sh stealth-codes.txt stealth-cards.pdf
+./v5/scripts/print_codes.sh strike-codes.txt strike-cards.pdf
+```
+
 ---
 
-## 6. Disaster Recovery
+## 6. Maintaining Secrets
 
-See `v5/server/restore.sh` for full restore from B2 backup.
+When credentials change (e.g., B2 application key rotated):
+
+```bash
+# Decrypt, edit, re-encrypt
+age -d -i age-key.txt v5/server/secrets.env.age > .secrets.env
+vim .secrets.env
+age -r "$(age-keygen -y age-key.txt)" -o v5/server/secrets.env.age .secrets.env
+shred -u .secrets.env
+git add v5/server/secrets.env.age
+git commit -m "Update credentials"
+```
+
+See [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) for full details on key
+rotation, CI/CD integration, and troubleshooting.
+
+---
+
+## 7. Disaster Recovery
+
+### Using Age Secrets (Recommended)
+
+```bash
+# With key file on VPS:
+scp -r v5/server age-key.txt root@new-vps:/root/server/
+ssh root@new-vps "/root/server/restore.sh"
+
+# Or with AGE_KEY via pipe:
+AGE_KEY=$(cat age-key.txt) ssh root@new-vps 'bash -s' < v5/server/restore.sh
+```
+
+### Manual Override
 
 ```bash
 B2_APPLICATION_KEY_ID=xxx \

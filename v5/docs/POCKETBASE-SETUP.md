@@ -270,8 +270,8 @@ curl -s -X POST https://networkingguides.duckdns.org/api/activate \
 |------|-----------------|
 | Admin UI | `https://networkingguides.duckdns.org/_/` |
 | API base | `https://networkingguides.duckdns.org` |
-| Tier passwords | `/root/.tier_passwords` on VPS |
-| Admin token | `CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=` |
-| B2 bucket | `vpsvpnbackup` |
-| B2 creds file | `/root/.b2-creds` on VPS |
-| Admin creds (if auto-created) | `/root/.pb_admin_creds` on VPS |
+| All credentials | Encrypted in `v5/server/secrets.env.age` — see [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) |
+| Tier passwords | `/root/.tier_passwords` on VPS (auto-deployed from secrets) |
+| Admin API token | `/root/.admin_api_token` on VPS (auto-deployed from secrets) |
+| B2 creds file | `/root/.b2-creds` on VPS (auto-deployed from secrets) |
+| PB admin creds | `/root/.pb_admin_creds` on VPS (auto-created from secrets if provided) |
