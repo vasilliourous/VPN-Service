@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -271,7 +272,7 @@ func (h *Heartbeat) beat() Result {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if err != nil {
 		return Result{
 			Success: false,
@@ -282,12 +283,12 @@ func (h *Heartbeat) beat() Result {
 	if resp.StatusCode != http.StatusOK {
 		return Result{
 			Success: false,
-			Error:   fmt.Errorf("heartbeat returned status %d: %s", resp.StatusCode, string(body)),
+			Error:   fmt.Errorf("heartbeat returned status %d: %s", resp.StatusCode, string(respBody)),
 		}
 	}
 
 	var hbResp Response
-	if err := json.Unmarshal(body, &hbResp); err != nil {
+	if err := json.Unmarshal(respBody, &hbResp); err != nil {
 		return Result{
 			Success: false,
 			Error:   fmt.Errorf("heartbeat decode failed: %w", err),
