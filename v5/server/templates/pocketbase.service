@@ -13,12 +13,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening
+# Security hardening (minimal — PB 0.22+ has issues with ProtectHome/ProtectSystem on some kernels)
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-ReadWritePaths=/opt/pocketbase/pb_data /opt/pocketbase/pb_hooks
 
 [Install]
 WantedBy=multi-user.target

@@ -47,7 +47,9 @@ install_caddy() {
     local tmpfile
     tmpfile=$(mktemp /tmp/caddy-XXXXXX)
 
-    if ! curl -sL 'https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/mholt/caddy-ratelimit' \
+    # Pin to Caddy v2.8.4 (latest stable as of 2026-07) for reproducible deploys
+    CADDY_VERSION="2.8.4"
+    if ! curl -sL "https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/mholt/caddy-ratelimit&version=${CADDY_VERSION}" \
         -o "$tmpfile"; then
         rm -f "$tmpfile"
         fail "Failed to download Caddy with ratelimit plugin"

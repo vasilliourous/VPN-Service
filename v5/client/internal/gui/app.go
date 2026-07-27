@@ -106,7 +106,8 @@ func (a *App) run() {
 	// Initialize storage
 	store, err := storage.New("myvpn")
 	if err != nil {
-		log.Fatalf("Cannot initialize storage: %v", err)
+		log.Printf("FATAL: Cannot initialize storage: %v", err)
+		return
 	}
 	a.store = store
 
@@ -116,7 +117,8 @@ func (a *App) run() {
 	// Initialize manager
 	execPath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("Cannot determine executable path: %v", err)
+		log.Printf("FATAL: Cannot determine executable path: %v", err)
+		return
 	}
 	appDir := filepath.Dir(execPath)
 
@@ -495,6 +497,7 @@ func (a *App) startHeartbeat() {
 						Version:              result.Resp.UpdateAvailable,
 						SHA256:               result.Resp.UpdateSHA256,
 						DownloadURL:          result.Resp.UpdateURL,
+						DownloadURLLinux:     result.Resp.UpdateLinux,
 						DownloadURLWindows:   result.Resp.UpdateWindows,
 						DownloadURLMacOSIntel: result.Resp.UpdateMacOSIntel,
 						DownloadURLMacOSARM:  result.Resp.UpdateMacOSARM,

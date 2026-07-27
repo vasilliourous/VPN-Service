@@ -1,14 +1,11 @@
 {
     # MyVPN Caddyfile — Template
-    # REPLACE "YOUR_SERVER_DOMAIN" with your actual domain before deploying.
-    # If using the automated setup (setup.sh), DOMAIN is injected automatically.
-    #
-    # Example with envsubst:
-    #   envsubst '${DOMAIN}' < templates/Caddyfile > /etc/caddy/Caddyfile
+    # Used by setup.sh which injects DOMAIN via heredoc substitution.
+    # For manual deploy: sed -i 's/${DOMAIN}/your.domain.com/g' this file
     # rate_limit is configured per-handle below
 }
 
-YOUR_SERVER_DOMAIN {
+${DOMAIN} {
     root * /var/www/html
     file_server
 

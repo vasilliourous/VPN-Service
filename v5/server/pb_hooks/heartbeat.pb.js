@@ -1,9 +1,11 @@
 // MyVPN Heartbeat Hook — PocketBase 0.22 compatible
-routerAdd("GET", "/api/heartbeat", function(e) {
+// Changed from GET to POST to avoid leaking activation codes in server access logs.
+// Code and fingerprint are sent in the JSON body, not URL query parameters.
+routerAdd("POST", "/api/heartbeat", function(e) {
     try {
-        var req = e.request();
-        var code = req.url.query().get("code") || "";
-        var fingerprint = req.url.query().get("fp") || "";
+        var data = $apis.requestInfo(e).data;
+        var code = (data.code || "").trim();
+        var fingerprint = (data.fingerprint || "").trim();
 
         if (!code) return e.json(400, {code:400, message:"Missing code"});
 

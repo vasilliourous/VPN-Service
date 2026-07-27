@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -65,15 +66,22 @@ type Client struct {
 
 // ValidateHubURL checks that a hub URL is well-formed.
 // It doesn't verify connectivity — just basic structure.
-func ValidateHubURL(url string) error {
-	if url == "" {
+func ValidateHubURL(rawURL string) error {
+	if rawURL == "" {
 		return fmt.Errorf("hub URL must not be empty")
 	}
-	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("hub URL is malformed: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
 		return fmt.Errorf("hub URL must start with http:// or https://")
 	}
-	if strings.Count(url, "/") < 2 {
-		return fmt.Errorf("hub URL must include a hostname")
+	if u.Host == "" {
+		return fmt.Errorf("hub URL must include a hostname (e.g. https://api.example.com)")
+	}
+	if u.Host == "yourdomain.com" || u.Host == "api.yourdomain.com" {
+		return fmt.Errorf("hub URL is still set to the default placeholder — replace with your real server domain")
 	}
 	return nil
 }

@@ -59,14 +59,19 @@ type UpdateInfo struct {
 	Version       string
 	SHA256        string
 	DownloadURL   string
-	DownloadURLWindows  string
-	DownloadURLMacOSIntel string
-	DownloadURLMacOSARM  string
+	DownloadURLLinux       string
+	DownloadURLWindows     string
+	DownloadURLMacOSIntel  string
+	DownloadURLMacOSARM   string
 }
 
 // PlatformDownloadURL returns the download URL for the current platform.
 func (ui *UpdateInfo) PlatformDownloadURL() string {
 	switch runtime.GOOS {
+	case "linux":
+		if ui.DownloadURLLinux != "" {
+			return ui.DownloadURLLinux
+		}
 	case "windows":
 		if ui.DownloadURLWindows != "" {
 			return ui.DownloadURLWindows
@@ -221,10 +226,12 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	defer f.Close()
 
 	// Download with size and hash verification
+	// io.LimitReader ensures we cap at MaxDownloadSize (no unbounded reads)
+	// io.Copy returns nil + bytes when LimitReader hits its limit (EOF-like)
 	hasher := sha256.New()
 	writer := io.MultiWriter(f, hasher)
-	downloaded, err := io.CopyN(writer, io.LimitReader(resp.Body, MaxDownloadSize), MaxDownloadSize)
-	if err != nil && err != io.EOF {
+	downloaded, err := io.Copy(writer, io.LimitReader(resp.Body, MaxDownloadSize))
+	if err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("download interrupted: %w", err)
 	}

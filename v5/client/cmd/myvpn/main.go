@@ -71,9 +71,10 @@ func main() {
 		sig := <-sigCh
 		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
 		cancel()
-		// Give it 5 seconds then force exit
+		// Give it 5 seconds for the GUI to close, then force exit
 		time.Sleep(5 * time.Second)
-		log.Fatal("Forced shutdown after timeout")
+		log.Println("Graceful shutdown timed out, exiting forcefully")
+		os.Exit(0)
 	}()
 
 	// ── Two-phase update recovery ──

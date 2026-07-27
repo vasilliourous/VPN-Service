@@ -73,12 +73,13 @@ if not token_valid:
         log("Could not obtain admin token. Trying existing creds...")
         sys.exit(1)
     log(f"✓ Admin created: {ADMIN_EMAIL}")
-    with open(ADMIN_CREDS, "w") as f:
+    # Write with restrictive permissions atomically (0o600 = owner read/write only)
+    fd = os.open(ADMIN_CREDS, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(f"# MyVPN PocketBase Admin Credentials\n"
                 f"PB_ADMIN_EMAIL={ADMIN_EMAIL}\n"
                 f"PB_ADMIN_PASS={admin_pass}\n"
                 f"PB_TOKEN={token}\n")
-    os.chmod(ADMIN_CREDS, 0o600)
 
 # ── Step 2: Create collections ──
 collections = [

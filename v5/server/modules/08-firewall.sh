@@ -50,6 +50,7 @@ log "✓ SSH rate limiting enabled (6 connections per 30s per IP)"
 
 # ── Enable UFW (safe — SSH is already allowed) ──
 log "Enabling UFW..."
+systemctl enable ufw 2>/dev/null || true
 ufw --force enable 2>&1 | tail -3
 
 # ── Show status ──

@@ -22,19 +22,25 @@ func collectLinuxSources() fingerprintSources {
 	var sources fingerprintSources
 
 	// MAC address — iterate all interfaces, preferring physical ones
-	if mac, err := readFile("/sys/class/net/eth0/address"); err == nil {
-		sources.MAC = strings.TrimSpace(mac)
-	} else if mac, err := readFile("/sys/class/net/enp0s3/address"); err == nil {
-		sources.MAC = strings.TrimSpace(mac)
-	} else if mac, err := readFile("/sys/class/net/enp0s8/address"); err == nil {
-		sources.MAC = strings.TrimSpace(mac)
-	} else {
-		// Try any physical interface
+	// Try common interface names first (bare metal, VPS, cloud)
+	commonIfaces := []string{
+		"eth0", "enp0s3", "enp0s8", "enp1s0", "ens3", "ens5", "eno1",
+	}
+	for _, name := range commonIfaces {
+		if addr, err := readFile("/sys/class/net/" + name + "/address"); err == nil {
+			addr = strings.TrimSpace(addr)
+			if addr != "" && addr != "00:00:00:00:00:00" {
+				sources.MAC = addr
+				break
+			}
+		}
+	}
+	if sources.MAC == "" {
+		// Fallback: scan all interfaces
 		interfaces, err := os.ReadDir("/sys/class/net")
 		if err == nil {
 			for _, iface := range interfaces {
 				name := iface.Name()
-				// Skip loopback, virtual, and container interfaces
 				if name == "lo" || strings.HasPrefix(name, "docker") ||
 					strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "br-") ||
 					strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "wg") ||

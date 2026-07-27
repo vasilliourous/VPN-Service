@@ -407,22 +407,27 @@ func generateConfig(cfg Config) ([]byte, error) {
 		},
 		DNS: DNSConfig{
 			Final: "dns-direct",
-			Servers: map[string]DNSServer{
-				"dns-direct": {
-					Address:    "https://1.1.1.1/dns-query",
-					Detour:     "direct",
+			Servers: []DNSServer{
+				{
+					Tag:     "dns-direct",
+					Address: "https://1.1.1.1/dns-query",
+					Detour:  "direct",
 				},
-				"dns-tunnel": {
-					Address:    "https://1.1.1.1/dns-query",
+				{
+					Tag:     "dns-tunnel",
+					Address: "https://1.1.1.1/dns-query",
 				},
 			},
 		},
 		Inbounds: []Inbound{
 			{
-				Type:       "tun",
-				Tag:        "tun-in",
-				Listen:     "0.0.0.0",
-				ListenPort: 0,
+				Type:          "tun",
+				Tag:           "tun-in",
+				InterfaceName: "myvpn0",
+				Address:       []string{"10.0.0.1/30"},
+				MTU:           1500,
+				AutoRoute:     true,
+				StrictRoute:   true,
 			},
 		},
 		Outbounds: []Outbound{
@@ -479,9 +484,9 @@ type LogConfig struct {
 }
 
 type DNSConfig struct {
-	Final   string              `json:"final"`
-	Rules   []DNSRule           `json:"rules,omitempty"`
-	Servers map[string]DNSServer `json:"servers"`
+	Final   string      `json:"final"`
+	Rules   []DNSRule   `json:"rules,omitempty"`
+	Servers []DNSServer `json:"servers"`
 }
 
 type DNSRule struct {
@@ -491,15 +496,19 @@ type DNSRule struct {
 }
 
 type DNSServer struct {
-	Address    string `json:"address"`
-	Detour     string `json:"detour,omitempty"`
+	Tag     string `json:"tag"`
+	Address string `json:"address"`
+	Detour  string `json:"detour,omitempty"`
 }
 
 type Inbound struct {
-	Type       string `json:"type"`
-	Tag        string `json:"tag,omitempty"`
-	Listen     string `json:"listen"`
-	ListenPort int    `json:"listen_port"`
+	Type        string   `json:"type"`
+	Tag         string   `json:"tag,omitempty"`
+	InterfaceName string `json:"interface_name,omitempty"`
+	Address     []string `json:"address,omitempty"`
+	MTU         int      `json:"mtu,omitempty"`
+	AutoRoute   bool     `json:"auto_route,omitempty"`
+	StrictRoute bool     `json:"strict_route,omitempty"`
 }
 
 type Outbound struct {

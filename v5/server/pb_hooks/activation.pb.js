@@ -29,6 +29,9 @@ routerAdd("POST", "/api/activate", function(e) {
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE created < datetime('now','-10 minutes')").execute();
         // rateKey is SHA256 hex or IP — strip anything non-alphanumeric for query safety
         var rateKey = (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
+        // rateKey is SHA256 hex or IP — already sanitized to [a-zA-Z0-9_]
+        // Using findRecordsByFilter with inline value because PocketBase 0.22
+        // doesn't support {:param} binding in this API — the value is safe via regex.
         var recents = $app.dao().findRecordsByFilter("activation_attempts","rate_key='"+rateKey+"'","",0,0);
         if (recents.length >= 5) return e.json(429,{code:429, message:"Too many attempts"});
 

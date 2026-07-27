@@ -218,6 +218,15 @@ func (s *Store) SetActivation(code, tier, fingerprint string, config *ServerConf
 	if code == "" || tier == "" || fingerprint == "" {
 		return fmt.Errorf("storage: cannot set activation with empty fields")
 	}
+	if config == nil {
+		return fmt.Errorf("storage: cannot set activation with nil server config")
+	}
+	if config.Password == "" {
+		return fmt.Errorf("storage: cannot set activation with empty password")
+	}
+	if config.Server == "" {
+		return fmt.Errorf("storage: cannot set activation with empty server address")
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -371,11 +380,20 @@ func (s *Store) RestoreFromBackup() error {
 	return fmt.Errorf("no backup files found to restore from")
 }
 
-// SanitizePath ensures a path component doesn't contain path traversal characters.
+// SanitizePath ensures a path component is safe for use in file paths.
+// It removes path separators and traversal sequences, returning a clean basename.
 func SanitizePath(name string) string {
-	name = filepath.Clean(name)
+	// Start with the basename only (strip any directory components)
+	name = filepath.Base(name)
+	// Remove any remaining traversal attempts
 	name = strings.ReplaceAll(name, "..", "")
 	name = strings.ReplaceAll(name, "/", "")
 	name = strings.ReplaceAll(name, "\\", "")
+	// Re-clean to handle any remaining edge cases
+	name = filepath.Clean(name)
+	// If we ended up with "." or empty, return a safe default
+	if name == "" || name == "." {
+		return "unnamed"
+	}
 	return name
 }

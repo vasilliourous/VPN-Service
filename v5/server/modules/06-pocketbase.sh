@@ -115,45 +115,17 @@ SERVICE
     log "✓ Created pocketbase.service"
 }
 
-# ── Initialize SQLite with WAL mode ──
-init_sqlite() {
-    # PocketBase creates data.db on first start. We just set WAL mode hook.
-    local pragma_hook="${PB_HOOKS_DIR}/sqlite_pragmas.pb.js"
-
-    if [ -f "$pragma_hook" ]; then
-        log "SQLite pragma hook already exists"
-        return 0
-    fi
-
-    # The hook will be applied on next PocketBase start
-    cat > "$pragma_hook" << 'JSHOOK'
-// SQLite WAL mode + busy_timeout (PocketBase 0.22+)
-on("app", "ready", (e) => {
-    try {
-        $app.db().newQuery("PRAGMA journal_mode=WAL;").execute();
-        $app.db().newQuery("PRAGMA busy_timeout=5000;").execute();
-        $app.db().newQuery("PRAGMA synchronous=NORMAL;").execute();
-        $app.db().newQuery("PRAGMA foreign_keys=ON;").execute();
-        $app.logger().info("SQLite pragmas applied (WAL mode)");
-    } catch (err) {
-        $app.logger().error("Failed to apply SQLite pragmas: " + err.message);
-    }
-});
-JSHOOK
-    chown "${PB_USER}:${PB_USER}" "$pragma_hook"
-    log "✓ Created SQLite pragma hook"
-}
-
 # ═══════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════
+# SQLite WAL mode is NOT set via hook anymore — PB 0.22+ sets WAL automatically.
+# See FIXES.md S7: on() hook API removed in 0.22, sqlite_pragmas.pb.js removed.
 
 install_pocketbase
 setup_user
 setup_dirs
 deploy_hooks
 create_service
-init_sqlite
 
 # ── Reload systemd ──
 systemctl daemon-reload

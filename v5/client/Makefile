@@ -137,6 +137,15 @@ bundle-windows: build-windows build-helper-windows
 	cd $(BUILD_DIR) && zip -j myvpn-windows-$(VERSION).zip myvpn.exe sing-box.exe myvpn-helper.exe
 	@echo "✅ Windows bundle: dist/myvpn-windows-$(VERSION).zip"
 
+bundle-linux: build-linux build-helper
+	cd $(BUILD_DIR) && \
+	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz" && \
+	tar -xzf "sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz" && \
+	mv "sing-box-$(SING_BOX_VERSION)-linux-amd64/sing-box" . && \
+	rm -rf "sing-box-$(SING_BOX_VERSION)-linux-amd64" "sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz"
+	cd $(BUILD_DIR) && zip -j myvpn-linux-$(VERSION).zip myvpn-linux-amd64 sing-box myvpn-helper
+	@echo "✅ Linux bundle: dist/myvpn-linux-$(VERSION).zip"
+
 bundle-macos-intel: build-macos-intel build-helper-macos-intel
 	cd $(BUILD_DIR) && \
 	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-darwin-amd64.tar.gz" && \
@@ -155,9 +164,10 @@ bundle-macos-arm: build-macos-arm build-helper-macos-arm
 	cd $(BUILD_DIR) && zip -j myvpn-macos-arm-$(VERSION).zip myvpn-darwin-arm64 sing-box myvpn-helper-darwin-arm64
 	@echo "✅ macOS ARM bundle: dist/myvpn-macos-arm-$(VERSION).zip"
 
-bundle-all: bundle-windows bundle-macos-intel bundle-macos-arm
+bundle-all: bundle-linux bundle-windows bundle-macos-intel bundle-macos-arm
 	@echo "═══════════════════════════════════════════"
 	@echo "✅ All bundles complete!"
+	@echo "   dist/myvpn-linux-$(VERSION).zip"
 	@echo "   dist/myvpn-windows-$(VERSION).zip"
 	@echo "   dist/myvpn-macos-intel-$(VERSION).zip"
 	@echo "   dist/myvpn-macos-arm-$(VERSION).zip"

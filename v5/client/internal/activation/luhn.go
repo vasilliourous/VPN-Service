@@ -149,23 +149,24 @@ func stripFormatting(code string) string {
 	return string(result)
 }
 
-// charIndex returns the index of a character in the charset, or -1 if not found.
-func charIndex(c byte) int {
-	switch {
-	case c >= 'A' && c <= 'Z':
-		// Map to our charset (which is not sequential A-Z)
-		for i := 0; i < codeBase; i++ {
-			if CodeCharset[i] == c {
-				return i
-			}
-		}
-	case c >= '2' && c <= '9':
-		// Digits in our charset start at index ? — find them
-		for i := 0; i < codeBase; i++ {
-			if CodeCharset[i] == c {
-				return i
-			}
-		}
+// charLookup is a 256-entry O(1) lookup table for charIndex.
+// Built once at init time from CodeCharset.
+var charLookup [256]int8
+
+func init() {
+	for i := range charLookup {
+		charLookup[i] = -1
 	}
-	return -1
+	for i := 0; i < len(CodeCharset); i++ {
+		charLookup[CodeCharset[i]] = int8(i)
+	}
+}
+
+// charIndex returns the index of a character in the charset, or -1 if not found.
+// Uses a precomputed lookup table for O(1) performance.
+func charIndex(c byte) int {
+	if int(c) >= len(charLookup) {
+		return -1
+	}
+	return int(charLookup[c])
 }

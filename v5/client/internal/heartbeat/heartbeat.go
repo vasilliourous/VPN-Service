@@ -61,6 +61,7 @@ type Response struct {
 	UpdateAvailable string `json:"update_available,omitempty"`
 	UpdateURL       string `json:"update_url,omitempty"`
 	UpdateSHA256    string `json:"update_sha256,omitempty"`
+	UpdateLinux     string `json:"update_linux,omitempty"`
 	UpdateWindows   string `json:"update_windows,omitempty"`
 	UpdateMacOSIntel string `json:"update_macos_intel,omitempty"`
 	UpdateMacOSARM  string `json:"update_macos_arm,omitempty"`
@@ -245,20 +246,21 @@ func (h *Heartbeat) safeCallback(result Result) {
 }
 
 // beat sends a single heartbeat request.
+// Uses POST with JSON body to avoid leaking the activation code in server access logs.
 func (h *Heartbeat) beat() Result {
-	url := fmt.Sprintf("%s/api/heartbeat?code=%s&fp=%s",
-		h.hubURL, h.code, h.fingerprint)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body := fmt.Sprintf(`{"code":%q,"fingerprint":%q}`, h.code, h.fingerprint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		h.hubURL+"/api/heartbeat", strings.NewReader(body))
 	if err != nil {
 		return Result{
 			Success: false,
 			Error:   fmt.Errorf("heartbeat request creation failed: %w", err),
 		}
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := h.client.Do(req)
 	if err != nil {
