@@ -40,8 +40,9 @@ func generateIcon() fyne.Resource {
 			}
 
 			// Bottom point of shield
-			if !topHalf && float64(y-32) > 24.0 {
-				pointWidth := 14.0 * (1.0 - float64(y-56)/8.0)
+			if !topHalf && cy > 24.0 {
+				// y-56 == (y-32)-24 == cy-24.0
+				pointWidth := 14.0 * (1.0 - (cy-24.0)/8.0)
 				if cx < -pointWidth || cx > pointWidth {
 					img.Set(x, y, transparent)
 					continue
@@ -52,7 +53,7 @@ func generateIcon() fyne.Resource {
 			if y < 32 {
 				img.Set(x, y, purple)
 			} else {
-				t := float64(y-32) / 32.0
+				t := cy / 32.0
 				r := lerp(uint8(purple.R), uint8(darkPurple.R), t)
 				g := lerp(uint8(purple.G), uint8(darkPurple.G), t)
 				b := lerp(uint8(purple.B), uint8(darkPurple.B), t)
