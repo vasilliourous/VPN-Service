@@ -139,7 +139,12 @@ func (a *App) run() {
 		log.Println("WARNING: sing-box binary not found, tunnel will not work")
 	}
 
-	configPath := filepath.Join(appDir, "sing-box-config.json")
+	// Use a temp file for config so credentials aren't left visible on disk
+	tmpDir := filepath.Join(os.TempDir(), "myvpn")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		log.Printf("WARNING: Cannot create temp dir %s: %v", tmpDir, err)
+	}
+	configPath := filepath.Join(tmpDir, "sing-box-config.json")
 	a.tunnel = manager.NewManager(singBoxPath, configPath)
 
 	// Initialize updater (only if we can find app dir)
@@ -151,6 +156,8 @@ func (a *App) run() {
 
 	// Create the Fyne app
 	a.fyneApp = app.NewWithID("com.myvpn.app")
+	// Set programmatic icon to prevent Fyne systray errors on Windows
+	a.fyneApp.SetIcon(generateIcon())
 	a.mainWindow = a.fyneApp.NewWindow("MyVPN")
 
 	// Build UI

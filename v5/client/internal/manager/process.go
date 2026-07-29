@@ -233,10 +233,15 @@ func (m *Manager) stopLocked() error {
 	}
 
 	m.cmd = nil
+
+	// Clean up config file from disk
+	if m.configPath != "" {
+		os.Remove(m.configPath)
+	}
+
 	return nil
 }
 
-// IsRunning checks if the sing-box process is alive.
 func (m *Manager) IsRunning() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -452,7 +457,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 			AutoDetectInterface: true,
 			Final:               "proxy",
 			Rules: []RouteRule{
-				{Rule: "dns_query", OutboundTag: "dns-out"},
+				{Protocol: "dns", Outbound: "dns-out"},
 			},
 		},
 	}
@@ -533,6 +538,7 @@ type RouteConfig struct {
 }
 
 type RouteRule struct {
-	Rule        string `json:"rule"`
-	OutboundTag string `json:"outbound_tag"`
+	Outbound string `json:"outbound"`
+	Protocol string `json:"protocol,omitempty"`
+	Network  string `json:"network,omitempty"`
 }

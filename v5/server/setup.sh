@@ -26,24 +26,31 @@ fail() { echo -e "${RED}[FAIL]${NC} $*" | tee -a "$LOGFILE"; exit 1; }
 # Key sources (in order of precedence):
 #   1. AGE_KEY environment variable (CI/CD, SSH pipe)
 #   2. age-key.txt file alongside this script (local deploy)
-# See docs/SECRETS-MANAGEMENT.md for full setup guide.
+#
+# FIX: Uses temp file instead of process substitution (source <(cmd)).
+# Process substitution is unreliable in non-interactive SSH sessions —
+# variables may appear sourced (exit 0) without actually loading.
+# See v5/docs/FIXES.md entry S9 for details.
 SECRETS_FILE="${SCRIPT_DIR}/secrets.env.age"
+
+# Ensure age is installed before attempting decryption
 if [ -f "$SECRETS_FILE" ]; then
+    if ! command -v age &>/dev/null; then
+        log "Installing age (required for secrets decryption)..."
+        apt-get update -qq && apt-get install -y -qq age 2>/dev/null || \
+            fail "Failed to install age. Install manually: apt-get install age"
+    fi
+
     log "Decrypting ${SECRETS_FILE}..."
+    SECRETS_TMP="/tmp/.secrets-$$.env"
     if [ -n "${AGE_KEY:-}" ]; then
         echo "$AGE_KEY" > "/tmp/age-key-$$.tmp"
-        # Use set -a so decrypted variables are exported to all subprocesses (modules)
-        set -a
-        source <(age -d -i "/tmp/age-key-$$.tmp" "$SECRETS_FILE" 2>/dev/null) || \
-            fail "Failed to decrypt secrets. Check AGE_KEY."
-        set +a
+        age -d -i "/tmp/age-key-$$.tmp" "$SECRETS_FILE" > "$SECRETS_TMP" 2>/dev/null || \
+            { rm -f "/tmp/age-key-$$.tmp" "$SECRETS_TMP"; fail "Failed to decrypt secrets. Check AGE_KEY."; }
         rm -f "/tmp/age-key-$$.tmp"
     elif [ -f "${SCRIPT_DIR}/age-key.txt" ]; then
-        # Use set -a so decrypted variables are exported to all subprocesses (modules)
-        set -a
-        source <(age -d -i "${SCRIPT_DIR}/age-key.txt" "$SECRETS_FILE" 2>/dev/null) || \
-            fail "Failed to decrypt secrets. Check age-key.txt."
-        set +a
+        age -d -i "${SCRIPT_DIR}/age-key.txt" "$SECRETS_FILE" > "$SECRETS_TMP" 2>/dev/null || \
+            { rm -f "$SECRETS_TMP"; fail "Failed to decrypt secrets. Check age-key.txt."; }
     else
         cat >&2 << 'KEYERR'
 
@@ -59,6 +66,12 @@ if [ -f "$SECRETS_FILE" ]; then
 KEYERR
         fail "No age key available for secrets.env.age"
     fi
+
+    # Source from temp file (reliable in all shell environments)
+    set -a
+    source "$SECRETS_TMP" || { rm -f "$SECRETS_TMP"; fail "Failed to source decrypted secrets."; }
+    set +a
+    rm -f "$SECRETS_TMP"
     log "✓ Secrets decrypted from ${SECRETS_FILE}"
 fi
 
