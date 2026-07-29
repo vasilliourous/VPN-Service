@@ -1,0 +1,26 @@
+# MyVPN Root .gitignore
+
+# Generated code files
+*-codes.txt
+*-cards.pdf
+
+# Build artifacts
+dist/
+*.exe
+*.zip
+*.tar.gz
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Secrets (encrypted is fine; plaintext never)
+.secrets.env
+age-key.txt

@@ -78,19 +78,25 @@ Activates a device with an activation code and binds it to the hardware fingerpr
 
 ## 2. Heartbeat
 
-### `GET /api/heartbeat?code=...&fp=...`
+### `POST /api/heartbeat`
 
 Periodic health check. Returns suspension status, staged rollout updates,
 and refreshed tier config.
 
 **Rate limited:** 1 request per 10 seconds per IP.
 
-**Query Parameters:**
+**Request:**
+```json
+{
+  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "fingerprint": "a1b2c3d4e5f6...abcdef"
+}
+```
 
-| Param | Required | Description |
-|-------|:--------:|-------------|
-| `code` | ✅ | Full activation code |
-| `fp` | ❌ | Device fingerprint (used for staged rollout hashing) |
+| Field | Type | Required | Description |
+|-------|------|:--------:|-------------|
+| `code` | string | ✅ | Full activation code |
+| `fingerprint` | string | ❌ | Device fingerprint (used for staged rollout hashing) |
 
 **Response `200` (normal):**
 ```json
@@ -232,7 +238,7 @@ PocketBase admin interface at `https://networkingguides.duckdns.org/_/`.
 
 ```
 Activation:    POST /api/activate         ─── JSON body
-Heartbeat:     GET  /api/heartbeat?code=X ─── Query params
+Heartbeat:     POST /api/heartbeat           ─── JSON body
 Admin Unbind:  POST /api/admin/unbind-code ─── JSON body (with admin_token)
 Health:        GET  /api/health           ─── Plain GET
 Update Config: GET  /update.json          ─── Static file

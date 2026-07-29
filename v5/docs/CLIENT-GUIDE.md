@@ -1,7 +1,7 @@
 # MyVPN Client App — Developer Guide
 
 > **This document tells a Go developer exactly how to build a MyVPN-compatible client.**  
-> The reference implementation is in `v4/` (3,947 lines, 19 files).  
+> The reference implementation is in `v5/client/`.  
 > You can use this guide to build from scratch, port to another language, or
 > understand the existing code.
 
@@ -26,7 +26,7 @@
 ### Quick Build (Current Platform)
 
 ```bash
-cd v4
+cd v5/client
 go mod tidy         # First time only — generates go.sum
 make build          # Builds for current OS/arch → dist/myvpn
 ```
