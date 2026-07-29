@@ -19,10 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -31,6 +33,8 @@ import (
 const (
 	// Default socket path for IPC with TUN helper.
 	defaultSocketPath = "/var/run/myvpn-helper.sock"
+	// Windows named pipe path for TUN helper IPC.
+	windowsPipePath = `\\.\pipe\MyVPNHelper`
 
 	// Process health check interval.
 	healthCheckInterval = 10 * time.Second
@@ -63,15 +67,28 @@ type HelperClient struct {
 
 // NewHelperClient creates a client for the TUN helper service.
 func NewHelperClient() *HelperClient {
+	path := defaultSocketPath
+	// On Windows, the helper uses a named pipe instead of a Unix socket.
+	if runtime.GOOS == "windows" {
+		path = windowsPipePath
+	}
 	return &HelperClient{
-		socketPath: defaultSocketPath,
+		socketPath: path,
 		timeout:    30 * time.Second,
 	}
 }
 
+// helperNetwork returns the network type for IPC based on the platform.
+func helperNetwork() string {
+	if runtime.GOOS == "windows" {
+		return "pipe"
+	}
+	return "unix"
+}
+
 // SendCommand sends an IPC command to the helper and returns the response.
 func (hc *HelperClient) SendCommand(action string, args []string) (bool, string, error) {
-	conn, err := net.DialTimeout("unix", hc.socketPath, hc.timeout)
+	conn, err := net.DialTimeout(helperNetwork(), hc.socketPath, hc.timeout)
 	if err != nil {
 		return false, "", fmt.Errorf("cannot connect to helper: %w", err)
 	}
@@ -109,6 +126,7 @@ type Manager struct {
 	cmd               *exec.Cmd
 	configPath        string
 	singBoxPath       string
+	helperPath        string
 	helperClient      *HelperClient
 	useHelper         bool
 	healthFailures    int
@@ -146,12 +164,18 @@ func (c *Config) Validate() error {
 }
 
 // NewManager creates a new tunnel manager.
-func NewManager(singBoxPath, configPath string) *Manager {
-	return &Manager{
+func NewManager(singBoxPath, configPath, helperPath string) *Manager {
+	m := &Manager{
 		singBoxPath:  singBoxPath,
 		configPath:   configPath,
+		helperPath:   helperPath,
 		helperClient: NewHelperClient(),
 	}
+	// On Windows, default to helper mode since TUN requires admin privileges.
+	if runtime.GOOS == "windows" {
+		m.useHelper = true
+	}
+	return m
 }
 
 // SetHelperMode enables or disables helper mode.
@@ -184,6 +208,15 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 	}
 
 	if m.useHelper {
+		// Try to use the helper — if it's not running, auto-start it
+		if _, _, err := m.helperClient.SendCommand("ping", nil); err != nil {
+			log.Println("TUN helper not running, attempting to start it...")
+			if startErr := m.autoStartHelper(); startErr != nil {
+				return fmt.Errorf("helper not available and cannot auto-start: %w", startErr)
+			}
+			// Wait a moment for the helper to start listening
+			time.Sleep(2 * time.Second)
+		}
 		return m.startWithHelper(configJSON)
 	}
 	return m.startDirect(ctx, configJSON)
@@ -240,6 +273,63 @@ func (m *Manager) stopLocked() error {
 	}
 
 	return nil
+}
+
+// autoStartHelper attempts to start the myvpn-helper as an elevated process.
+// On Windows, this uses "runas" to trigger a UAC elevation prompt.
+// On Unix, it tries to start the helper via sudo if available.
+func (m *Manager) autoStartHelper() error {
+	if m.helperPath == "" {
+		// Try to find helper next to the sing-box binary
+		log.Println("myvpn-helper path not set, searching next to sing-box...")
+		helperDir := filepath.Dir(m.singBoxPath)
+		candidates := []string{
+			filepath.Join(helperDir, "myvpn-helper"),
+			filepath.Join(helperDir, "myvpn-helper.exe"),
+		}
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				m.helperPath = p
+				break
+			}
+		}
+	}
+	if m.helperPath == "" {
+		return fmt.Errorf("myvpn-helper binary not found alongside sing-box")
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		// On Windows, use PowerShell Start-Process with RunAs verb to trigger UAC
+		// This shows a UAC elevation prompt and starts the helper as administrator.
+		cmd := exec.Command("powershell", "-Command",
+			"Start-Process", "-FilePath", m.helperPath,
+			"-Verb", "RunAs", "-WindowStyle", "Hidden")
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		return cmd.Start()
+	case "linux", "darwin":
+		// On Unix, try pkexec (PolKit) or sudo for elevation
+		cmds := [][]string{
+			{"pkexec", m.helperPath},
+			{"sudo", "-n", m.helperPath},
+		}
+		var lastErr error
+		for _, args := range cmds {
+			if _, err := exec.LookPath(args[0]); err != nil {
+				lastErr = err
+				continue
+			}
+			cmd := exec.Command(args[0], args[1:]...)
+			if err := cmd.Start(); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
+		return fmt.Errorf("cannot elevate helper: %w", lastErr)
+	default:
+		return fmt.Errorf("unsupported platform for helper auto-start")
+	}
 }
 
 func (m *Manager) IsRunning() bool {

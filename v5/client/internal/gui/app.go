@@ -139,13 +139,26 @@ func (a *App) run() {
 		log.Println("WARNING: sing-box binary not found, tunnel will not work")
 	}
 
+	// Find myvpn-helper binary (for privileged TUN operations)
+	helperPaths := []string{
+		filepath.Join(appDir, "myvpn-helper"),
+		filepath.Join(appDir, "myvpn-helper.exe"),
+	}
+	helperPath := ""
+	for _, p := range helperPaths {
+		if _, err := os.Stat(p); err == nil {
+			helperPath = p
+			break
+		}
+	}
+
 	// Use a temp file for config so credentials aren't left visible on disk
 	tmpDir := filepath.Join(os.TempDir(), "myvpn")
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		log.Printf("WARNING: Cannot create temp dir %s: %v", tmpDir, err)
 	}
 	configPath := filepath.Join(tmpDir, "sing-box-config.json")
-	a.tunnel = manager.NewManager(singBoxPath, configPath)
+	a.tunnel = manager.NewManager(singBoxPath, configPath, helperPath)
 
 	// Initialize updater (only if we can find app dir)
 	if appDir != "" {
