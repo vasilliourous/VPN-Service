@@ -305,7 +305,7 @@ func (m *Manager) autoStartHelper() error {
 		cmd := exec.Command("powershell", "-Command",
 			"Start-Process", "-FilePath", m.helperPath,
 			"-Verb", "RunAs", "-WindowStyle", "Hidden")
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		cmd.SysProcAttr = newProcAttr()
 		return cmd.Start()
 	case "linux", "darwin":
 		// On Unix, try pkexec (PolKit) or sudo for elevation
