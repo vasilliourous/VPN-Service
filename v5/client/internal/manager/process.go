@@ -212,7 +212,9 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 		if _, _, err := m.helperClient.SendCommand("ping", nil); err != nil {
 			log.Println("TUN helper not running, attempting to start it...")
 			if startErr := m.autoStartHelper(); startErr != nil {
-				return fmt.Errorf("helper not available and cannot auto-start: %w", startErr)
+				log.Printf("Cannot auto-start helper (%v), trying direct mode...", startErr)
+				// Fall back to direct mode — may require admin privileges
+				return m.startDirect(ctx, configJSON)
 			}
 			// Wait a moment for the helper to start listening
 			time.Sleep(2 * time.Second)
@@ -280,12 +282,17 @@ func (m *Manager) stopLocked() error {
 // On Unix, it tries to start the helper via sudo if available.
 func (m *Manager) autoStartHelper() error {
 	if m.helperPath == "" {
-		// Try to find helper next to the sing-box binary
-		log.Println("myvpn-helper path not set, searching next to sing-box...")
-		helperDir := filepath.Dir(m.singBoxPath)
+		// Try to find helper in likely locations
+		log.Println("myvpn-helper path not set, searching...")
+		execDir, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+		singDir := filepath.Dir(m.singBoxPath)
 		candidates := []string{
-			filepath.Join(helperDir, "myvpn-helper"),
-			filepath.Join(helperDir, "myvpn-helper.exe"),
+			filepath.Join(execDir, "myvpn-helper"),
+			filepath.Join(execDir, "myvpn-helper.exe"),
+			filepath.Join(singDir, "myvpn-helper"),
+			filepath.Join(singDir, "myvpn-helper.exe"),
+			"./myvpn-helper",
+			"./myvpn-helper.exe",
 		}
 		for _, p := range candidates {
 			if _, err := os.Stat(p); err == nil {

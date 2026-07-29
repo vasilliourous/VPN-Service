@@ -73,11 +73,17 @@ build-linux:
 
 build-windows:
 	mkdir -p $(BUILD_DIR)
+	# Embed the Windows manifest for requireAdministrator (needed for TUN)
+	if command -v windres >/dev/null 2>&1; then \
+		windres -o cmd/myvpn/rsrc_windows.syso myvpn.exe.manifest 2>/dev/null || true; \
+	fi
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
 		CC=x86_64-w64-mingw32-gcc \
 		go build -ldflags="$(LDFLAGS) -H windowsgui" \
 		-o $(BUILD_DIR)/$(APP_NAME).exe \
 		./cmd/$(APP_NAME)/
+	# Clean up generated .syso so it doesn't pollute non-Windows builds
+	rm -f cmd/myvpn/rsrc_windows.syso
 
 build-macos-intel:
 	mkdir -p $(BUILD_DIR)
