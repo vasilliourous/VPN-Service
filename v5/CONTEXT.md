@@ -77,8 +77,16 @@ from real-world testing, with comprehensive documentation.
 ### Principles
 
 1. **Only 2 binaries on the client** — myvpn (GUI + manager) + sing-box (engine).
-   No TUN helper service, no tun2socks, no sslocal. BYOD means every user has admin
-   rights, so sing-box creates TUN directly.
+   No TUN helper service, no tun2socks, no sslocal, **no SOCKS5 proxy layer**.
+   BYOD means every user has admin rights, so sing-box creates TUN directly.
+
+   > **Why no SOCKS5?** Earlier versions (V1–V4) used `ss-local` which exposes a
+   > SOCKS5 proxy, adding +2 RTT handshake overhead per connection and requiring
+   > per-app proxy configuration. V5 eliminated this entirely. sing-box's native
+   > TUN inbound creates a virtual network interface and routes all device traffic
+   > through it — no SOCKS5, no extra processes, no handshake overhead. The only
+   > privilege needed is TUN creation, which sing-box handles directly on BYOD
+   > machines. See `docs/ARCHITECTURE.md` for the exact sing-box config.
 2. **Server-enforced caps** — tc HTB qdisc on the VPS limits bandwidth per tier.
    The client can't bypass its cap because the throttle happens post-decryption.
 3. **Permanent device binding** — one activation code = one device forever.

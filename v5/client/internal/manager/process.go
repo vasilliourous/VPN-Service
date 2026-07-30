@@ -212,8 +212,10 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 		if _, _, err := m.helperClient.SendCommand("ping", nil); err != nil {
 			log.Println("TUN helper not running, attempting to start it...")
 			if startErr := m.autoStartHelper(); startErr != nil {
-				log.Printf("Cannot auto-start helper (%v), trying direct mode...", startErr)
-				// Fall back to direct mode — may require admin privileges
+				log.Printf("Cannot auto-start helper (%v), falling back to direct mode...", startErr)
+				// Fall back to direct mode — disable helper so stopLocked
+				// doesn't try IPC that will never work.
+				m.useHelper = false
 				return m.startDirect(ctx, configJSON)
 			}
 			// Wait a moment for the helper to start listening
@@ -241,8 +243,12 @@ func (m *Manager) stopLocked() error {
 	}
 
 	if m.useHelper {
-		_, _, err := m.helperClient.SendCommand("stop-singbox", nil)
-		return err
+		// Only try helper IPC if the helper is actually reachable.
+		if ok, _, _ := m.helperClient.SendCommand("ping", nil); ok {
+			_, _, err := m.helperClient.SendCommand("stop-singbox", nil)
+			return err
+		}
+		// Helper not reachable — fall through to clean up any direct-mode process
 	}
 
 	if m.cmd == nil || m.cmd.Process == nil {
@@ -393,6 +399,17 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	m.cmd = cmd
 	m.restartCount = 0
 	m.firstRestartTime = time.Time{}
+
+	// Brief startup probe: wait a moment then check if the process is still
+	// alive. This catches cases where sing-box exits immediately due to a
+	// config error or permission denial (e.g. "Access is denied" on Windows).
+	time.Sleep(500 * time.Millisecond)
+	if cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) != nil {
+		// Process already exited — wait for it to fully release resources
+		cmd.Wait()
+		m.cmd = nil
+		return fmt.Errorf("sing-box exited immediately — check permissions or config")
+	}
 
 	// Start health check loop
 	m.stopHealthCheck = make(chan struct{})

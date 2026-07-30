@@ -1,183 +1,90 @@
-# MyVPN Build System — Hardened Edition
+# MyVPN Wails Build System
 #
-# Builds the MyVPN desktop client application for Windows, macOS, and Linux.
+# Builds the MyVPN desktop client as a single native binary using Wails.
+# All backend logic (activation, heartbeat, storage, updater) is in internal/.
+# The frontend is a Vue 3 + Vite + TypeScript SPA embedded in the binary.
 #
 # Prerequisites:
 #   - Go 1.22+
-#   - Fyne v2 dependencies (CGO required)
-#   - For cross-compilation: MinGW (Windows), osxcross (macOS)
+#   - Node.js 18+ (for the Vue frontend)
+#   - Wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+#   - Linux: sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
+#   - macOS: Xcode Command Line Tools
+#   - Windows: WebView2 (included in Windows 10+)
 #
 # Usage:
-#   make build         # Build for current platform
-#   make build-all     # Build for all platforms
-#   make bundle-all    # Build + bundle with sing-box engine
-#   make clean         # Remove build artifacts
+#   make dev          # Hot-reload development mode
+#   make build        # Build for current platform
+#   make build-all    # Cross-compile (requires platform toolchains)
+#   make clean        # Remove build artifacts
+#   make test         # Run Go tests
+#   make vet          # Run Go vet
 
 APP_NAME    := myvpn
 VERSION     := 2.0.0
-LDFLAGS     := -s -w -X main.version=$(VERSION)
 BUILD_DIR   := dist
 
-# ── Detect current OS ──
+# ── Detect current OS/arch ──
 UNAME_OS    := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 UNAME_ARCH  := $(shell uname -m)
 
 # ── Help ──
-.PHONY: help build build-all bundle bundle-all clean vet test ci cd
+.PHONY: help dev build build-all clean test vet install-deps
 
 help:
-	@echo "MyVPN Hardened Client Build System"
+	@echo "MyVPN Wails Desktop App"
 	@echo ""
 	@echo "Targets:"
-	@echo "  build              Build for current platform"
-	@echo "  build-linux        Build for Linux amd64"
-	@echo "  build-windows      Build for Windows amd64 (requires MinGW)"
-	@echo "  build-macos-intel  Build for macOS Intel (amd64)"
-	@echo "  build-macos-arm    Build for macOS Apple Silicon (arm64)"
-	@echo "  build-all          Build for all platforms"
-	@echo "  build-helper       Build TUN helper for current platform"
-	@echo "  bundle-all         Build all + bundle with sing-box"
-	@echo "  clean              Remove build artifacts"
-	@echo "  vet                Run go vet"
-	@echo "  test               Run all tests"
-	@echo "  ci                 Simulate CI pipeline locally (vet + test + build)"
+	@echo "  dev              Hot-reload development mode (wails dev)"
+	@echo "  build            Build for current platform (wails build)"
+	@echo "  build-all        Build for Linux + Windows + macOS"
+	@echo "  clean            Remove build artifacts"
+	@echo "  test             Run Go unit tests"
+	@echo "  vet              Run go vet"
+	@echo "  install-deps     Install Wails + Node dependencies"
 	@echo ""
-	@echo "CI/CD:"
-	@echo "  GitHub Actions:    ../.github/workflows/build.yml"
-	@echo "  Docs:              ../docs/CI-CD.md"
-	@echo "  Trigger:           git tag v* && git push origin v*"
+	@echo "Prerequisites:"
+	@echo "  wails:   go install github.com/wailsapp/wails/v2/cmd/wails@latest"
+	@echo "  node:    Install from https://nodejs.org/ (v18+)"
+	@echo "  Linux:   sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev"
 	@echo ""
-	@echo "Variables:"
-	@echo "  VERSION=$(VERSION)    Version string for builds"
-	@echo "  BINARY=myvpn          Output binary name"
-	@echo "  SING_BOX_VERSION=1.10.0  Engine version for bundles"
 
-# ── CI Simulation (local) ──
-ci: vet test build
-	@echo "✅ CI checks passed (vet + test + build)"
+# ── Development (hot-reload) ──
+dev:
+	wails dev
 
 # ── Build for current platform ──
 build:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/$(APP_NAME)$(shell go env GOEXE) \
-		./cmd/$(APP_NAME)/
+	wails build -o $(BUILD_DIR)/$(APP_NAME)
 
-# ── Cross-compilation targets ──
+# ── Cross-compilation ──
 build-linux:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 \
-		./cmd/$(APP_NAME)/
+	GOOS=linux GOARCH=amd64 wails build -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64
 
 build-windows:
 	mkdir -p $(BUILD_DIR)
-	# Embed the Windows manifest for requireAdministrator (needed for TUN)
-	if command -v windres >/dev/null 2>&1; then \
-		windres -o cmd/myvpn/rsrc_windows.syso myvpn.exe.manifest 2>/dev/null || true; \
-	fi
-	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
-		CC=x86_64-w64-mingw32-gcc \
-		go build -ldflags="$(LDFLAGS) -H windowsgui" \
-		-o $(BUILD_DIR)/$(APP_NAME).exe \
-		./cmd/$(APP_NAME)/
-	# Clean up generated .syso so it doesn't pollute non-Windows builds
-	rm -f cmd/myvpn/rsrc_windows.syso
+	GOOS=windows GOARCH=amd64 wails build -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe
 
 build-macos-intel:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 \
-		./cmd/$(APP_NAME)/
+	GOOS=darwin GOARCH=amd64 wails build -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
 
 build-macos-arm:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 \
-		./cmd/$(APP_NAME)/
+	GOOS=darwin GOARCH=arm64 wails build -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
 
-# ── Build all platforms ──
 build-all: build-linux build-windows build-macos-intel build-macos-arm
-	@echo "✅ All platform builds complete"
+	@echo "═══ All platform builds complete ═══"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-linux-amd64"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-darwin-amd64"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-darwin-arm64"
 
-# ── TUN Helper (no CGO needed) ──
-build-helper:
-	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/myvpn-helper \
-		./internal/helper/
-
-build-helper-windows:
-	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/myvpn-helper.exe \
-		./internal/helper/
-
-build-helper-macos-intel:
-	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/myvpn-helper-darwin-amd64 \
-		./internal/helper/
-
-build-helper-macos-arm:
-	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-		go build -ldflags="$(LDFLAGS)" \
-		-o $(BUILD_DIR)/myvpn-helper-darwin-arm64 \
-		./internal/helper/
-
-# ── Bundle with sing-box engine ──
-SING_BOX_VERSION := 1.10.0
-
-bundle-windows: build-windows build-helper-windows
-	cd $(BUILD_DIR) && \
-	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-windows-amd64.zip" && \
-	unzip -qo "sing-box-$(SING_BOX_VERSION)-windows-amd64.zip" && \
-	mv "sing-box-$(SING_BOX_VERSION)-windows-amd64/sing-box.exe" . && \
-	rm -rf "sing-box-$(SING_BOX_VERSION)-windows-amd64" "sing-box-$(SING_BOX_VERSION)-windows-amd64.zip"
-	cd $(BUILD_DIR) && zip -j myvpn-windows-$(VERSION).zip myvpn.exe sing-box.exe myvpn-helper.exe
-	@echo "✅ Windows bundle: dist/myvpn-windows-$(VERSION).zip"
-
-bundle-linux: build-linux build-helper
-	cd $(BUILD_DIR) && \
-	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz" && \
-	tar -xzf "sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz" && \
-	mv "sing-box-$(SING_BOX_VERSION)-linux-amd64/sing-box" . && \
-	rm -rf "sing-box-$(SING_BOX_VERSION)-linux-amd64" "sing-box-$(SING_BOX_VERSION)-linux-amd64.tar.gz"
-	cd $(BUILD_DIR) && zip -j myvpn-linux-$(VERSION).zip myvpn-linux-amd64 sing-box myvpn-helper
-	@echo "✅ Linux bundle: dist/myvpn-linux-$(VERSION).zip"
-
-bundle-macos-intel: build-macos-intel build-helper-macos-intel
-	cd $(BUILD_DIR) && \
-	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-darwin-amd64.tar.gz" && \
-	tar -xzf "sing-box-$(SING_BOX_VERSION)-darwin-amd64.tar.gz" && \
-	mv "sing-box-$(SING_BOX_VERSION)-darwin-amd64/sing-box" . && \
-	rm -rf "sing-box-$(SING_BOX_VERSION)-darwin-amd64" "sing-box-$(SING_BOX_VERSION)-darwin-amd64.tar.gz"
-	cd $(BUILD_DIR) && zip -j myvpn-macos-intel-$(VERSION).zip myvpn-darwin-amd64 sing-box myvpn-helper-darwin-amd64
-	@echo "✅ macOS Intel bundle: dist/myvpn-macos-intel-$(VERSION).zip"
-
-bundle-macos-arm: build-macos-arm build-helper-macos-arm
-	cd $(BUILD_DIR) && \
-	curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v$(SING_BOX_VERSION)/sing-box-$(SING_BOX_VERSION)-darwin-arm64.tar.gz" && \
-	tar -xzf "sing-box-$(SING_BOX_VERSION)-darwin-arm64.tar.gz" && \
-	mv "sing-box-$(SING_BOX_VERSION)-darwin-arm64/sing-box" . && \
-	rm -rf "sing-box-$(SING_BOX_VERSION)-darwin-arm64" "sing-box-$(SING_BOX_VERSION)-darwin-arm64.tar.gz"
-	cd $(BUILD_DIR) && zip -j myvpn-macos-arm-$(VERSION).zip myvpn-darwin-arm64 sing-box myvpn-helper-darwin-arm64
-	@echo "✅ macOS ARM bundle: dist/myvpn-macos-arm-$(VERSION).zip"
-
-bundle-all: bundle-linux bundle-windows bundle-macos-intel bundle-macos-arm
-	@echo "═══════════════════════════════════════════"
-	@echo "✅ All bundles complete!"
-	@echo "   dist/myvpn-linux-$(VERSION).zip"
-	@echo "   dist/myvpn-windows-$(VERSION).zip"
-	@echo "   dist/myvpn-macos-intel-$(VERSION).zip"
-	@echo "   dist/myvpn-macos-arm-$(VERSION).zip"
-	@echo "═══════════════════════════════════════════"
+# ── Frontend setup (install NPM deps manually if wails doesn't do it) ──
+frontend-setup:
+	cd frontend && npm install
 
 # ── Quality ──
 vet:
@@ -186,8 +93,19 @@ vet:
 test:
 	go test ./... -v -count=1
 
+# ── Install system dependencies ──
+install-deps:
+	go install github.com/wailsapp/wails/v2/cmd/wails@latest
+	@echo ""
+	@echo "Node.js dependencies:"
+	@echo "  cd frontend && npm install"
+	@echo ""
+	@echo "Linux GTK/WebKit:"
+	@echo "  sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev"
+
 # ── Clean ──
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(APP_NAME) $(APP_NAME).exe
-	@echo "✅ Cleaned build artifacts"
+	rm -rf frontend/dist
+	rm -rf frontend/node_modules
+	@echo "Cleaned"

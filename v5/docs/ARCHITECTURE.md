@@ -52,6 +52,25 @@
 └──────────────────────────────────────────────────────┘
 ```
 
+> **⚠️ Important: This is a TUN-based VPN, not a SOCKS5 proxy.**
+>
+> The diagram above is accurate — there is **no SOCKS5 proxy layer** between the
+> app and the tunnel. sing-box creates a **TUN interface directly** and routes all
+> device traffic through it. This avoids the +2 RTT handshake overhead, per-app
+> proxy configuration, and complexity of a SOCKS5-based design.
+>
+> SOCKS5 was used in V1–V4 (via `ss-local`), but V5 eliminated it entirely.
+> sing-box's native TUN inbound renders the SOCKS5 layer unnecessary:
+> no `ss-local`, no `tun2socks`, no extra process. Just sing-box managing
+> the TUN device and Shadowsocks outbound in one binary.
+>
+> The only elevated privilege needed is TUN device creation — handled by
+> `myvpn-helper` (`pkexec`/`sudo`/UAC). Once the TUN interface is up,
+> sing-box runs as a regular user process.
+>
+> See [§2.4 Manager](#24-manager-internalmanager) for the exact sing-box
+> config that makes this work.
+
 ---
 
 ## 2. Components & Responsibilities
@@ -123,7 +142,15 @@ User enters code → strip formatting → Luhn-mod-N check
 
 Manages the sing-box process lifecycle.
 
-**sing-box config generation:** Takes server config from storage and generates a valid sing-box JSON config:
+**sing-box config generation:** Takes server config from storage and generates a valid sing-box JSON config.
+
+> **Key point:** The inbound is `type: "tun"`, *not* `type: "socks"`. This is
+> what makes the VPN a true TUN-based VPN rather than a SOCKS5 proxy.
+> No SOCKS5 handshake overhead, no per-app proxy configuration, no `ss-local`.
+> sing-box does everything — TUN creation, traffic routing, DNS, and
+> Shadowsocks encryption — in a single process.
+
+The generated config looks like this:
 ```json
 {
   "log": { "level": "warn" },

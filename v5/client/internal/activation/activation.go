@@ -86,6 +86,34 @@ func ValidateHubURL(rawURL string) error {
 	return nil
 }
 
+// ValidateCodeFormat validates a complete activation code including Luhn-mod-N checksum.
+// Returns nil if the code format is valid, or an error describing the issue.
+// This is a client-side check — no server call is made.
+func ValidateCodeFormat(code string) error {
+	cleaned := stripFormatting(code)
+	if len(cleaned) < 2 {
+		return ErrInvalidCode
+	}
+	if len(cleaned) > 64 {
+		return fmt.Errorf("%w: code too long", ErrInvalidCode)
+	}
+	if len(cleaned) != CodeTotalLen {
+		return fmt.Errorf("%w: expected %d characters, got %d", ErrInvalidCode, CodeTotalLen, len(cleaned))
+	}
+	if !strings.HasPrefix(cleaned, CodePrefix) {
+		return fmt.Errorf("%w: must start with %s", ErrInvalidCode, CodePrefix)
+	}
+	for _, c := range cleaned {
+		if charIndex(byte(c)) < 0 {
+			return fmt.Errorf("%w: character %q not in charset", ErrInvalidCharacter, c)
+		}
+	}
+	if !luhnModNCheck(cleaned) {
+		return ErrChecksumFailed
+	}
+	return nil
+}
+
 // ClientOption configures the activation client.
 type ClientOption func(*Client)
 
