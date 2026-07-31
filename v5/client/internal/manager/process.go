@@ -32,7 +32,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -160,6 +159,7 @@ func (hc *HelperClient) SendCommand(action string, args []string) (bool, string,
 type Manager struct {
 	mu               sync.Mutex
 	cmd              *exec.Cmd
+	exited           chan struct{} // closed by the cmd.Wait goroutine when the process exits
 	configPath       string
 	singBoxPath      string
 	helperPath       string
@@ -231,10 +231,8 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 	defer m.mu.Unlock()
 
 	// Check if already running
-	if m.cmd != nil && m.cmd.Process != nil {
-		if err := m.cmd.Process.Signal(syscall.Signal(0)); err == nil {
-			return fmt.Errorf("tunnel is already running")
-		}
+	if m.processAlive() {
+		return fmt.Errorf("tunnel is already running")
 	}
 
 	// Generate the sing-box configuration
@@ -291,25 +289,28 @@ func (m *Manager) stopLocked() error {
 		return nil // Already stopped
 	}
 
-	// Try graceful shutdown first
-	done := make(chan struct{}, 1)
-	go func() {
-		_ = m.cmd.Wait()
-		done <- struct{}{}
-	}()
+	// Graceful shutdown: wait for the exit goroutine (started in startDirect)
+	// to finish. cmd.Wait must only be called ONCE per process — spawning a
+	// second Wait here would error out immediately and skip the kill.
+	exited := m.exited
+	if exited == nil {
+		exited = make(chan struct{})
+		go func() { _ = m.cmd.Wait(); close(exited) }()
+	}
 
 	select {
-	case <-done:
+	case <-exited:
 		// Process exited cleanly
 	case <-time.After(shutdownTimeout):
 		// Force kill
 		if err := m.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("cannot kill sing-box: %w", err)
 		}
-		<-done
+		<-exited
 	}
 
 	m.cmd = nil
+	m.exited = nil
 
 	// Clean up config file from disk
 	if m.configPath != "" {
@@ -317,6 +318,23 @@ func (m *Manager) stopLocked() error {
 	}
 
 	return nil
+}
+
+// processAlive reports whether the current sing-box process is still running.
+// Cross-platform: uses the exited channel (closed when the cmd.Wait goroutine
+// returns) instead of Unix signals — Process.Signal(signal 0) is NOT supported
+// on Windows and always errors, which previously made every liveness check
+// report "dead" and caused Connect() to hang in cmd.Wait().
+func (m *Manager) processAlive() bool {
+	if m.cmd == nil || m.cmd.Process == nil || m.exited == nil {
+		return false
+	}
+	select {
+	case <-m.exited:
+		return false
+	default:
+		return true
+	}
 }
 
 // autoStartHelper attempts to start the myvpn-helper as an elevated process.
@@ -391,10 +409,7 @@ func (m *Manager) IsRunning() bool {
 		return success && msg == "running"
 	}
 
-	if m.cmd == nil || m.cmd.Process == nil {
-		return false
-	}
-	return m.cmd.Process.Signal(syscall.Signal(0)) == nil
+	return m.processAlive()
 }
 
 // startWithHelper sends the config to the TUN helper to launch sing-box.
@@ -437,17 +452,25 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	}
 
 	m.cmd = cmd
+	m.exited = make(chan struct{})
+	exited := m.exited
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	m.restartCount = 0
 	m.firstRestartTime = time.Time{}
 
 	// Brief startup probe: wait a moment then check if the process is still
 	// alive. This catches cases where sing-box exits immediately due to a
 	// config error or permission denial (e.g. "Access is denied" on Windows).
-	time.Sleep(500 * time.Millisecond)
-	if cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) != nil {
-		// Process already exited — wait for it to fully release resources
-		_ = cmd.Wait()
+	// The liveness check uses the exited channel — Process.Signal(0) does not
+	// work on Windows and would block forever in cmd.Wait() below.
+	select {
+	case <-exited:
+		// Process already exited — the Wait goroutine has released resources
 		m.cmd = nil
+		m.exited = nil
 		detail := strings.TrimSpace(stderrBuf.String())
 		if detail == "" {
 			detail = "no error output"
@@ -456,6 +479,8 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 			return fmt.Errorf("TUN interface creation was denied — run MyVPN as administrator: %s", detail)
 		}
 		return fmt.Errorf("sing-box exited immediately: %s", detail)
+	case <-time.After(500 * time.Millisecond):
+		// Still running — startup probe passed
 	}
 
 	// Start health check loop
@@ -481,8 +506,7 @@ func (m *Manager) healthLoop() {
 				return
 			}
 
-			err := m.cmd.Process.Signal(syscall.Signal(0))
-			if err != nil {
+			if !m.processAlive() {
 				// Process died
 				m.healthFailures++
 				if m.healthFailures >= maxHealthFailures {
@@ -495,8 +519,7 @@ func (m *Manager) healthLoop() {
 					m.restartCount++
 					m.mu.Unlock()
 					// Reload config and restart
-					configData, err := os.ReadFile(m.configPath)
-					if err != nil {
+					if _, err := os.ReadFile(m.configPath); err != nil {
 						return
 					}
 					newCtx := context.Background()
@@ -505,14 +528,18 @@ func (m *Manager) healthLoop() {
 					cmd.Stderr = os.Stderr
 					cmd.SysProcAttr = newProcAttr()
 					if startErr := cmd.Start(); startErr == nil {
+						exited := make(chan struct{})
 						m.mu.Lock()
 						m.cmd = cmd
+						m.exited = exited
 						m.healthFailures = 0
 						m.mu.Unlock()
-					} else {
-						// Restart failed — will retry next cycle
-						_ = configData
+						go func() {
+							_ = cmd.Wait()
+							close(exited)
+						}()
 					}
+					// Restart failed — will retry next cycle
 					continue
 				}
 				m.mu.Unlock()
@@ -554,7 +581,7 @@ func (m *Manager) State() string {
 	if m.cmd == nil || m.cmd.Process == nil {
 		return "stopped"
 	}
-	if err := m.cmd.Process.Signal(syscall.Signal(0)); err != nil {
+	if !m.processAlive() {
 		return "crashed"
 	}
 	return "running"

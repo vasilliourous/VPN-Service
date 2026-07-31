@@ -1,0 +1,88 @@
+//go:build !windows
+
+package manager
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestLifecycle verifies process liveness tracking (the exited channel).
+// Guards against regressions to signal-based checks — Process.Signal(0) is
+// not supported on Windows and previously made Connect() hang in cmd.Wait().
+func TestLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "fakesingbox")
+	script := "#!/bin/sh\nsleep 3\n"
+	if err := os.WriteFile(fakeBin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.json")
+	m := NewManager(fakeBin, configPath, "")
+	m.SetHelperMode(false)
+
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := m.Start(ctx, cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !m.IsRunning() {
+		t.Fatal("IsRunning = false right after Start")
+	}
+	if st := m.State(); st != "running" {
+		t.Fatalf("State = %q, want running", st)
+	}
+
+	// The fake sing-box exits on its own after ~3s — the exited channel must
+	// flip IsRunning/State without any signal polling.
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if !m.IsRunning() {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if m.IsRunning() {
+		t.Fatal("IsRunning still true after the process exited")
+	}
+	if st := m.State(); st != "crashed" {
+		t.Fatalf("State after exit = %q, want crashed", st)
+	}
+
+	if err := m.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if st := m.State(); st != "stopped" {
+		t.Fatalf("State after Stop = %q, want stopped", st)
+	}
+}
+
+// TestImmediateExit verifies the startup probe surfaces sing-box stderr.
+func TestImmediateExit(t *testing.T) {
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "failsingbox")
+	script := "#!/bin/sh\necho 'configure tun interface: Access is denied.' >&2\nexit 1\n"
+	if err := os.WriteFile(fakeBin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(fakeBin, filepath.Join(dir, "config.json"), "")
+	m.SetHelperMode(false)
+
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := m.Start(ctx, cfg)
+	if err == nil {
+		t.Fatal("Start succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "Access is denied") {
+		t.Fatalf("error %q does not surface sing-box stderr", err.Error())
+	}
+}

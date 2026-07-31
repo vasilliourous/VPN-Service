@@ -299,6 +299,43 @@ PocketBase, verified the heartbeat route serves the correct `server_config`
 + matching password). Client unblock: run the new build (heartbeat refresh)
 or delete `%APPDATA%\myvpn\storage.json` and re-enter the activation code.
 
+---
+
+## WINDOWS RUNTIME — CONNECT SPINS FOREVER (Process.Signal(0) BROKEN) (2026-08-01)
+
+**Symptom:** after the server fix, Connect starts sing-box (correct password,
+TUN created) but the button spins for minutes with no new log lines — while
+the tunnel actually runs in the background.
+
+**Root cause:** the manager checked process liveness with
+`cmd.Process.Signal(syscall.Signal(0))` everywhere (startup probe, IsRunning,
+State, healthLoop, already-running check). On **Windows**, `Process.Signal`
+only supports `Kill` (TerminateProcess) — any other signal returns
+`syscall.EWINDOWS` ("not supported by windows") — verified in Go's
+`src/os/exec_windows.go`. So every check reported "dead":
+- the 500 ms startup probe concluded sing-box exited, called `cmd.Wait()`,
+  which **blocks while sing-box is alive** → `Connect()` never returns → the
+  UI spinner runs forever;
+- closing the app then spawned a second `cmd.Wait()` in `stopLocked`, which
+  errors immediately ("Wait was already called"), skipping the kill → an
+  **orphaned sing-box.exe** kept running.
+
+**Fix (`v5/client/internal/manager/process.go`):** replaced ALL signal-based
+liveness checks with a cross-platform **exited channel**: a goroutine owns
+`cmd.Wait()` and `close(exited)` when the process exits; `processAlive()`
+selects on that channel. Applied to the startup probe (select vs 500 ms
+timer), IsRunning, State, healthLoop (incl. the restart path — each restarted
+process gets a fresh channel), stopLocked (waits on the existing channel; no
+second Wait), and Start's already-running check.
+
+**Tests added (`internal/manager/process_test.go`):** `TestLifecycle` (start →
+running → auto-exit detected → crashed → stop → stopped) and
+`TestImmediateExit` (probe surfaces sing-box stderr, e.g. "Access is denied").
+Both pass. Windows build, golangci-lint, vet all green.
+
+**Note for users of the previous build:** after closing the hung app, kill any
+leftover `sing-box.exe` in Task Manager before running the new build.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the
