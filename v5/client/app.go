@@ -108,10 +108,24 @@ func NewApp() *App {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// Wails runs OnStartup in a goroutine — a panic would kill the whole
+	// process with no visible error (GUI builds have no console). Recover,
+	// log it to myvpn.log, and keep the window alive for diagnosis.
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			n := goRuntime.Stack(buf, false)
+			log.Printf("PANIC in Startup: %v\n%s", r, buf[:n])
+		}
+	}()
+
 	// ── Storage ──
+	// storage.New is self-healing (corrupt files are moved aside) and falls
+	// back to the OS temp dir, so this only fails in catastrophic cases.
+	// Never call LogFatal here — it exits the process silently on GUI builds.
 	store, err := storage.New("myvpn")
 	if err != nil {
-		wailsruntime.LogFatal(a.ctx, "Cannot initialize storage: "+err.Error())
+		wailsruntime.LogError(a.ctx, "Cannot initialize storage: "+err.Error())
 		return
 	}
 	a.store = store

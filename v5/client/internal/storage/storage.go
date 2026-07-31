@@ -18,11 +18,13 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -100,19 +102,31 @@ type Store struct {
 func New(appName string) (*Store, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine config directory: %w", err)
+		// Fall back to the OS temp dir so the app still starts.
+		configDir = os.TempDir()
 	}
 
 	dir := filepath.Join(configDir, appName)
 	if err := os.MkdirAll(dir, configDirPerm); err != nil {
-		return nil, fmt.Errorf("cannot create config directory: %w", err)
+		// Last resort — never fail startup over the config dir.
+		dir = filepath.Join(os.TempDir(), appName)
+		if err := os.MkdirAll(dir, configDirPerm); err != nil {
+			return nil, fmt.Errorf("cannot create config directory: %w", err)
+		}
 	}
 
 	path := filepath.Join(dir, "storage.json")
 	s := &Store{path: path, dir: dir}
 
 	if err := s.load(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("cannot load storage: %w", err)
+		// Corrupt or unreadable storage file (crash mid-write, aborted session,
+		// manual edit). Move it aside and start fresh — a bad JSON file must
+		// never brick the app at startup.
+		backupPath := fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix())
+		if rbErr := os.Rename(path, backupPath); rbErr != nil {
+			return nil, fmt.Errorf("cannot load storage (%v) and cannot move it aside (%w)", err, rbErr)
+		}
+		log.Printf("storage: unreadable storage file moved to %s (error: %v)", backupPath, err)
 	}
 
 	return s, nil

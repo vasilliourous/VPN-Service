@@ -172,6 +172,39 @@ covers both `wails build` and manual `go build` on amd64/arm64. Non-darwin
 builds are unaffected (build tag). Upstream Wails v2.10+ fixes this properly
 in the darwin package itself.
 
+---
+
+## WINDOWS RUNTIME — BLACK WINDOW FLASHES THEN APP DIES (2026-07-31)
+
+**Symptom:** the window (black) flashes for ~1 second then closes; no process
+remains in Task Manager. Wails runs `OnStartup` in a goroutine with no
+recovery, and `wailsruntime.LogFatal` calls `os.Exit(1)` — for a GUI build
+(no console) any startup failure or panic dies **completely silently**.
+
+**Likely trigger:** a corrupt `storage.json` (e.g. left by the earlier
+invisible/crashed sessions) → `storage.New` failed → `LogFatal` → `os.Exit(1)`
+about one second after launch (the visible gap = the hidden PowerShell
+fingerprint calls). The black window is the WebView mid-load when the process
+dies.
+
+**Fixes (make failures impossible to hide):**
+1. `internal/storage/storage.go` — `New()` is now **self-healing**: an
+   unreadable/corrupt `storage.json` is moved aside
+   (`storage.json.corrupt-<unix-ts>`) and a fresh store is created; config-dir
+   failures fall back to the OS temp dir. A bad JSON file can no longer brick
+   startup.
+2. `main.go` — `os.Stderr` and the standard logger are redirected to
+   `%APPDATA%\myvpn\myvpn.log` (rotated at 1MB). Panics, `log.Fatal` and
+   `log.Printf` output are now captured on GUI builds with no console.
+3. `app.go` — `Startup` wraps its body in `recover()` (logs the panic to
+   `myvpn.log` and keeps the window alive) and the storage failure path uses
+   `LogError` instead of `LogFatal` (no more `os.Exit(1)`).
+4. `main.go` — `wails.Run` errors still exit, but the message lands in
+   `myvpn.log` instead of a null console.
+
+**Diagnosis path for future Windows issues:** run the exe, then read
+`%APPDATA%\myvpn\myvpn.log` — any panic stack or startup error will be there.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the
