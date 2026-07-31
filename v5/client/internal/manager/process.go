@@ -7,9 +7,13 @@
 //   - Graceful shutdown
 //
 // The manager can operate in two modes:
-//  1. Direct mode (default): spawns sing-box directly from the app process
-//  2. Helper mode: sends config to the privileged TUN helper via IPC
-//     Helper mode is preferred when available (sing-box needs root for TUN).
+//  1. Direct mode: spawns sing-box directly from the app process.
+//     This is the mode used by the Wails app on ALL platforms — app.go calls
+//     SetHelperMode(false) after construction.
+//  2. Helper mode: sends config to the privileged TUN helper via IPC.
+//     Legacy — the myvpn-helper binary is no longer shipped (see v5/legacy).
+//     NewManager still defaults to helper mode on Windows, so the app must
+//     explicitly disable it.
 //
 // Hardening: process health monitoring with restart limits, graceful shutdown timeout,
 // config validation, resource cleanup, context propagation.
@@ -46,7 +50,7 @@ const (
 	shutdownTimeout = 10 * time.Second
 
 	// Max restart attempts within 5 minutes.
-	maxRestarts = 3
+	maxRestarts   = 3
 	restartWindow = 5 * time.Minute
 )
 
@@ -92,7 +96,7 @@ func (hc *HelperClient) SendCommand(action string, args []string) (bool, string,
 	if err != nil {
 		return false, "", fmt.Errorf("cannot connect to helper: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	cmd := map[string]interface{}{
 		"action": action,
@@ -122,17 +126,17 @@ func (hc *HelperClient) SendCommand(action string, args []string) (bool, string,
 
 // Manager controls the sing-box tunnel process.
 type Manager struct {
-	mu                sync.Mutex
-	cmd               *exec.Cmd
-	configPath        string
-	singBoxPath       string
-	helperPath        string
-	helperClient      *HelperClient
-	useHelper         bool
-	healthFailures    int
-	restartCount      int
-	firstRestartTime  time.Time
-	stopHealthCheck   chan struct{}
+	mu               sync.Mutex
+	cmd              *exec.Cmd
+	configPath       string
+	singBoxPath      string
+	helperPath       string
+	helperClient     *HelperClient
+	useHelper        bool
+	healthFailures   int
+	restartCount     int
+	firstRestartTime time.Time
+	stopHealthCheck  chan struct{}
 }
 
 // Config holds the parameters needed to start the tunnel.
@@ -277,7 +281,7 @@ func (m *Manager) stopLocked() error {
 
 	// Clean up config file from disk
 	if m.configPath != "" {
-		os.Remove(m.configPath)
+		_ = os.Remove(m.configPath)
 	}
 
 	return nil
@@ -559,12 +563,12 @@ func generateConfig(cfg Config) ([]byte, error) {
 				Password:   cfg.Password,
 			},
 			{
-				Type:       "direct",
-				Tag:        "direct",
+				Type: "direct",
+				Tag:  "direct",
 			},
 			{
-				Type:       "dns",
-				Tag:        "dns-out",
+				Type: "dns",
+				Tag:  "dns-out",
 			},
 		},
 		Route: RouteConfig{
@@ -590,11 +594,11 @@ func generateConfig(cfg Config) ([]byte, error) {
 // ── Sing-box config types ──
 
 type SingBoxConfig struct {
-	Log       LogConfig    `json:"log"`
-	DNS       DNSConfig    `json:"dns"`
-	Inbounds  []Inbound    `json:"inbounds"`
-	Outbounds []Outbound   `json:"outbounds"`
-	Route     RouteConfig  `json:"route"`
+	Log       LogConfig   `json:"log"`
+	DNS       DNSConfig   `json:"dns"`
+	Inbounds  []Inbound   `json:"inbounds"`
+	Outbounds []Outbound  `json:"outbounds"`
+	Route     RouteConfig `json:"route"`
 }
 
 type LogConfig struct {
@@ -621,23 +625,23 @@ type DNSServer struct {
 }
 
 type Inbound struct {
-	Type        string   `json:"type"`
-	Tag         string   `json:"tag,omitempty"`
-	InterfaceName string `json:"interface_name,omitempty"`
-	Address     []string `json:"address,omitempty"`
-	MTU         int      `json:"mtu,omitempty"`
-	AutoRoute   bool     `json:"auto_route,omitempty"`
-	StrictRoute bool     `json:"strict_route,omitempty"`
+	Type          string   `json:"type"`
+	Tag           string   `json:"tag,omitempty"`
+	InterfaceName string   `json:"interface_name,omitempty"`
+	Address       []string `json:"address,omitempty"`
+	MTU           int      `json:"mtu,omitempty"`
+	AutoRoute     bool     `json:"auto_route,omitempty"`
+	StrictRoute   bool     `json:"strict_route,omitempty"`
 }
 
 type Outbound struct {
-	Type        string             `json:"type"`
-	Tag         string             `json:"tag,omitempty"`
-	Server      string             `json:"server,omitempty"`
-	ServerPort  int                `json:"server_port,omitempty"`
-	Method      string             `json:"method,omitempty"`
-	Password    string             `json:"password,omitempty"`
-	UDPOverTCP  *UDPOverTCPConfig  `json:"udp_over_tcp,omitempty"`
+	Type       string            `json:"type"`
+	Tag        string            `json:"tag,omitempty"`
+	Server     string            `json:"server,omitempty"`
+	ServerPort int               `json:"server_port,omitempty"`
+	Method     string            `json:"method,omitempty"`
+	Password   string            `json:"password,omitempty"`
+	UDPOverTCP *UDPOverTCPConfig `json:"udp_over_tcp,omitempty"`
 }
 
 type UDPOverTCPConfig struct {

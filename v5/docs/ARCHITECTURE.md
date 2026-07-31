@@ -1,10 +1,11 @@
 # MyVPN Architecture Guide
 
-> **⚠️ PARTIALLY SUPERSEDED.** This document describes the client architecture.
-> The GUI layer moved from Fyne to **Wails + Vue 3** — see
-> [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md). The backend components (activation,
+> This document describes the current client architecture. The GUI layer is
+> **Wails + Vue 3** (see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the
+> migration history and rollback plan). The backend components (activation,
 > heartbeat, manager, storage, updater) and the TUN-based design described here
-> remain accurate; see [`BACKEND-API.md`](BACKEND-API.md) for their exact API.
+> are accurate against the code in `v5/client/`; see [`BACKEND-API.md`](BACKEND-API.md)
+> for their exact API surface.
 
 > **How to architect a compatible MyVPN client.** This document describes the
 > key components, their responsibilities, and how they fit together — from an
@@ -20,7 +21,7 @@
 │                   CLIENT DEVICE                        │
 │                                                        │
 │  ┌────────────────────────────────────────────────┐   │
-│  │              myvpn (Go + Fyne)                   │   │
+│  │              myvpn (Go + Wails / Vue 3)            │   │
 │  │                                                  │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
 │  │  │Activation│  │ Heartbeat │  │   Updater    │   │   │
@@ -70,9 +71,10 @@
 > no `ss-local`, no `tun2socks`, no extra process. Just sing-box managing
 > the TUN device and Shadowsocks outbound in one binary.
 >
-> The only elevated privilege needed is TUN device creation — handled by
-> `myvpn-helper` (`pkexec`/`sudo`/UAC). Once the TUN interface is up,
-> sing-box runs as a regular user process.
+> The only elevated privilege needed is TUN device creation. On BYOD machines
+> the user has admin rights, so sing-box creates the TUN interface directly —
+> no privileged helper service is shipped (the legacy `myvpn-helper` binary
+> was removed in the Wails migration).
 >
 > See [§2.4 Manager](#24-manager-internalmanager) for the exact sing-box
 > config that makes this work.
@@ -81,15 +83,18 @@
 
 ## 2. Components & Responsibilities
 
-### 2.1 Main Entry Point (`cmd/myvpn/main.go`)
+### 2.1 Main Entry Point (`main.go`)
 
-Thin launcher. Responsibilities:
-1. Parse flags (`--hub`, `--revert`, `--version`)
-2. Run update recovery check (auto-revert if previous update crashed)
-3. Initialize storage
-4. Launch GUI
+Wails entry point (`v5/client/main.go`). Responsibilities:
+1. Create the `App` struct (wraps all `internal/` packages)
+2. Run `wails.Run()` — 480×700 window, hidden at start, binds `App` to the
+   Vue 3 frontend
+3. `App.Startup()` performs initialization (see §3): storage → activation
+   client → fingerprint → sing-box discovery → update recovery → system tray
 
-No business logic. No networking. Just orchestration.
+The current `main.go` does not parse CLI flags. The updater still supports a
+`--revert` flag via `updater.CheckOnStartup(revertFlag)`, but it is not wired
+into the Wails entry point.
 
 ### 2.2 Storage (`internal/storage/`)
 
@@ -104,14 +109,19 @@ Persistent state management. Single JSON file, thread-safe, atomic writes.
   "server_config": { "server": "...", "server_port": 8443, "password": "...", "method": "aes-256-gcm" },
   "udp_relay": false,
   "activated": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "update_pending": false,
+  "update_version": "",
+  "update_sha256": "",
+  "update_timestamp": 0,
   "last_heartbeat_ok": 1700000000,
-  "heartbeat_failures": 0
+  "heartbeat_failures": 0,
+  "crashed_on_update": false,
+  "crash_timestamp": 0
 }
 ```
 
-**File location:** `~/.config/myvpn/storage.json` (Linux), `~/Library/Application Support/MyVPN/` (macOS), `%APPDATA%\MyVPN\` (Windows).
+**File location:** `os.UserConfigDir()/myvpn/storage.json` — `~/.config/myvpn/storage.json` (Linux), `~/Library/Application Support/myvpn/storage.json` (macOS), `%APPDATA%\myvpn\storage.json` (Windows).
 
 **Atomic write strategy:** Write to `.tmp` file, then `rename()` over target. This prevents corruption from crashes during write.
 
@@ -138,7 +148,7 @@ User enters code → strip formatting → Luhn-mod-N check
 
 **Hardware fingerprinting:**
 - SHA256 of MAC address + disk serial + motherboard UUID
-- Platform-specific collection (Linux: sysfs, macOS: IOKit, Windows: wmic)
+- Platform-specific collection (Linux: sysfs, macOS: networksetup/ioreg, Windows: PowerShell/WMI)
 - Fallback chain: full hardware → MAC+hostname → random UUID (persisted)
 - Fingerprint is STABLE once generated (cached in memory, persisted in storage)
 
@@ -160,21 +170,36 @@ The generated config looks like this:
 ```json
 {
   "log": { "level": "warn" },
-  "dns": { "final": "1.1.1.1", "servers": { "default": { "address": "1.1.1.1", "detour": "proxy" } } },
+  "dns": { "final": "dns-direct",
+           "servers": [
+             { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
+             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" }
+           ] },
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
-                 "address": "10.0.0.2/30", "mtu": 1500, "auto_route": true, "strict_route": true }],
-  "outbounds": [{ "type": "shadowsocks", "tag": "proxy",
-                  "server": "networkingguides.duckdns.org", "server_port": 8443,
-                  "method": "aes-256-gcm", "password": "..." }],
-  "route": { "rules": [{"rule": "geoip:private", "outbound_tag": "direct"}],
+                 "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": true }],
+  "outbounds": [
+    { "type": "shadowsocks", "tag": "proxy",
+      "server": "networkingguides.duckdns.org", "server_port": 8443,
+      "method": "aes-256-gcm", "password": "..." },
+    { "type": "direct", "tag": "direct" },
+    { "type": "dns", "tag": "dns-out" }
+  ],
+  "route": { "rules": [{ "protocol": "dns", "outbound": "dns-out" }],
              "auto_detect_interface": true, "final": "proxy" }
 }
 ```
 
+(`MYVPN_DEBUG=1` switches the log level to `debug`. The Strike tier, or any
+activation with `udp_relay` enabled, adds `"udp_over_tcp": { "enabled": true, "version": 2 }`
+to the shadowsocks outbound.)
+
 **Process lifecycle:**
-- `Start()` → write config file → spawn sing-box → verify it's running
-- `Stop()` → send SIGTERM → wait 5s → SIGKILL if still running
-- Health check → verify process is alive + TUN interface exists
+- `Start()` → generate config → write config file → spawn sing-box → 500ms
+  startup probe (immediate exit = config/permission error)
+- Health loop → every 10s, check the process is alive (`signal 0`); on death,
+  auto-restart up to 3 times within a 5-minute window
+- `Stop()` → graceful shutdown (wait up to 10s) → force kill if still running
+  → remove the config file
 
 **No privileged helper needed** (BYOD = admin rights). sing-box creates TUN directly.
 
@@ -189,8 +214,12 @@ Periodic communication with hub. Runs in a background goroutine.
 
 **Request:**
 ```
-GET /api/heartbeat?code=MYVPN-...&fp=<sha256>
+POST /api/heartbeat
+Content-Type: application/json
+
+{ "code": "MYVPN-...", "fingerprint": "<sha256>" }
 ```
+(POST with a JSON body — the code never appears in query strings or access logs.)
 
 **Response fields used:**
 - `status`: "ok" or error
@@ -199,7 +228,8 @@ GET /api/heartbeat?code=MYVPN-...&fp=<sha256>
 - `update_available`, `update_url`, `update_sha256`: staged rollout signal
 
 **Grace period:** Client tracks `last_heartbeat_ok`. If heartbeat fails for 7 days,
-show "tap to retry" — don't auto-loop forever.
+the UI shows the remaining grace days and the heartbeat failure count; the VPN
+keeps working during the grace period.
 
 ### 2.6 Updater (`internal/updater/`)
 
@@ -234,17 +264,23 @@ Server sets `rollout_percent` in PocketBase `update_config` collection.
 - `.reverted` — auto-revert happened (diagnostic)
 - `.myvpn-backups/` — previous binary kept for rollback
 
-### 2.7 GUI (`internal/gui/`)
+### 2.7 GUI (`frontend/` — Wails + Vue 3)
 
-Fyne v2 desktop application. Two screens:
-1. **Activation screen** — code input, tier info, activate button
-2. **Main screen** — connection status, connect/disconnect, timer, speed indicator
+The UI is a Vue 3 + Vite + TypeScript SPA embedded into the binary
+(`//go:embed all:frontend/dist` behind the `frontend` build tag) and rendered
+in a Wails WebView. Two screens (switched by `App.vue`):
+1. **Activation screen** — code input with auto-formatting + live Luhn validation, tier info, activate button
+2. **Main screen** — status indicator + tier badge, status circle, connect/disconnect button, stats (engine state, heartbeat failures, grace days), diagnostics modal
 
-**No system tray for MVP** — user opens app to connect, can minimise but closing
-disconnects. System tray can be added later.
+**System tray:** closing the window hides it to the tray instead of quitting
+(`setupSystemTray` in `app.go`; `tray:show` / `tray:quit` events). The app
+exits from the tray or via system quit.
 
-**Black + purple theme.** No technical protocol names visible. Just "Connected" / "Disconnected"
-with tier badge (Eco/Stealth/Strike).
+**Black + purple theme** (`#0D0D0F` background, `#A855F7` accent — see
+`UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
+"Disconnected" with a tier badge (Eco/Stealth/Strike).
+
+The old Fyne GUI lives in `v5/legacy/gui/` (reference only).
 
 ### 2.8 sing-box (Engine)
 
@@ -252,11 +288,15 @@ Downloaded separately (bundled with installer or downloaded at runtime).
 Platform-specific binary.
 
 **Responsibilities:**
-- Create TUN device (10.0.0.2/30)
-- Route all IPv4 traffic through TUN (except RFC1918 local)
+- Create TUN device (`myvpn0`, `10.0.0.1/30`)
+- Route all IPv4 traffic through TUN
 - Shadowsocks TCP outbound to VPS
-- DNS through tunnel (1.1.1.1)
+- DNS through tunnel (1.1.1.1 DoH)
 - Handle reconnection internally (sing-box has built-in retry)
+
+**Distribution:** the sing-box binary is downloaded during CI and bundled
+alongside `myvpn` in each release ZIP (`engines/` is a local placeholder).
+The current client does not download engines at runtime.
 
 **No separate SOCKS5 or tun2socks layer** — sing-box does everything in one process.
 
@@ -265,26 +305,28 @@ Platform-specific binary.
 ## 3. Startup Sequence
 
 ```
-main.go:
-  1. Parse flags
-  2. updater.CheckOnStartup() — auto-revert if crash detected
-  3. storage.New() — load or create config
+Wails App.Startup():
+  1. storage.New("myvpn") — load or create state
+  2. activation.NewClient(hubURL)
+  3. GenerateFingerprint()
+  4. findSingBox() — alongside the executable, then system paths
+  5. manager.NewManager(...) + SetHelperMode(false) — always direct mode
+  6. updater.CleanStaleMarkers(48h) + CheckOnStartup(false) + ConfirmIfPending(appDir)
+  7. setupSystemTray() — close hides window to tray
+  8. If already activated → startHeartbeatLoop(code)
 
-GUI:
-  4. Check storage.IsActivated()
-     └─ No → Show activation screen
-     └─ Yes → Show main screen
-  
-  5. On connect button:
-     a. Manager generates sing-box config
-     b. Manager.Start() — spawn sing-box
-     c. Begin health checks (every 15s through TUN)
-     d. Heartbeat.Start() — begin 60s loop
+Connect button:
+  1. Manager generates sing-box config from stored ServerConfig
+  2. Manager.Start() — spawn sing-box, 500ms startup probe
+  3. Manager health loop — signal-0 check every 10s, auto-restart up to
+     3 times within a 5-minute window
 
-  6. On disconnect button:
-     a. Heartbeat.Stop()
-     b. Manager.Stop() — SIGTERM → SIGKILL
-     c. Clean up TUN interface
+Disconnect button:
+  1. Manager.Stop() — graceful wait up to 10s, then force kill; remove config file
+
+Shutdown:
+  1. Disconnect (if connected)
+  2. Heartbeat.Stop()
 ```
 
 ---
@@ -324,6 +366,13 @@ GUI:
 Additional orthogonal state: **GRACE** — heartbeat has failed but 7-day grace
 period hasn't expired. The connection continues working normally.
 
+> **Note:** the current client implements a simplified version of this model.
+> The UI tracks `connected` (bool), the engine state from
+> `manager.State()` (`"running"` / `"stopped"` / `"crashed"`), heartbeat
+> failure count, and remaining grace days. The intermediate
+> CONNECTING/DEGRADED/CONNECTED_PRIMARY states and the full fallback-engine
+> loop are not implemented.
+
 ---
 
 ## 5. Data Flow
@@ -334,7 +383,7 @@ Activation:
                                      │
                                Saves to storage (persistent)
                                      │
-                               Heartbeat begins (60s loop)
+                               Heartbeat begins (5min loop, doubling to 2h on failure)
 
 Connection:
   Manager reads server config from storage
@@ -365,8 +414,8 @@ Update:
 
 | Component | Linux | macOS | Windows |
 |-----------|:-----:|:-----:|:-------:|
-| Fyne GUI | ✅ | ✅ | ✅ |
-| Hardware fingerprint | ✅ sysfs | ✅ IOKit | ✅ wmic |
+| Wails + Vue 3 GUI | ✅ | ✅ | ✅ |
+| Hardware fingerprint | ✅ sysfs | ✅ networksetup / ioreg | ✅ PowerShell / WMI |
 | sing-box TUN | ✅ direct | ✅ direct | ✅ direct |
 | Binary swap | ✅ rename | ✅ rename | ✅ .old trick |
 | sing-box binary | linux-amd64 | darwin-amd64 / arm64 | windows-amd64 |
@@ -386,7 +435,7 @@ admin rights. sing-box creates TUN interfaces directly.
 | **Server-enforced caps** | Client can't bypass its tier cap. tc and Brutal rate targets are on the VPS. |
 | **Permanent device binding** | One code = one device forever. No deactivation. Admin can suspend (not destroy) binding. |
 | **Crash-safe updates** | Two-phase sentinel with auto-revert. No update signing keys needed. |
-| **Grace period is client-enforced** | Client tracks heartbeat timestamps. 7 days of silence → "tap to retry". |
+| **Grace period is client-enforced** | Client tracks heartbeat timestamps. 7 days of silence → grace warning shown in UI. |
 | **Storage is plain JSON** | No app-level encryption. OS disk encryption is assumed. |
 
 ---

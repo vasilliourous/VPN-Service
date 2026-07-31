@@ -8,7 +8,8 @@
 #   - Go 1.22+
 #   - Node.js 18+ (for the Vue frontend)
 #   - Wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-#   - Linux: sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
+#   - Linux: sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev   (Ubuntu 22.04)
+#            or libwebkit2gtk-4.1-dev                              (Ubuntu 24.04+)
 #   - macOS: Xcode Command Line Tools
 #   - Windows: WebView2 (included in Windows 10+)
 #

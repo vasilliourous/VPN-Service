@@ -176,7 +176,7 @@ func killSwitchWindows(enable bool, iface string) error {
 			return fmt.Errorf("kill switch enable failed: %w", err)
 		}
 	} else {
-		exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
 			"name=MyVPN_KillSwitch").Run()
 	}
 	return nil
@@ -215,7 +215,7 @@ func setDNSDarwin(servers []string) error {
 		if err := exec.Command("networksetup", "-setdnsservers", "Wi-Fi", s).Run(); err != nil {
 			// Try Ethernet if Wi-Fi fails
 			if i == 0 {
-				exec.Command("networksetup", "-setdnsservers", "Ethernet", s).Run()
+				_ = exec.Command("networksetup", "-setdnsservers", "Ethernet", s).Run()
 			}
 		}
 	}
@@ -300,7 +300,7 @@ func (t *darwinTUN) Start() error {
 }
 
 func (t *darwinTUN) Stop() error {
-	exec.Command("ifconfig", t.cfg.Name, "down").Run()
+	_ = exec.Command("ifconfig", t.cfg.Name, "down").Run()
 	t.up = false
 	return nil
 }

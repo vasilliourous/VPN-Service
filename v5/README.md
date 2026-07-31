@@ -119,7 +119,7 @@ DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
 cd v5/client && make build
 
 # 5. Build for all platforms
-cd v5/client && make bundle-all
+cd v5/client && make build-all
 ```
 
 ---
@@ -128,7 +128,7 @@ cd v5/client && make bundle-all
 
 ```
 Student Laptop (myvpn client)
-├── Go + Fyne GUI (activation, status, tray)
+├── Wails + Vue 3 GUI (activation, status, tray)
 ├── Manager → spawns sing-box → TUN tunnel
 └── Heartbeat → server health + staged updates
 
@@ -169,16 +169,24 @@ Each bundle contains:
 - `myvpn` — Desktop client (Wails + Vue 3, single binary)
 - `sing-box` — Tunnel engine (Shadowsocks + TUN)
 
-### Local CI Simulation
+### Local Development (no CI)
+
+There is no `make ci` target — the pipeline runs on GitHub Actions only
+(see `.github/workflows/build.yml`).
 
 ```bash
-cd v5/client && make ci
+# Hot-reload development (Vite dev server + Wails)
+cd v5/client && make dev
+
+# Local production build
+cd v5/client && make build
 ```
 
-> **Note:** `make ci` was removed in the Wails migration — the CI pipeline
-> runs on GitHub Actions (see `.github/workflows/build.yml`). For local
-> development use `wails dev`; for local builds run `npm install && npm run build`
-> in `frontend/` first, then `go build .` (the `//go:embed` requires `frontend/dist`).
+> **Note:** the frontend must be built before Go compiles — `//go:embed`
+> requires `frontend/dist`. `wails build` does this automatically per
+> `wails.json`; `make dev` also builds the frontend first. Without the
+> `frontend` build tag, `go build .` compiles with the empty `assets_stub.go`
+> asset FS (no UI).
 
 ---
 

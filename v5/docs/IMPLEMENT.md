@@ -1,5 +1,13 @@
 # MyVPN Client — Implementation Plan
 
+> **⚠️ HISTORICAL PLAN (Fyne era).** This is the original phased implementation
+> plan that produced the pre-Wails client. The current client (`v5/client/`) is
+> a **Wails v2 + Vue 3** app built from the same `internal/` backend packages —
+> see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the GUI migration and
+> [`CLIENT-GUIDE.md`](CLIENT-GUIDE.md) for the current build instructions.
+> Kept for reference: the `internal/` package design described here is still
+> accurate, but the GUI/helper phases are obsolete.
+
 > **Phased build guide for the desktop client.** Each phase is a milestone that
 > can be tested independently. Follow them in order — each phase builds on the
 > previous one.

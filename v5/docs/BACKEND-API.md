@@ -45,6 +45,7 @@ type Data struct {
     LastHeartbeatOK   int64         `json:"last_heartbeat_ok,omitempty"`
     HeartbeatFailures int           `json:"heartbeat_failures,omitempty"`
     CrashedOnUpdate   bool          `json:"crashed_on_update,omitempty"`
+    CrashTimestamp   int64         `json:"crash_timestamp,omitempty"`
 }
 
 type ServerConfig struct {
@@ -76,8 +77,11 @@ func (s *Store) GetData() Data
 // SetActivation persists the activation result.
 func (s *Store) SetActivation(code, tier, fingerprint string, config *ServerConfig, udpRelay bool) error
 
-// ClearActivation resets all activation fields.
-func (s *Store) ClearActivation() error
+// IsActivated reports whether the device has been activated.
+func (s *Store) IsActivated() bool
+
+// GetCode returns the stored activation code.
+func (s *Store) GetCode() string
 
 // SetVersion saves the current app version.
 func (s *Store) SetVersion(version string) error
@@ -85,11 +89,8 @@ func (s *Store) SetVersion(version string) error
 // SetHeartbeat updates the last successful heartbeat timestamp.
 func (s *Store) SetHeartbeat(timestamp int64) error
 
-// SetHeartbeatFailure increments the failure counter and sets the failure timestamp.
+// SetHeartbeatFailure increments the heartbeat failure counter.
 func (s *Store) SetHeartbeatFailure(timestamp int64) error
-
-// ResetHeartbeatFailures clears the failure counter.
-func (s *Store) ResetHeartbeatFailures() error
 
 // SetUpdatePending marks that an update is in progress.
 func (s *Store) SetUpdatePending(version, sha256 string, timestamp int64) error
@@ -97,11 +98,17 @@ func (s *Store) SetUpdatePending(version, sha256 string, timestamp int64) error
 // ClearUpdatePending removes the update-pending flag.
 func (s *Store) ClearUpdatePending() error
 
-// SetCrashedOnUpdate marks that the update may have crashed.
-func (s *Store) SetCrashedOnUpdate(crashed bool) error
+// SetCrashedOnUpdate records the timestamp of a crash during update.
+func (s *Store) SetCrashedOnUpdate(timestamp int64) error
 
-// SetConnected persists the connection state.
-func (s *Store) SetConnected(connected bool) error
+// ClearCrashedOnUpdate clears the crash flag.
+func (s *Store) ClearCrashedOnUpdate() error
+
+// Reset clears all persisted state (full factory reset).
+func (s *Store) Reset() error
+
+// ListBackups returns the paths of the rotated backup files.
+func (s *Store) ListBackups() []string
 
 // RestoreFromBackup attempts to restore the most recent valid backup file.
 // Backups are named storage.json.bak.{0,1,2} (rotating, 3-deep).
@@ -109,6 +116,9 @@ func (s *Store) RestoreFromBackup() error
 
 // Path returns the full filesystem path of the storage file.
 func (s *Store) Path() string
+
+// SanitizePath validates that a name is safe for use in a filesystem path.
+func SanitizePath(name string) string
 ```
 
 ### Safety Guarantees
@@ -227,9 +237,9 @@ func ValidateFingerprint(fp string) bool
 
 | File | Build Tag | Source |
 |------|-----------|--------|
-| `fingerprint_darwin.go` | `darwin` | MAC via `en0/en1`, motherboard via IOKit `IOPlatformSerial` |
-| `fingerprint_linux.go` | `linux` | MAC via `/sys/class/net/*/address`, disk via `/sys/block/*/serial`, motherboard via `/sys/devices/virtual/dmi/id/product_uuid` |
-| `fingerprint_windows.go` | `windows` | MAC via `GetAdaptersAddresses`, disk via `Win32_DiskDrive`, motherboard via `Win32_ComputerSystemProduct` |
+| `fingerprint_darwin.go` | `darwin` | MAC via `networksetup` on `en0/en1`; disk serial via `ioreg IOPlatformSerialNumber`; motherboard via `ioreg IOPlatformUUID` |
+| `fingerprint_linux.go` | `linux` | MAC via `/sys/class/net/*/address`, disk via `/sys/block/*/device/serial`, motherboard via `/sys/class/dmi/id/product_uuid` |
+| `fingerprint_windows.go` | `windows` | MAC via PowerShell `Get-NetAdapter`, disk via WMI `Win32_DiskDrive`, motherboard via WMI `Win32_ComputerSystemProduct` |
 
 ---
 
@@ -285,7 +295,7 @@ func (m *Manager) SetHelperMode(enabled bool)
 // Returns ErrProcessNotRunning if sing-box exits immediately (config error / permissions).
 func (m *Manager) Start(ctx context.Context, cfg Config) error
 
-// Stop terminates sing-box gracefully (SIGTERM → 5s timeout → SIGKILL on Unix,
+// Stop terminates sing-box gracefully (SIGTERM → 10s timeout → SIGKILL on Unix,
 // or process kill on Windows). Cleans up the config file.
 func (m *Manager) Stop() error
 
@@ -316,7 +326,8 @@ Start() →
   2. Write config to configPath
   3. Spawn: sing-box run -c <configPath>
   4. Wait 500ms probe → if exited, return ErrProcessNotRunning
-  5. Start health check loop (10s interval, 3 failures = stop)
+  5. Start health check loop (10s interval; on process death auto-restart,
+     max 3 restarts within a 5-minute window)
 
 Stop() →
   1. SIGTERM (Unix) / Kill (Windows)
@@ -369,9 +380,11 @@ type Response struct {
 }
 
 type Result struct {
-    Success bool
-    Resp    *Response
-    Error   error
+    Success  bool
+    Resp     *Response
+    Error    error
+    Latency  time.Duration  // time taken for the request
+    Attempts int            // consecutive failures + 1 (i.e. current attempt number)
 }
 
 type HeartbeatError struct {
@@ -440,7 +453,8 @@ On failure:
 
 Grace period:
   - Client continues working for 7 days after last successful heartbeat
-  - After 7 days → "tap to retry" / require re-activation
+  - After 7 days → grace warning shown in the UI; connection keeps working
+    on the stored config (no token dependency)
   - The server can suspend a code at any time (returns 403)
 ```
 
@@ -607,22 +621,26 @@ type Interface interface {
 // DefaultConfig returns a Config with safe defaults.
 func DefaultConfig() Config
 
-// New creates a TUN interface for the current platform.
+// NewInterface creates a TUN interface for the current platform.
 // Returns linuxTUN, darwinTUN, or windowsTUN (all implement Interface).
-func New(cfg Config) (Interface, error)
+func NewInterface(cfg Config) (Interface, error)
+
+// SetDNS configures the system DNS servers through the tunnel
+// (resolv.conf on Linux, networksetup on macOS, netsh on Windows).
+func SetDNS(servers []string) error
 
 // KillSwitch enables or disables the kill switch.
-// On Linux: iptables/nftables rules to block non-TUN traffic.
+// On Linux: iptables rules to block non-TUN traffic.
 // On macOS: pfctl rules.
-// On Windows: (not implemented).
-func KillSwitch(enable bool) error
+// On Windows: netsh advfirewall block rule.
+func KillSwitch(enable bool, tunInterfaceName string) error
 ```
 
 ### Platform Implementations
 
 | Platform | Type | TUN Creation | Routes |
 |----------|------|-------------|--------|
-| Linux | `linuxTUN` | `ip tuntap add` + `ip link set up` | `ip route add 0.0.0.0/1 dev myvpn0`, `ip route add 128.0.0.0/1 dev myvpn0` |
+| Linux | `linuxTUN` | `ip tuntap add` + `ip addr add <vip>/24` + `ip link set mtu` + `ip link set up` | `ip route add 0.0.0.0/1 dev myvpn0`, `ip route add 128.0.0.0/1 dev myvpn0` |
 | macOS | `darwinTUN` | `ifconfig myvpn0 inet 10.0.0.2 10.0.0.2 up` | `route add -net 0.0.0.0/1 -interface myvpn0`, `route add -net 128.0.0.0/1 -interface myvpn0` |
 | Windows | `windowsTUN` | Requires myvpn-helper service | Not directly implemented |
 
@@ -639,7 +657,7 @@ main.go (entry point)
   ├── updater.CheckOnStartup()          ← pure filesystem, no deps
   ├── updater.ConfirmIfPending()        ← pure filesystem, no deps
   │
-  └── App (GUI layer — currently Fyne, target Wails)
+  └── App (GUI layer — Wails + Vue 3)
         │
         ├── storage.New()               ← no internal deps
         ├── activation.NewClient()      ← no internal deps
@@ -654,7 +672,7 @@ main.go (entry point)
         ├── manager.Stop()
         ├── manager.IsRunning()
         │
-        ├── heartbeat.Start(code, fp, callback) ← callback for UI updates
+        ├── heartbeat.Start()           ← bound code/fp from activation; callback for UI updates
         ├── heartbeat.Stop()
         ├── heartbeat.RemainingGracePeriod()
         │

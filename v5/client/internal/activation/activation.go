@@ -20,26 +20,26 @@ import (
 
 // Common errors.
 var (
-	ErrInvalidCharacter = errors.New("code contains invalid character")
-	ErrInvalidCode      = errors.New("invalid activation code format")
-	ErrChecksumFailed   = errors.New("activation code checksum failed")
-	ErrServerError      = errors.New("server returned an error")
-	ErrCodeBound        = errors.New("code already bound to another device")
-	ErrCodeSuspended    = errors.New("code is suspended")
-	ErrCodeExpired      = errors.New("code has expired")
-	ErrRateLimited      = errors.New("too many activation attempts")
-	ErrTimeout          = errors.New("activation request timed out")
+	ErrInvalidCharacter  = errors.New("code contains invalid character")
+	ErrInvalidCode       = errors.New("invalid activation code format")
+	ErrChecksumFailed    = errors.New("activation code checksum failed")
+	ErrServerError       = errors.New("server returned an error")
+	ErrCodeBound         = errors.New("code already bound to another device")
+	ErrCodeSuspended     = errors.New("code is suspended")
+	ErrCodeExpired       = errors.New("code has expired")
+	ErrRateLimited       = errors.New("too many activation attempts")
+	ErrTimeout           = errors.New("activation request timed out")
 	ErrServerUnreachable = errors.New("server is unreachable")
 )
 
 // ActivateResponse is the response from the activation server.
 type ActivateResponse struct {
-	Code       int           `json:"code"`
-	Message    string        `json:"message"`
-	Tier       string        `json:"tier,omitempty"`
-	DeviceFP   string        `json:"device_fingerprint,omitempty"`
-	ServerCfg  *ServerConfig `json:"server_config,omitempty"`
-	UDPRelay   bool          `json:"udp_relay,omitempty"`
+	Code      int           `json:"code"`
+	Message   string        `json:"message"`
+	Tier      string        `json:"tier,omitempty"`
+	DeviceFP  string        `json:"device_fingerprint,omitempty"`
+	ServerCfg *ServerConfig `json:"server_config,omitempty"`
+	UDPRelay  bool          `json:"udp_relay,omitempty"`
 }
 
 // ServerConfig holds Shadowsocks connection parameters from the server.
@@ -140,9 +140,9 @@ func NewClient(hubURL string, opts ...ClientOption) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        2,
-				IdleConnTimeout:     30 * time.Second,
-				DisableCompression:  false,
+				MaxIdleConns:       2,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
 			},
 		},
 	}
@@ -256,7 +256,7 @@ func (c *Client) attemptActivate(ctx context.Context, code, fingerprint string) 
 		}
 		return nil, fmt.Errorf("%w: %v", ErrServerUnreachable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response body fully
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 65536))

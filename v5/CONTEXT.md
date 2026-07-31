@@ -37,7 +37,7 @@ The business and sales docs are kept privately — not in this repo.
 ```
 VPN-Service/
 ├── v5/                 ← DEFINITIVE VERSION (hardened client + server + docs)
-│   ├── client/         ← Hardened Go + Fyne client code (v2.0.0)
+│   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.0.0)
 │   ├── server/         ← VPS deployment modules + PocketBase hooks
 │   ├── docs/           ← Architecture, deploy, ops, API, fixes
 │   ├── scripts/        ← Code generator + card printer
@@ -58,7 +58,7 @@ VPN-Service/
 | Directory | Purpose | For whom |
 |-----------|---------|----------|
 | `v5/` | Definitive version — start here | **Everyone** |
-| `v5/client/` | Hardened Go + Fyne client source code | **Client developers** |
+| `v5/client/` | Hardened Go + Wails/Vue 3 client source code | **Client developers** |
 | `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
 | `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
 | `v5/scripts/` | Code generator + card printer | Middleman managers |
@@ -211,7 +211,7 @@ v5/legacy/
 │                   CLIENT DEVICE                        │
 │                                                        │
 │  ┌────────────────────────────────────────────────┐   │
-│  │              myvpn (Go + Fyne)                   │   │
+│  │              myvpn (Go + Wails / Vue 3)            │   │
 │  │                                                  │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
 │  │  │Activation│  │ Heartbeat │  │   Updater    │   │   │
@@ -256,7 +256,8 @@ v5/legacy/
 | Component | Technology | Version |
 |-----------|-----------|:-------:|
 | Client language | Go | 1.22+ |
-| GUI toolkit | Fyne | v2.5.0 |
+| GUI toolkit | Wails v2 | 2.9.1 |
+| Frontend | Vue 3 + Vite + TypeScript | ^3.4.0 |
 | Tunnel engine | sing-box | 1.10.0 |
 | Server OS | Ubuntu | 22.04 |
 | Proxy protocol | Shadowsocks (ssserver-rust) | v1.23.0 |

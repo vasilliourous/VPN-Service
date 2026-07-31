@@ -8,7 +8,7 @@
 
 ## Why Wails?
 
-| Problem | Fyne (current) | Wails (target) |
+| Problem | Fyne (before) | Wails (after) |
 |---------|---------------|-----------------|
 | **CGO requirement** | Mandatory (OpenGL) | Only for webview embed (tiny surface area) |
 | **Cross-compilation** | Needs MinGW/osxcross | Wails handles it |
@@ -17,7 +17,7 @@
 | **System tray** | Buggy per-platform | Native, reliable |
 | **Resizing/scaling** | Poor | CSS handles it perfectly |
 | **Question marks** | Font/rune issues in Fyne | Unicode in web = trivial |
-| **3 binaries** | myvpn + helper + sing-box | **1 binary** — Wails bundles everything, no helper needed |
+| **3 binaries** | myvpn + helper + sing-box | **2 binaries** — myvpn + sing-box (helper removed; sing-box stays a separate bundled binary) |
 | **Elevation** | Separate helper binary + IPC | Wails handles via native dialogs |
 
 ---
@@ -150,17 +150,17 @@ v5/client/
 | 3.5 | `MainScreen.vue` | Connect/Disconnect button, status dot, timer, tier badge, speed |
 | 3.6 | `StatusIndicator.vue` | Green/grey/red dot + label (Connected/Disconnected/Error) |
 | 3.7 | `TierBadge.vue` | Eco (grey), Stealth (purple), Strike (gold) with icon |
-| 3.8 | `DiagnosticsPanel.vue` | Copy-to-clipboard support report |
-| 3.9 | `App.vue` | Root: routing between activation and main screens, system tray setup |
-| 3.10 | `styles.css` | Dark theme (#0D0D0F background, #A855F7 accent), responsive layout |
+| 3.8 | Diagnostics | Copy-to-clipboard support report (modal inside `MainScreen.vue`) |
+| 3.9 | `App.vue` | Root: routing between activation and main screens |
+| 3.10 | Component styles | Dark theme (#0D0D0F background, #A855F7 accent) in scoped SFC `<style>` blocks |
 
 ### Phase 4: Polish & Testing
 
 | Step | What |
 |------|------|
-| 4.1 | System tray: minimize on close, context menu (Show/Connect/Quit) |
+| 4.1 | System tray: close hides to tray (Show/Quit event hooks; tray menu not yet built) |
 | 4.2 | Update UX: progress bar during download, "Update available" notification |
-| 4.3 | Grace period: countdown display, "tap to retry" when expired |
+| 4.3 | Grace period: countdown display + warning when ≤3 days remain |
 | 4.4 | Error handling: toast notifications for heartbeat failures, connection errors |
 | 4.5 | Windows: no terminal window, proper taskbar icon |
 | 4.6 | macOS: menu bar integration, template icon |

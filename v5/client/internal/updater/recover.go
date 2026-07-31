@@ -69,7 +69,7 @@ func (cd *CrashDetector) HandleCrashedUpdate() (bool, error) {
 
 	if reverted {
 		// Remove pending sentinel (revert already placed .reverted)
-		os.Remove(filepath.Join(cd.appDir, SentinelPending))
+		_ = os.Remove(filepath.Join(cd.appDir, SentinelPending))
 	}
 
 	return reverted, nil
@@ -103,7 +103,7 @@ func MarkUpdateStart(appDir string, version string) error {
 
 // ClearUpdateStart removes the update start marker on success.
 func ClearUpdateStart(appDir string, version string) {
-	os.Remove(filepath.Join(appDir, ".update-start-"+version))
+	_ = os.Remove(filepath.Join(appDir, ".update-start-"+version))
 }
 
 // IsUpdateStale checks if an update marker is older than the grace period.
@@ -131,7 +131,7 @@ func CleanStaleMarkers(appDir string, maxAge time.Duration) {
 				continue
 			}
 			if time.Since(info.ModTime()) > maxAge {
-				os.Remove(filepath.Join(appDir, name))
+				_ = os.Remove(filepath.Join(appDir, name))
 				log.Printf("Cleaned stale update marker: %s", name)
 			}
 		}
@@ -202,8 +202,8 @@ func ConfirmIfPending(appDir string) error {
 
 	// If already confirmed, clean up both sentinels
 	if _, err := os.Stat(confirmedPath); err == nil {
-		os.Remove(pendingPath)
-		os.Remove(confirmedPath)
+		_ = os.Remove(pendingPath)
+		_ = os.Remove(confirmedPath)
 		return nil
 	}
 
@@ -215,7 +215,7 @@ func ConfirmIfPending(appDir string) error {
 	log.Println("Update confirmed — two-phase commit completed successfully")
 
 	// Clean up old sentinel after confirming (next startup will see neither)
-	os.Remove(pendingPath)
+	_ = os.Remove(pendingPath)
 
 	return nil
 }

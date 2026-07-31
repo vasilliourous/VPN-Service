@@ -330,7 +330,7 @@ func (a *App) disconnect() OpResult {
 		return OpResult{Success: true, Message: "Already disconnected"}
 	}
 
-	a.mgr.Stop()
+	_ = a.mgr.Stop()
 	a.connected = false
 
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
@@ -382,7 +382,7 @@ func (a *App) startHeartbeatLoop(code string) {
 
 	a.hb = heartbeat.New(a.hubURL, code, a.fp, func(result heartbeat.Result) {
 		if result.Success {
-			a.store.SetHeartbeat(time.Now().Unix())
+			_ = a.store.SetHeartbeat(time.Now().Unix())
 
 			// Check for staged-rollout update signal
 			if result.Resp != nil && result.Resp.UpdateAvailable != "" {
@@ -393,7 +393,7 @@ func (a *App) startHeartbeatLoop(code string) {
 				})
 			}
 		} else {
-			a.store.SetHeartbeatFailure(time.Now().Unix())
+			_ = a.store.SetHeartbeatFailure(time.Now().Unix())
 			wailsruntime.LogWarning(a.ctx, "Heartbeat failed: "+result.Error.Error())
 		}
 

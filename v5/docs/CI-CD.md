@@ -70,7 +70,8 @@ Each release produces 4 platform bundles:
 | `myvpn-macOS-arm64.zip` | macOS Apple Silicon | `myvpn` + `sing-box` |
 | `myvpn-Windows-amd64.zip` | Windows x86_64 | `myvpn.exe` + `sing-box.exe` |
 
-Each bundle also includes a `checksums.sha256` file for integrity verification.
+The zips contain only the two binaries; the release job generates a separate
+`checksums.sha256` file (SHA256 of each zip) attached to the GitHub Release.
 
 ---
 
@@ -83,7 +84,7 @@ For development builds without the full CI pipeline:
 cd v5/client && make build
 
 # Build everything locally
-cd v5/client && make bundle-all
+cd v5/client && make build-all
 
 # Run quality checks
 cd v5/client && make vet && make test
@@ -105,9 +106,8 @@ cd v5/client && make vet && make test
 Each platform build:
 1. Sets `GOOS`/`GOARCH` appropriate for the target
 2. Builds the main client binary with version ldflags
-3. Builds the TUN helper (no CGO)
-4. Downloads the correct sing-box release
-5. Zips the 3 binaries into a platform bundle
+3. Downloads the correct sing-box release
+4. Zips the 2 binaries into a platform bundle
 
 ### `release` (tag only)
 
@@ -119,10 +119,14 @@ Each platform build:
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VERSION` | tag name or "dev" | Sets the `main.version` ldflag |
-| `SING_BOX_VERSION` | 1.10.0 | sing-box engine version to bundle |
+The workflow does not define configurable environment variables — values are
+set inline per job:
+
+| Value | Where |
+|-------|-------|
+| `VERSION` | Derived from the tag (`github.ref_name`), falling back to `"dev"`; passed via `-X main.version` |
+| `SING_BOX_VERSION` | Hardcoded as `1.10.0` in the "Download sing-box engine" step |
+| `CGO_ENABLED` | `1` for Linux/macOS (Wails WebView), `0` for Windows (WebView2 COM, pure Go) |
 
 ---
 
@@ -146,10 +150,11 @@ Then add the sing-box download URL for that platform in the "Download sing-box e
 
 ### Build fails with "CGO required"
 
-Fyne requires CGO. Ensure:
-- Linux: `sudo apt install libgl1-mesa-dev xorg-dev`
+Wails requires CGO on Linux and macOS (webview embed). Windows builds with
+`CGO_ENABLED=0` (pure Go, WebView2 COM) — no MinGW needed in CI. Ensure:
+- Linux: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev` (Ubuntu 24.04+; older Ubuntu 22.04 uses `libwebkit2gtk-4.0-dev`)
 - macOS: Xcode Command Line Tools
-- Windows: MinGW-w64 (`x86_64-w64-mingw32-gcc`)
+- Windows: no extra toolchain (CI); local `wails build` for Windows from Linux may need MinGW-w64
 
 ### Lint fails on unused imports
 

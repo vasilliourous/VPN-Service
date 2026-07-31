@@ -24,6 +24,42 @@ and the `linuxTUN.Stop()` best-effort cleanup loop.
 
 ---
 
+## CI LINT — REMAINING ERRCHECK + UNUSED FIXES (2026-07-31)
+
+`golangci-lint run ./...` (v2.12.2, default linters — the CI `lint` job) still
+failed after the L1–L10 batch. 26 more issues fixed, all behavior-neutral
+(`_ =` acknowledgements; two genuinely dead functions removed):
+
+| # | File | Fix |
+|:-:|------|-----|
+| L11 | `v5/client/app.go` | `a.mgr.Stop()` → `_ = ...` (disconnect) |
+| L12 | `v5/client/app.go` | `a.store.SetHeartbeat(...)` → `_ = ...` (heartbeat callback) |
+| L13 | `v5/client/app.go` | `a.store.SetHeartbeatFailure(...)` → `_ = ...` (heartbeat callback) |
+| L14 | `v5/client/internal/activation/activation.go` | `defer resp.Body.Close()` → `defer func() { _ = ... }()` |
+| L15 | `v5/client/internal/heartbeat/heartbeat.go` | `defer resp.Body.Close()` → closure |
+| L16 | `v5/client/internal/heartbeat/heartbeat.go` | **Removed dead `getInterval()`** (unused) |
+| L17 | `v5/client/internal/manager/process.go` | `defer conn.Close()` → closure (helper IPC client) |
+| L18 | `v5/client/internal/manager/process.go` | `os.Remove(configPath)` → `_ = ...` (stop cleanup) |
+| L19 | `v5/client/internal/storage/storage.go` | `os.Remove(tmpPath)` → `_ = ...` (save failure cleanup) |
+| L20 | `v5/client/internal/storage/storage.go` | `os.Remove(oldest)` → `_ = ...` (backup rotation) |
+| L21 | `v5/client/internal/tunnel/tunnel.go` | `netsh ... delete rule` → `_ = ...Run()` (Windows kill switch off) |
+| L22 | `v5/client/internal/tunnel/tunnel.go` | `networksetup ... Ethernet` → `_ = ...Run()` (macOS DNS fallback) |
+| L23 | `v5/client/internal/tunnel/tunnel.go` | `ifconfig down` → `_ = ...Run()` (darwinTUN.Stop) |
+| L24 | `v5/client/internal/updater/updater.go` | 5× `defer {Body,f}.Close()` → closures (download/checksum/copy) |
+| L25 | `v5/client/internal/updater/updater.go` | 13× `os.Remove(...)` → `_ = ...` (cleanup paths in PerformUpdate/downloadBinary/CheckOnStartup) |
+| L26 | `v5/client/internal/updater/updater.go` | **Removed dead `cleanupSentinelFiles()`** (unused) |
+| L27 | `v5/client/internal/updater/recover.go` | 6× `os.Remove(...)` → `_ = ...` (sentinel/marker cleanup) |
+| L28 | `v5/client/internal/updater/update_windows.go` | 2× `os.Remove(oldPath)` → `_ = ...` (.old cleanup in swapWindows) |
+
+Also ran `gofmt -w` across the module (pre-existing alignment drift in const/var/struct
+blocks — cosmetic only) and synced `frontend/package.json` to the committed
+`package-lock.json` (`vite ^6.4.3` → `^5.4.21`) so CI `npm install` is
+deterministic. Verified green locally: `golangci-lint run ./...` (0 issues),
+`go vet ./...`, `go build -tags frontend` (linux/windows/darwin amd64+arm64),
+`go test ./...`, and a clean `npm ci && npm run build`.
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

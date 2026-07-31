@@ -20,7 +20,7 @@ func swapWindows(newPath, currentPath string) error {
 	oldPath := currentPath + ".old"
 
 	// Remove any existing .old file
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 
 	// Rename current binary to .old (succeeds even if current is running on Windows)
 	if err := os.Rename(currentPath, oldPath); err != nil {
@@ -35,7 +35,7 @@ func swapWindows(newPath, currentPath string) error {
 	}
 
 	// Clean up old binary
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 
 	return nil
 }

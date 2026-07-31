@@ -27,11 +27,11 @@ import (
 
 // Default intervals.
 const (
-	MinInterval      = 5 * time.Minute
-	MaxInterval      = 2 * time.Hour
-	GracePeriod      = 7 * 24 * time.Hour // 7 days
-	CallbackTimeout  = 5 * time.Second
-	JitterPercent    = 0.1 // 10% jitter added to intervals
+	MinInterval     = 5 * time.Minute
+	MaxInterval     = 2 * time.Hour
+	GracePeriod     = 7 * 24 * time.Hour // 7 days
+	CallbackTimeout = 5 * time.Second
+	JitterPercent   = 0.1 // 10% jitter added to intervals
 )
 
 // Error types for heartbeat failures.
@@ -54,18 +54,18 @@ func (e *HeartbeatError) Unwrap() error {
 
 // Response from the heartbeat endpoint.
 type Response struct {
-	Status    string `json:"status"`
+	Status     string `json:"status"`
 	ServerTime string `json:"server_time"`
-	Tier      string `json:"tier,omitempty"`
+	Tier       string `json:"tier,omitempty"`
 
 	// Update signal (staged rollout)
-	UpdateAvailable string `json:"update_available,omitempty"`
-	UpdateURL       string `json:"update_url,omitempty"`
-	UpdateSHA256    string `json:"update_sha256,omitempty"`
-	UpdateLinux     string `json:"update_linux,omitempty"`
-	UpdateWindows   string `json:"update_windows,omitempty"`
+	UpdateAvailable  string `json:"update_available,omitempty"`
+	UpdateURL        string `json:"update_url,omitempty"`
+	UpdateSHA256     string `json:"update_sha256,omitempty"`
+	UpdateLinux      string `json:"update_linux,omitempty"`
+	UpdateWindows    string `json:"update_windows,omitempty"`
 	UpdateMacOSIntel string `json:"update_macos_intel,omitempty"`
-	UpdateMacOSARM  string `json:"update_macos_arm,omitempty"`
+	UpdateMacOSARM   string `json:"update_macos_arm,omitempty"`
 
 	// Config refresh
 	ServerConfig *ServerConfig `json:"server_config,omitempty"`
@@ -119,13 +119,13 @@ type Heartbeat struct {
 	interval    time.Duration
 	callback    Callback
 
-	mu          sync.Mutex
-	running     bool
-	stopCh      chan struct{}
-	failures    int
-	totalBeats  int64
+	mu           sync.Mutex
+	running      bool
+	stopCh       chan struct{}
+	failures     int
+	totalBeats   int64
 	successBeats int64
-	client      *http.Client
+	client       *http.Client
 }
 
 // New creates a new Heartbeat manager.
@@ -270,7 +270,7 @@ func (h *Heartbeat) beat() Result {
 			Error:   fmt.Errorf("heartbeat request failed: %w", err),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if err != nil {
@@ -325,13 +325,6 @@ func (h *Heartbeat) intervalWithJitter() time.Duration {
 
 	jitter := time.Duration(float64(base) * JitterPercent * (2*rand.Float64() - 1))
 	return base + jitter
-}
-
-// getInterval returns the current interval safely.
-func (h *Heartbeat) getInterval() time.Duration {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.interval
 }
 
 // DoBeat performs a single heartbeat synchronously using the code and

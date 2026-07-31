@@ -13,8 +13,10 @@
 //
 // Staged rollout:
 //   - Server sets rollout_percent (0-100) in update_config
-//   - Client computes hash(fingerprint) % 100, only updates if < rollout_percent
-//   - This allows gradual rollout without client changes
+//   - Server only includes update fields in the heartbeat response when
+//     hash(fingerprint) % 100 < rollout_percent (gated server-side)
+//   - The client simply acts when update fields are present — it does not
+//     compute the rollout gate itself
 //
 // Hardening: checksum verification before swap, download validation with size check,
 // context propagation for cancellation, retry on download failure, backup integrity check.
@@ -56,12 +58,12 @@ const (
 // UpdateInfo describes an available update with platform-specific assets.
 // Matches the heartbeat response structure.
 type UpdateInfo struct {
-	Version       string
-	SHA256        string
-	DownloadURL   string
-	DownloadURLLinux       string
-	DownloadURLWindows     string
-	DownloadURLMacOSIntel  string
+	Version               string
+	SHA256                string
+	DownloadURL           string
+	DownloadURLLinux      string
+	DownloadURLWindows    string
+	DownloadURLMacOSIntel string
 	DownloadURLMacOSARM   string
 }
 
@@ -139,28 +141,28 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 	newPath := filepath.Join(u.appDir, u.binaryName+".new")
 	if err := u.downloadBinary(ctx, downloadURL, newPath, info.SHA256); err != nil {
 		// Clean up failed download
-		os.Remove(newPath)
+		_ = os.Remove(newPath)
 		return fmt.Errorf("download failed: %w", err)
 	}
 
 	// Step 3: Verify SHA256
 	if err := verifyChecksum(newPath, info.SHA256); err != nil {
-		os.Remove(newPath)
+		_ = os.Remove(newPath)
 		return fmt.Errorf("checksum verification failed: %w", err)
 	}
 
 	// Step 4: Create pending sentinel (two-phase commit start)
 	pendingPath := filepath.Join(u.appDir, SentinelPending)
 	if err := os.WriteFile(pendingPath, []byte(info.Version+"\n"), 0644); err != nil {
-		os.Remove(newPath)
+		_ = os.Remove(newPath)
 		return fmt.Errorf("cannot create pending sentinel: %w", err)
 	}
 
 	// Step 5: Swap binary
 	if err := swapBinary(newPath, currentPath); err != nil {
 		// Swap failed — clean up
-		os.Remove(pendingPath)
-		os.Remove(newPath)
+		_ = os.Remove(pendingPath)
+		_ = os.Remove(newPath)
 		// Restore backup
 		_ = u.restoreBackup(backupPath, currentPath)
 		return fmt.Errorf("binary swap failed: %w", err)
@@ -169,7 +171,7 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 	// Step 6: Fork new process (parent will exit)
 	if err := forkNewProcess(currentPath); err != nil {
 		// Fork failed — we're still on the old binary
-		os.Remove(pendingPath)
+		_ = os.Remove(pendingPath)
 		return fmt.Errorf("fork failed: %w", err)
 	}
 
@@ -211,7 +213,7 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	if err != nil {
 		return fmt.Errorf("download request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
@@ -223,7 +225,7 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	if err != nil {
 		return fmt.Errorf("cannot create temp file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Download with size and hash verification
 	// io.LimitReader ensures we cap at MaxDownloadSize (no unbounded reads)
@@ -232,25 +234,25 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	writer := io.MultiWriter(f, hasher)
 	downloaded, err := io.Copy(writer, io.LimitReader(resp.Body, MaxDownloadSize))
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("download interrupted: %w", err)
 	}
 
 	if downloaded < MinDownloadSize {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("download too small: %d bytes (min %d)", downloaded, MinDownloadSize)
 	}
 
 	// Verify hash
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 	if checksum != expectedSHA256 {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("SHA256 mismatch: got %s, expected %s", checksum, expectedSHA256)
 	}
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("cannot rename downloaded file: %w", err)
 	}
 
@@ -264,7 +266,7 @@ func verifyChecksum(path, expectedSHA256 string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open file for checksum: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, f); err != nil {
@@ -310,8 +312,8 @@ func CheckOnStartup(revertFlag bool) (bool, error) {
 
 	if _, err := os.Stat(confirmedPath); err == nil {
 		// Update was confirmed in a previous run — clean up and proceed
-		os.Remove(pendingPath)
-		os.Remove(confirmedPath)
+		_ = os.Remove(pendingPath)
+		_ = os.Remove(confirmedPath)
 		return false, nil
 	}
 
@@ -325,7 +327,7 @@ func CheckOnStartup(revertFlag bool) (bool, error) {
 	}
 
 	// Clean up pending sentinel
-	os.Remove(pendingPath)
+	_ = os.Remove(pendingPath)
 
 	return reverted, nil
 }
@@ -376,24 +378,18 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	d, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	if _, err := io.Copy(d, s); err != nil {
 		return err
 	}
 	return nil
-}
-
-// cleanupSentinelFiles removes update sentinel files.
-func cleanupSentinelFiles(appDir string) {
-	os.Remove(filepath.Join(appDir, SentinelPending))
-	os.Remove(filepath.Join(appDir, SentinelConfirmed))
 }
 
 // swapBinary is platform-specific — implemented in update_*.go files.

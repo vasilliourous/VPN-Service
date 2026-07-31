@@ -3,6 +3,11 @@
 A commercial VPN service for students at N4L-managed NZ schools (Macleans College).
 Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, no UDP blocks).
 
+> **The authoritative version of everything below is `v5/`** — hardened client
+> (`v5/client/`, Go + Wails + Vue 3), server deployment (`v5/server/`), and docs
+> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`, `v3/`, `simplified/`,
+> `originals/`, `modular-vps/`) are historical reference only.
+
 ---
 
 ## Architecture Overview
@@ -12,7 +17,8 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │              STUDENT'S LAPTOP                     │
 │                                                   │
 │  ┌───────────────────────────────────────────┐   │
-│  │         MyVPN Desktop App (Go+Fyne)        │   │
+│  │        MyVPN Desktop App (Go + Wails)      │   │
+│  │         (Vue 3 UI embedded in binary)       │   │
 │  │                                             │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
 │  │  │Activation│  │ Heartbeat │  │ Updater   │  │   │
@@ -25,8 +31,11 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │  │  └─────────────────┬────────────────────┘   │   │
 │  └────────────────────┼────────────────────────┘   │
 │                       │                            │
-│              SOCKS5 :1080                           │
-│                       │                            │
+│              ┌────────┴────────┐                   │
+│              │  sing-box TUN   │  (no SOCKS5 —     │
+│              │  device (myvpn0)│   TUN routes all  │
+│              │                 │   device traffic) │
+│              └─────────────────┘                   │
 └───────────────────────┼────────────────────────────┘
                         │ Shadowsocks TCP
                         ▼
@@ -39,9 +48,7 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │       │                         │ JS Hooks│       │
 │       │                         │  • Act. │       │
 │       │                         │  • HB   │       │
-│       │                         │  • Unbin│       │
 │       │                         └─────────┘       │
-│       │                                            │
 │  ┌────┴────┐  ┌──────────┐  ┌──────────┐          │
 │  │ Eco     │  │ Stealth  │  │ Strike   │          │
 │  │ :8443   │  │ :8444    │  │ :8445    │          │
@@ -52,6 +59,11 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │  Backups → Backblaze B2 (hourly, 7-day retention)  │
 └─────────────────────────────────────────────────┘
 ```
+
+Only two binaries ship on the client: `myvpn` (desktop app, Wails + Vue 3) and
+`sing-box` (tunnel engine). There is no SOCKS5 proxy layer, no separate TUN
+helper service — sing-box creates the TUN interface directly (BYOD machines
+give users admin rights).
 
 ---
 
@@ -68,49 +80,31 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 ## Project Layout
 
 ```
-myvpn/
-├── modular-vps/              ← SERVER: VPS setup scripts (deployable unit)
-│   ├── setup.sh              ← Orchestrator — runs all 8 modules
-│   ├── restore.sh            ← Full restore from B2 backup
-│   ├── modules/              ← 8 idempotent setup modules
-│   │   ├── 00-env.sh         ── Environment validation
-│   │   ├── 01-bbr.sh         ── BBR congestion control + kernel tuning
-│   │   ├── 02-shadowsocks.sh ── 3× ssserver instances (eco/stealth/strike)
-│   │   ├── 03-brutal.sh      ── TCP Brutal kernel module + LD_PRELOAD wrapper
-│   │   ├── 04-tc.sh          ── Traffic shaping (tc HTB qdisc)
-│   │   ├── 05-caddy.sh       ── Caddy reverse proxy + rate limiting
-│   │   ├── 06-pocketbase.sh  ── PocketBase admin backend + JS hooks
-│   │   ├── 07-backups.sh     ── Hourly B2 backup service
-│   │   └── 08-firewall.sh    ── UFW firewall rules
-│   ├── pb_hooks/             ← PocketBase JavaScript hooks
-│   │   ├── activation.pb.js  ── Code validation + device binding
-│   │   ├── heartbeat.pb.js   ── Suspension check + staged rollout
-│   │   └── admin_unbind.pb.js ── Admin code recovery endpoint
-│   └── templates/            ← Config templates
-│       ├── Caddyfile
-│       ├── eco.json / stealth.json / strike.json
-│       └── pocketbase.service
-│
-├── v4/                       ← CLIENT: Go desktop application
-│   ├── cmd/myvpn/main.go     ← Entry point
-│   ├── internal/
-│   │   ├── activation/       ── Luhn-mod-N validation + device fingerprinting
-│   │   ├── storage/          ── JSON persistence (activation state)
-│   │   ├── manager/          ── sing-box config generation + lifecycle
-│   │   ├── heartbeat/        ── Periodic hub check (5min→2h backoff)
-│   │   ├── updater/          ── Two-phase update + auto-rollback
-│   │   ├── tunnel/           ── Fallback TUN + kill switch + DNS
-│   │   ├── gui/              ── Fyne v2 desktop GUI
-│   │   └── helper/           ── Privileged TUN helper service
-│   ├── Makefile              ── Cross-platform build system
-│   └── go.mod                ── Go module definition
-│
+VPN-Service/
+├── v5/                       ← DEFINITIVE VERSION (start here)
+│   ├── client/               ← CLIENT: Go 1.22 + Wails v2 + Vue 3 desktop app (v2.0.0)
+│   │   ├── main.go           ← Wails entry point (binds App, embeds frontend/dist)
+│   │   ├── app.go            ← App struct — wraps internal/ for the Vue UI
+│   │   ├── internal/         ← 6 independent packages (activation, heartbeat,
+│   │   │                        manager, storage, tunnel, updater)
+│   │   ├── frontend/         ← Vue 3 + Vite + TypeScript UI (embedded into binary)
+│   │   ├── engines/          ← sing-box binary placeholder
+│   │   └── Makefile          ← dev / build / build-all targets
+│   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
+│   ├── docs/                 ← Architecture, deploy, ops, API, fixes
+│   ├── scripts/              ← Code generator + card printer
+│   ├── legacy/               ← Old Fyne GUI + TUN helper (reference only, NOT in module)
+│   ├── README.md             ← V5 overview
+│   └── CONTEXT.md            ← Full agent/developer context
+├── modular-vps/              ← Original server modules (source for v5/server/)
+├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)
+├── v3/, simplified/          ← Abandoned alternatives (reference only)
+├── originals/                ← Business plans, threat models (reference only)
 ├── scripts/                  ← Operational tooling
 │   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
 │   └── print_codes.sh        ── Printable PDF code cards
-│
 └── .github/workflows/        ← CI/CD
-    └── build.yml             ── Build + release for all platforms
+    └── build.yml             ── Build + release for all platforms (Wails)
 ```
 
 ---
@@ -121,7 +115,7 @@ myvpn/
 
 The VPN uses **Shadowsocks TCP** — a simple, fast tunnel protocol that encrypts traffic with AES-256-GCM. Unlike TLS-based proxies (Trojan, Xray VLESS), Shadowsocks has no TLS handshake or certificate exchange, so it bypasses N4L's JA3 fingerprinting.
 
-All traffic goes through a single TCP connection per tier. The client runs **sing-box** which provides a local SOCKS5 proxy on `127.0.0.1:1080`. Applications connect to this proxy, and sing-box tunnels everything through Shadowsocks to the server.
+All traffic goes through a single TCP connection per tier. The client runs **sing-box**, which creates a **TUN interface** (`myvpn0`, `10.0.0.1/30`) and routes all device traffic through it. sing-box encrypts everything with Shadowsocks and sends it to the VPS. No SOCKS5 proxy layer, no per-app configuration.
 
 ### Tiers & Congestion Control
 
@@ -142,23 +136,23 @@ Each tier uses a different congestion control algorithm:
 
 ### Heartbeat & Grace Period
 
-The app sends a heartbeat every 5 minutes. If the hub is unreachable:
+The app sends a heartbeat every 5 minutes (POST `/api/heartbeat` with
+`{ code, fingerprint }`). If the hub is unreachable:
 - Interval doubles: 5min → 10min → 20min → ... → 2h max
 - VPN keeps working (config is stored locally, no token dependency)
 - **7-day grace period** before requiring re-activation
 
 On server response:
 - `200 OK`: Normal operation. Resets interval to 5min.
-- `403 suspended`: Immediately disconnect. Show suspension message.
+- `403 suspended`: Server-side suspension handling.
 - `update_available` field: Triggers staged rollout update.
 
 ### Staged Rollouts
 
 Updates are delivered gradually:
 1. Server sets `rollout_percent` (0-100) in PocketBase `update_config`
-2. Heartbeat response includes `update_available` only if fingerprint passes server-side hash gate
-3. Client independently checks: `hash(fingerprint) % 100 < rollout_percent`
-4. If eligible, downloads new binary, verifies SHA256, applies two-phase update
+2. Heartbeat response includes `update_available` only if the fingerprint passes the server-side hash gate
+3. If eligible, the client downloads the new binary, verifies SHA256, and applies the two-phase update
 
 ### Two-Phase Update Safety
 
@@ -179,7 +173,7 @@ The fingerprint is a deterministic SHA256 hash of hardware identifiers:
 3. **Weak**: MAC address + hostname + machine_id
 4. **Fallback**: Random UUID v4 (persistent for install lifetime)
 
-This binds an activation code to a specific device. If the device is lost or broken, an admin can unbind the code via the `/api/admin/unbind` endpoint.
+This binds an activation code to a specific device. If the device is lost or broken, an admin can suspend the code (binding is preserved and can be un-suspended).
 
 ---
 
@@ -189,14 +183,14 @@ This binds an activation code to a specific device. If the device is lost or bro
 
 ```bash
 # Copy to VPS
-scp -r modular-vps root@your-vps:/root/
+scp -r v5/server root@your-vps:/root/
 
 # Run setup (takes 10-15 minutes)
 ssh root@your-vps
-DOMAIN=networkingguides.duckdns.org ./modular-vps/setup.sh
+DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
 ```
 
-This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, PocketBase, B2 backups, UFW firewall.
+This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, PocketBase, B2 backups, UFW firewall. See `v5/docs/DEPLOY.md`.
 
 ### Step 2: Configure PocketBase
 
@@ -204,7 +198,7 @@ This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, Pocke
 2. Create collections: `codes`, `tier_configs`, `activation_attempts`
 3. Create `update_config` collection for staged rollouts
 4. Set `admin_api_token` in PocketBase app settings
-5. Upload JS hooks from `modular-vps/pb_hooks/`
+5. Upload JS hooks from `v5/server/pb_hooks/`
 6. Seed tier configs with passwords from `/root/.tier_passwords`
 
 ### Step 3: Generate & Print Codes
@@ -217,17 +211,22 @@ This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, Pocke
 ### Step 4: Build Client App
 
 ```bash
-cd v4
-make bundle-all           # Builds for all platforms + bundles sing-box
+cd v5/client
+make build          # current platform only
+make build-all      # Linux + Windows + macOS (Intel/ARM)
 ```
 
-Or push a `v*` tag for GitHub Actions CI/CD.
+Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds, bundles, and releases
+all 4 platform zips automatically (`myvpn` + `sing-box` per platform).
 
 ### Step 5: Install & Test
 
-1. Install helper service (admin): `sudo myvpn-helper --install`
-2. Launch MyVPN app
+1. Extract the platform zip
+2. Launch `myvpn` (Windows: `myvpn.exe`)
 3. Test activation, connection, heartbeat, update
+
+No admin install step is needed — the app runs as a normal user and sing-box
+creates the TUN interface with the user's own admin rights (BYOD).
 
 ---
 
@@ -255,7 +254,7 @@ DOMAIN=networkingguides.duckdns.org \
   B2_APPLICATION_KEY_ID=xxx \
   B2_APPLICATION_KEY=xxx \
   B2_BUCKET=my-vpn-backup-bucket \
-  /root/modular-vps/restore.sh
+  /root/v5/server/restore.sh
 ```
 
 ### Monitoring
@@ -267,7 +266,7 @@ This endpoint returns `{"message":"API is healthy.","code":200}` when PocketBase
 
 ## Real-World Testing
 
-The modular-vps scripts were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
+The server modules were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
 
 | Module | Status | Notes |
 |--------|:------:|-------|
@@ -283,3 +282,5 @@ The modular-vps scripts were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.
 
 All 3 Shadowsocks services active (8443/8444/8445). Brutal CC kernel module loaded.
 Caddy + PocketBase serving API at `https://domain/_/`.
+
+See `v5/README.md` and `v5/CONTEXT.md` for the full current documentation.

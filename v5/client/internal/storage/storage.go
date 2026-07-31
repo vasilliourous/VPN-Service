@@ -5,11 +5,11 @@
 // encryption — the activation code is the only secret, and it's short enough
 // that disk encryption is assumed).
 //
-// File location by platform:
+// File location by platform (appName = "myvpn"):
 //
 //	Linux:   ~/.config/myvpn/storage.json
-//	macOS:   ~/Library/Application Support/MyVPN/storage.json
-//	Windows: %APPDATA%\MyVPN\storage.json
+//	macOS:   ~/Library/Application Support/myvpn/storage.json
+//	Windows: %APPDATA%\myvpn\storage.json
 //
 // Hardening: atomic writes with temp file + rename, backup rotation (keep last 3),
 // file permission validation, thread-safe reads/writes, input validation.
@@ -37,9 +37,9 @@ const (
 // Data represents the persisted state of the MyVPN client.
 type Data struct {
 	// Activation state
-	Code              string        `json:"code,omitempty"`
-	Tier              string        `json:"tier,omitempty"`
-	DeviceFingerprint string        `json:"device_fingerprint,omitempty"`
+	Code              string `json:"code,omitempty"`
+	Tier              string `json:"tier,omitempty"`
+	DeviceFingerprint string `json:"device_fingerprint,omitempty"`
 
 	// Server config from activation
 	ServerConfig *ServerConfig `json:"server_config,omitempty"`
@@ -90,10 +90,10 @@ func (d *Data) Validate() error {
 
 // Store manages persistent storage with thread-safe access.
 type Store struct {
-	mu     sync.RWMutex
-	data   Data
-	path   string
-	dir    string
+	mu   sync.RWMutex
+	data Data
+	path string
+	dir  string
 }
 
 // New creates or loads a Store at the platform-appropriate path.
@@ -162,7 +162,7 @@ func (s *Store) save() error {
 
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		// Clean up temp file on failure
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("cannot atomically replace storage file: %w", err)
 	}
 
@@ -185,7 +185,7 @@ func (s *Store) rotateBackups() error {
 
 	// Remove the oldest if it exists
 	oldest := fmt.Sprintf("%s.bak.%d", s.path, maxBackups-1)
-	os.Remove(oldest)
+	_ = os.Remove(oldest)
 
 	// Shift existing backups
 	for i := maxBackups - 2; i >= 0; i-- {
