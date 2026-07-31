@@ -43,6 +43,17 @@ The frontend must be built **before** Go compiles — `//go:embed all:frontend/d
 in `assets_embed.go` (build tag `frontend`) requires `frontend/dist` to exist.
 `wails build` does this automatically via `wails.json`; `make dev` builds it too.
 
+For manual `go build`, pass the **full Wails tag set**:
+
+```bash
+go build -tags "frontend desktop production" .
+```
+
+`desktop` and `production` are required Wails build tags — they select the real
+desktop implementation. Without them the binary compiles but is the stub app
+that shows the "Wails applications will not build without the correct build
+tags" error dialog at runtime.
+
 ### Development (Hot-Reload)
 
 ```bash
@@ -374,7 +385,7 @@ Before releasing a new client build:
 - [ ] `go vet ./...` — no warnings
 - [ ] `go test ./...` — unit tests pass
 - [ ] Frontend builds: `cd frontend && npm install && npm run build`
-- [ ] `go build -tags frontend .` — embeds the real UI
+- [ ] `go build -tags "frontend desktop production" .` — embeds the real UI
 - [ ] Builds for all 3 target platforms (CI does this automatically)
 - [ ] Activation: valid code → success
 - [ ] Activation: invalid code → client-side fail (no server call)

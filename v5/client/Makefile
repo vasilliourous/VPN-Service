@@ -65,9 +65,11 @@ frontend-build: frontend-install
 	cd frontend && npm run build
 
 # ── Build for current platform ──
-# NOTE: -tags frontend embeds the real UI. Without it, the stub assets are used
-# (empty FS — app compiles but shows no UI). `wails build` runs the frontend
-# build itself (per wails.json), so frontend/dist will exist.
+# NOTE: `wails build` adds the required Wails tags (desktop,production)
+# automatically and runs the frontend build itself (per wails.json).
+# `-tags frontend` additionally embeds the real UI — without it the stub
+# assets are used (empty FS — app compiles but shows no UI).
+# For manual `go build`, use: -tags "frontend desktop production"
 build:
 	mkdir -p $(BUILD_DIR)
 	wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)

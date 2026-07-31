@@ -184,8 +184,11 @@ cd v5/client && make build
 
 > **Note:** the frontend must be built before Go compiles — `//go:embed`
 > requires `frontend/dist`. `wails build` does this automatically per
-> `wails.json`; `make dev` also builds the frontend first. Without the
-> `frontend` build tag, `go build .` compiles with the empty `assets_stub.go`
+> `wails.json`; `make dev` also builds the frontend first. For manual
+> `go build`, pass the full Wails tag set — `-tags "frontend desktop production"`
+> (`desktop,production` are required Wails tags; without them the binary is the
+> stub app that shows the "correct build tags" error at runtime). Without the
+> `frontend` tag, `go build .` compiles with the empty `assets_stub.go`
 > asset FS (no UI).
 
 ---

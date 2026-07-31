@@ -60,6 +60,41 @@ deterministic. Verified green locally: `golangci-lint run ./...` (0 issues),
 
 ---
 
+## CI/RUNTIME — MISSING WAILS BUILD TAGS + BROKEN JS BRIDGE (2026-07-31)
+
+**Symptom:** Windows binary built by CI showed the Wails error dialog
+*"Wails applications will not build without the correct build tags"* and
+opened https://wails.io/docs/guides/manual-builds/.
+
+**Root cause 1 — build tags:** Wails v2 selects its app implementation with
+build tags (`internal/app/app_default_*.go` is `//go:build !dev && !production
+&& !bindings`). The CI workflow compiled with only `-tags frontend` (which just
+selects the embedded asset FS), so the *stub* implementation shipped: a binary
+that shows the error dialog. `wails build` adds `desktop,production` itself;
+raw `go build` must pass them explicitly.
+
+**Fix:** `.github/workflows/build.yml` now uses `-tags "frontend desktop production"`
+in the lint job (`go vet`, compile check) and the 4-platform build matrix.
+
+**Root cause 2 — broken frontend bridge:** `frontend/src/lib/bridge.ts` called
+`window.runtime.Call('GetVersion', …)`, but Wails v2.9's runtime does NOT expose
+`Call` on `window.runtime` (only Log/Window/Events/etc.), and method names must
+be qualified (`main.App.GetVersion`) per the binding DB. Every UI action would
+have thrown after the tags were fixed.
+
+**Fix:** `bridge.ts` now calls `window.go.main.App.<Method>(…)` (the bindings map
+the backend injects at startup — the generated `wailsjs/` files are only optional
+IDE helpers) and keeps `window.runtime.EventsOn/EventsOff` for events.
+
+**Verified:** Windows binary built with the real tags embeds
+`-tags=frontend,desktop,production` (per `go version -m`) and no longer contains
+the stub error string. Frontend rebuilds cleanly. Linux desktop build requires
+WebKitGTK headers locally (CI installs `libgtk-3-dev libwebkit2gtk-4.1-dev` —
+includes `pkg-config`); macOS builds require CGO on a macOS runner (matrix
+already sets `cgo: "1"` for macOS).
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

@@ -5,9 +5,14 @@
 // internal/ packages and is wrapped by this Wails App struct.
 //
 // Build:
-//   go build -tags frontend .   (single native binary WITH embedded UI)
-//   wails build -tags frontend  (same, via Wails CLI)
-//   go build .                  (compiles without frontend/dist — stub assets)
+//   wails build                 (recommended — the Wails CLI adds the required
+//                                desktop,production build tags automatically)
+//   go build -tags "frontend desktop production" .
+//                               (manual build — frontend/dist must exist, and
+//                                desktop+production are REQUIRED Wails tags:
+//                                without them the binary is the stub app that
+//                                shows the "correct build tags" error)
+//   go build .                  (compiles without frontend/dist — stub assets, no UI)
 //   wails dev                   (hot-reload — uses Vite dev server, stub is fine)
 //
 // The `assets` var lives in assets_embed.go (build tag `frontend`) and

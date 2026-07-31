@@ -25,19 +25,23 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
 
 **File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; a stale copy under `v5/.github/` is inert and must not be edited)
 
-> **⚠️ IMPORTANT — Frontend build ordering.** The client embeds the Vue frontend
-> via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go` (build tag
-> `frontend`). Every CI job builds the frontend first and compiles with
-> `-tags frontend`:
+> **⚠️ IMPORTANT — Frontend build ordering & Wails tags.** The client embeds the
+> Vue frontend via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go`
+> (build tag `frontend`). Every CI job builds the frontend first and compiles
+> with the full Wails tag set:
 >
 > ```bash
 > cd v5/client/frontend && npm install && npm run build
-> cd v5/client && go build -tags frontend .
+> cd v5/client && go build -tags "frontend desktop production" .
 > ```
 >
-> Without the `frontend` build tag, Go compiles `assets_stub.go` (empty asset FS)
-> and the binary builds fine but shows no UI — so CI always passes the tag.
-> `go build .` without the tag still compiles (useful for headless/CI-less checks).
+> `desktop` and `production` are **required Wails build tags** — they select the
+> real desktop implementation. Without them the binary compiles but is the stub
+> app that shows the "Wails applications will not build without the correct
+> build tags" error dialog at runtime. (`wails build` adds them automatically;
+> this workflow uses raw `go build`, so they must be passed explicitly.)
+> Without the `frontend` tag, Go compiles `assets_stub.go` (empty asset FS) —
+> the binary builds but has no UI.
 
 ---
 
