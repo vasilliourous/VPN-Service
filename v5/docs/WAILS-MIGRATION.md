@@ -246,12 +246,14 @@ wails dev
 
 This starts the Go backend and the Vite dev server. Changes to Go or Vue files
 auto-reload. The backend binds `App` methods and the Vue frontend calls them.
+`wails dev` compiles the stub assets (no `frontend/dist` needed) and loads the
+UI from the Vite dev server — so it works on a fresh checkout.
 
 ### Production Build
 
 ```bash
 cd v5/client
-wails build
+wails build -tags frontend
 ```
 
 Produces a single native binary (`build/bin/myvpn`). The binary bundles the Vue
@@ -261,13 +263,28 @@ frontend as embedded assets. Ship with `sing-box` alongside it.
 
 ```bash
 cd v5/client
-GOOS=linux GOARCH=amd64 wails build -o dist/myvpn-linux
-GOOS=windows GOARCH=amd64 wails build -o dist/myvpn.exe
-GOOS=darwin GOARCH=arm64 wails build -o dist/myvpn-darwin-arm64
+GOOS=linux GOARCH=amd64 wails build -tags frontend -o dist/myvpn-linux
+GOOS=windows GOARCH=amd64 wails build -tags frontend -o dist/myvpn.exe
+GOOS=darwin GOARCH=arm64 wails build -tags frontend -o dist/myvpn-darwin-arm64
 ```
 
 Wails handles the cross-compilation. Ensure the target platform's webview is
 available (WebView2 on Windows, WebKit on macOS/Linux).
+
+### Build Tags (embed vs stub)
+
+The UI is embedded via the `frontend` build tag (see `assets_embed.go` /
+`assets_stub.go` in `v5/client/`):
+
+| Command | What it produces |
+|---------|------------------|
+| `go build -tags frontend .` | Full binary WITH embedded UI (requires `frontend/dist` to exist) |
+| `wails build -tags frontend` | Same, via Wails CLI (also builds the frontend itself) |
+| `go build .` | Compiles WITHOUT UI assets (stub FS — useful for headless checks) |
+| `wails dev` | Hot-reload — loads from the Vite dev server (stub is fine) |
+
+If you add a new job that compiles Go, build the frontend first and pass
+`-tags frontend`, otherwise the app compiles with an empty asset FS.
 
 ---
 

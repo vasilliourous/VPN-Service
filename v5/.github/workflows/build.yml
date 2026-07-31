@@ -2,10 +2,14 @@
 #
 # Builds and releases the MyVPN desktop client (Wails v2 + Vue 3).
 #
-# IMPORTANT: The Go binary embeds the Vue frontend via //go:embed all:frontend/dist
-# in v5/client/main.go. The frontend MUST be built BEFORE any `go build`/`go vet`
-# step runs — otherwise the compiler fails with:
-#   main.go: pattern all:frontend/dist: no matching files found
+# IMPORTANT: The UI is embedded via the `frontend` build tag (see
+# v5/client/assets_embed.go — //go:embed all:frontend/dist). The frontend MUST
+# be built BEFORE any `go build -tags frontend` step runs, otherwise the
+# compiler fails with:
+#   assets_embed.go: pattern all:frontend/dist: no matching files found
+#
+# Without the tag, assets_stub.go compiles (empty FS) — usable for headless
+# checks, but CI always passes the tag to ship the real UI.
 #
 # Triggered by:
 #   - Push to main (test build only)
@@ -81,7 +85,8 @@ jobs:
         run: go vet ./...
 
       - name: Build check (compile test)
-        run: go build ./...
+        # -tags frontend embeds the real UI (frontend/dist was built above)
+        run: go build -tags frontend ./...
 
       - name: Run unit tests
         run: go test ./... -v -count=1
@@ -165,7 +170,8 @@ jobs:
             LDFLAGS="$LDFLAGS -H windowsgui"
           fi
           go mod tidy
-          go build -ldflags="$LDFLAGS" \
+          # -tags frontend embeds the real UI (frontend/dist was built above)
+          go build -tags frontend -ldflags="$LDFLAGS" \
             -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
 
       - name: Download sing-box engine

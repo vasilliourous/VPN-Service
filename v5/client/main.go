@@ -5,14 +5,17 @@
 // internal/ packages and is wrapped by this Wails App struct.
 //
 // Build:
-//   wails build   (produces a single native binary)
-//   wails dev     (hot-reload development)
-//   go build .    (works too — frontend/dist must exist first, see CI workflow)
+//   go build -tags frontend .   (single native binary WITH embedded UI)
+//   wails build -tags frontend  (same, via Wails CLI)
+//   go build .                  (compiles without frontend/dist — stub assets)
+//   wails dev                   (hot-reload — uses Vite dev server, stub is fine)
+//
+// The `assets` var lives in assets_embed.go (build tag `frontend`) and
+// assets_stub.go (default). See those files.
 
 package main
 
 import (
-	"embed"
 	"log"
 
 	"github.com/wailsapp/wails/v2"
@@ -22,9 +25,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
-
-//go:embed all:frontend/dist
-var assets embed.FS
 
 // version is set at build time via:
 //

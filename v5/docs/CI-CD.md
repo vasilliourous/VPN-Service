@@ -26,15 +26,18 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
 **File:** `.github/workflows/build.yml` (in v5/)
 
 > **⚠️ IMPORTANT — Frontend build ordering.** The client embeds the Vue frontend
-> via `//go:embed all:frontend/dist` in `v5/client/main.go`. The `go build` / `go vet`
-> steps **fail with "no matching files found"** unless `v5/client/frontend/dist` exists.
-> Every CI job builds the frontend first:
+> via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go` (build tag
+> `frontend`). Every CI job builds the frontend first and compiles with
+> `-tags frontend`:
 >
 > ```bash
 > cd v5/client/frontend && npm install && npm run build
+> cd v5/client && go build -tags frontend .
 > ```
 >
-> If you add a new job that compiles Go, add the frontend build step before it.
+> Without the `frontend` build tag, Go compiles `assets_stub.go` (empty asset FS)
+> and the binary builds fine but shows no UI — so CI always passes the tag.
+> `go build .` without the tag still compiles (useful for headless/CI-less checks).
 
 ---
 
