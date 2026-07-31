@@ -114,6 +114,90 @@ for Ubuntu 24.04+ builds.
 
 ---
 
+## WINDOWS RUNTIME — BLANK POWERSHELL FLASH + INVISIBLE APP (2026-07-31)
+
+**Symptom:** launching the Windows exe popped a blank PowerShell window, then
+"nothing happened".
+
+**Root cause 1 — PowerShell console flash:** the device fingerprint collector
+(`internal/activation/fingerprint_windows.go`) spawns `powershell.exe` 3×
+(Get-NetAdapter, Win32_DiskDrive, Win32_ComputerSystemProduct). A GUI-subsystem
+parent spawning console-subsystem children gets a **visible console window per
+child** on Windows.
+
+**Fix:** all PowerShell spawns now run via `runHidden()` with
+`syscall.SysProcAttr{HideWindow: true}`.
+
+**Root cause 2 — invisible app:** `main.go` set `StartHidden: true`, but Wails
+v2.9.1 has **no system tray API** (verified: no `SystemTray` in `pkg/runtime` /
+`pkg/options`) and this app never creates a tray icon — the `tray:show` /
+`tray:quit` listeners in `setupSystemTray` are dormant hooks nothing emits.
+Result: the app ran completely invisible ("nothing happened"). Wails v2.9 also
+has no close-to-hide interception, so closing the window quits.
+
+**Fix:** removed `StartHidden` (window is shown on launch); documented the
+dormant tray hooks and close-quits behaviour in code comments and docs.
+
+**Also fixed:** `manager/process_windows.go` `newProcAttr()` now sets
+`HideWindow: true` so sing-box (console subsystem) doesn't flash a console when
+the user connects. Docs (`ARCHITECTURE.md`, `CLIENT-GUIDE.md`,
+`UI-AESTHETICS.md`) updated to match.
+
+---
+
+## MACOS BUILD — UNDEFINED `_OBJC_CLASS_$_UTType` (2026-07-31)
+
+**Symptom:** both macOS matrix jobs (`Build macOS-amd64`, `Build macOS-arm64`)
+failed at the "Build client app" step with a final-link error:
+
+```
+Undefined symbols for architecture arm64: "_OBJC_CLASS_$_UTType"
+```
+
+**Root cause:** Wails v2.9.1's darwin frontend uses `UTType` for file dialogs
+(`WailsContext.m:575,659`, `UTType typeWithFilenameExtension:`) but its cgo
+LDFLAGS only link `Foundation`, `Cocoa`, `WebKit`. On older SDKs the
+`UniformTypeIdentifiers` framework was re-exported transitively; the
+Xcode 26 / macOS 26 SDK on `macos-latest` removed that implicit linkage.
+
+**Fix:** `v5/client/darwin_link.go` (`//go:build darwin`) adds the missing
+framework to the final link:
+
+```go
+#cgo LDFLAGS: -framework UniformTypeIdentifiers
+```
+
+cgo flags from the main package are included in the final link step, so this
+covers both `wails build` and manual `go build` on amd64/arm64. Non-darwin
+builds are unaffected (build tag). Upstream Wails v2.10+ fixes this properly
+in the darwin package itself.
+
+### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
+
+Linux/Windows builds then passed, but both macOS matrix jobs failed at the
+final link with:
+
+```
+Undefined symbols for architecture arm64:
+  "_OBJC_CLASS_$_UTType"
+ld: symbol(s) not found for architecture arm64
+```
+
+Wails v2.9.1's darwin code (`WailsContext.m`) uses `UTType` but only links
+`-framework Foundation -framework Cocoa -framework WebKit`. On older SDKs,
+UniformTypeIdentifiers was re-exported transitively and the symbol resolved
+implicitly; **Xcode 26 / macOS 26 SDK removed that implicit linkage**, so the
+link broke. (Checked: v2.13.0 does not add the framework either — and it
+requires Go 1.25, so bumping Wails was not an option on Go 1.22.)
+
+**Fix:** added `v5/client/darwin_link.go` — a `//go:build darwin` cgo shim in
+the main package with `#cgo LDFLAGS: -framework UniformTypeIdentifiers`. cgo
+flags from the main package are passed to the final link, so this fixes both
+macOS architectures and both `wails build` and manual `go build` paths. No
+workflow change needed.
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

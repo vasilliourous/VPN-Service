@@ -319,6 +319,7 @@ func (m *Manager) autoStartHelper() error {
 	case "windows":
 		// On Windows, use PowerShell Start-Process with RunAs verb to trigger UAC
 		// This shows a UAC elevation prompt and starts the helper as administrator.
+		// The PowerShell window itself is hidden so only the UAC prompt appears.
 		cmd := exec.Command("powershell", "-Command",
 			"Start-Process", "-FilePath", m.helperPath,
 			"-Verb", "RunAs", "-WindowStyle", "Hidden")

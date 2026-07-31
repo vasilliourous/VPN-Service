@@ -140,7 +140,7 @@ Wails App.Startup():
   4. findSingBox() — alongside the executable, then system paths
   5. manager.NewManager(singBoxPath, tmpConfigPath, "") + SetHelperMode(false)
   6. updater.CleanStaleMarkers(48h) + CheckOnStartup(false) + ConfirmIfPending()
-  7. setupSystemTray() — window close hides to tray (tray:show / tray:quit)
+   7. setupSystemTray() — dark background + dormant tray hooks (Wails v2.9 has no tray API; window is shown at launch)
   8. If already activated → startHeartbeatLoop(code)
 
 Frontend:
@@ -402,4 +402,4 @@ Before releasing a new client build:
 - [ ] Connection: TUN interface created (`myvpn0`, 10.0.0.1/30)
 - [ ] Connection: disconnect stops sing-box and removes the config file
 - [ ] Diagnostics: report includes all fields without PII leaks
-- [ ] Tray: closing the window hides it; quit exits the app
+- [ ] Window: appears on launch; closing it quits the app (no tray icon yet)

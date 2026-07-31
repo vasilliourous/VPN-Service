@@ -213,9 +213,11 @@ the status label in the main-screen header.
 
 ## 8. System Tray
 
-The app window **starts hidden** (`StartHidden: true`) and **hides to the tray
-when closed** instead of quitting (`setupSystemTray` in `app.go`). The tray
-handlers listen for `tray:show` (show window) and `tray:quit` (exit) events.
+The app window is **shown on launch** — Wails v2.9 has no system tray API, so
+`StartHidden` was removed (a hidden window with no tray icon would make the app
+permanently invisible). Closing the window quits the app. The `tray:show` /
+`tray:quit` hooks in `setupSystemTray` are dormant (no tray icon exists) — a
+real tray with Show/Quit is a future enhancement.
 
 > **Note:** the tray icon assets and the right-click tray menu described in the
 > original Fyne-era spec are not yet implemented in the Wails client — only the
@@ -228,7 +230,7 @@ handlers listen for `tray:show` (show window) and `tray:quit` (exit) events.
 
 | Test | Expected |
 |------|----------|
-| App launches | No window shown initially (starts hidden). |
+| App launches | Window appears immediately (dark background, purple accents). |
 | Open from tray/dock | Window appears. Dark background, purple accents. |
 | Activation screen | Brand icon, centered input, purple button, tier info. |
 | Code typing | Auto-formats with hyphens, uppercases. |
@@ -241,7 +243,7 @@ handlers listen for `tray:show` (show window) and `tray:quit` (exit) events.
 | Stats card | State / Heartbeat / Grace Period values update. |
 | Diagnostics | Modal opens with the full report; Copy works. |
 | Update available | "Update X available" button appears. |
-| Close window | Window hides. App keeps running (tray). |
+| Close window | App quits (no close-to-tray in Wails v2.9). |
 | Eco badge | Grey pill + ○ icon. |
 | Stealth badge | Purple pill + ◉ icon. |
 | Strike badge | Gold pill + ⚡ icon. |

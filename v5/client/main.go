@@ -48,9 +48,9 @@ func main() {
 		MinWidth:  380,
 		MinHeight: 500,
 
-		// Start hidden so the window only appears when the user opens it
-		// from the dock/taskbar/tray.
-		StartHidden: true,
+		// NOTE: the window is shown on launch. Wails v2.9 has no system tray
+		// API and this app has no tray icon, so StartHidden would leave the
+		// app permanently invisible ("nothing happened" when launched).
 
 		AssetServer: &assetserver.Options{
 			Assets: assets,

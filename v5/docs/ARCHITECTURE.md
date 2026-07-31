@@ -87,7 +87,7 @@
 
 Wails entry point (`v5/client/main.go`). Responsibilities:
 1. Create the `App` struct (wraps all `internal/` packages)
-2. Run `wails.Run()` — 480×700 window, hidden at start, binds `App` to the
+2. Run `wails.Run()` — 480×700 window, shown at launch, binds `App` to the
    Vue 3 frontend
 3. `App.Startup()` performs initialization (see §3): storage → activation
    client → fingerprint → sing-box discovery → update recovery → system tray
@@ -272,9 +272,11 @@ in a Wails WebView. Two screens (switched by `App.vue`):
 1. **Activation screen** — code input with auto-formatting + live Luhn validation, tier info, activate button
 2. **Main screen** — status indicator + tier badge, status circle, connect/disconnect button, stats (engine state, heartbeat failures, grace days), diagnostics modal
 
-**System tray:** closing the window hides it to the tray instead of quitting
-(`setupSystemTray` in `app.go`; `tray:show` / `tray:quit` events). The app
-exits from the tray or via system quit.
+**Window behaviour:** the window is shown on launch (Wails v2.9 has no system
+tray API, so a `StartHidden` app would be permanently invisible). Closing the
+window quits the app — the `tray:show` / `tray:quit` hooks in `setupSystemTray`
+are dormant (no tray icon exists yet). The background colour is set natively to
+avoid a white flash while the WebView loads.
 
 **Black + purple theme** (`#0D0D0F` background, `#A855F7` accent — see
 `UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
@@ -312,7 +314,7 @@ Wails App.Startup():
   4. findSingBox() — alongside the executable, then system paths
   5. manager.NewManager(...) + SetHelperMode(false) — always direct mode
   6. updater.CleanStaleMarkers(48h) + CheckOnStartup(false) + ConfirmIfPending(appDir)
-  7. setupSystemTray() — close hides window to tray
+   7. setupSystemTray() — dark background; dormant tray hooks (no tray icon in v2.9)
   8. If already activated → startHeartbeatLoop(code)
 
 Connect button:

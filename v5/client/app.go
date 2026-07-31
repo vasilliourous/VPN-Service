@@ -501,13 +501,18 @@ func findSingBox() string {
 	return ""
 }
 
-// setupSystemTray configures window close behaviour and system tray.
-// On close, the window hides to the system tray instead of quitting.
-// The app exits via the tray menu (Quit) or system Quit command.
+// setupSystemTray configures window behaviour and (future) system tray hooks.
+//
+// NOTE: Wails v2.9 has NO system tray API and this app does not create a tray
+// icon — the "tray:show" / "tray:quit" listeners below are dormant hooks for a
+// future tray implementation. The window is shown on launch (StartHidden is
+// off) and closing the window quits the app (Wails v2.9 has no close-to-hide
+// interception either).
 func (a *App) setupSystemTray() {
 	// Dark background matches the UI theme (#0D0D0F)
 	wailsruntime.WindowSetBackgroundColour(a.ctx, 13, 13, 15, 255)
 
+	// Dormant hooks — nothing emits these events yet (no tray icon exists).
 	// Listen for "show" event triggered from the tray or dock
 	wailsruntime.EventsOn(a.ctx, "tray:show", func(optionalData ...interface{}) {
 		wailsruntime.WindowShow(a.ctx)
@@ -518,5 +523,5 @@ func (a *App) setupSystemTray() {
 		wailsruntime.Quit(a.ctx)
 	})
 
-	wailsruntime.LogInfo(a.ctx, "Window close → hide behaviour set")
+	wailsruntime.LogInfo(a.ctx, "Window background set; tray hooks registered (no tray icon yet)")
 }
