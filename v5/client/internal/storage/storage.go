@@ -156,8 +156,8 @@ func (s *Store) save() error {
 	// Sync to ensure data is on disk before rename
 	// (best-effort — not critical on all platforms)
 	if f, err := os.Open(tmpPath); err == nil {
-		f.Sync()
-		f.Close()
+		_ = f.Sync()
+		_ = f.Close()
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {

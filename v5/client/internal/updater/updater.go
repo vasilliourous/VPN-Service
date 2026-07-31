@@ -162,7 +162,7 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 		os.Remove(pendingPath)
 		os.Remove(newPath)
 		// Restore backup
-		u.restoreBackup(backupPath, currentPath)
+		_ = u.restoreBackup(backupPath, currentPath)
 		return fmt.Errorf("binary swap failed: %w", err)
 	}
 
@@ -361,10 +361,10 @@ func performRevert(appDir, binaryName string) (bool, error) {
 	}
 
 	// Ensure executable
-	os.Chmod(currentPath, 0755)
+	_ = os.Chmod(currentPath, 0755)
 
 	// Mark reverted
-	os.WriteFile(filepath.Join(appDir, SentinelReverted), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
+	_ = os.WriteFile(filepath.Join(appDir, SentinelReverted), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
 
 	log.Printf("Reverted to backup binary (%d bytes)", info.Size())
 	return true, nil

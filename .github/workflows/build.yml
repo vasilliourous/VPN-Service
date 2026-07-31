@@ -51,15 +51,17 @@ jobs:
         working-directory: ${{ env.CLIENT_DIR }}
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           cache: true
-          cache-dependency-path: ${{ env.CLIENT_DIR }}/go.sum
+          # go.sum doesn't exist until the first `go mod tidy` run — glob so
+          # go.mod (committed) resolves the cache path; go.sum adds once committed
+          cache-dependency-path: ${{ env.CLIENT_DIR }}/go.{mod,sum}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
 
@@ -82,7 +84,7 @@ jobs:
         run: go mod tidy
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: latest
           working-directory: ${{ env.CLIENT_DIR }}
@@ -137,15 +139,17 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           cache: true
-          cache-dependency-path: ${{ env.CLIENT_DIR }}/go.sum
+          # go.sum doesn't exist until the first `go mod tidy` run — glob so
+          # go.mod (committed) resolves the cache path; go.sum adds once committed
+          cache-dependency-path: ${{ env.CLIENT_DIR }}/go.{mod,sum}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
 

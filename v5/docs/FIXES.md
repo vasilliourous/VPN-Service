@@ -1,6 +1,29 @@
 
 ---
 
+## CI LINT — ERRCHECK FIXES (Wails Migration)
+
+Found when the Wails CI pipeline first ran `golangci-lint` on the client module.
+All fixes are behavior-neutral (`_ =` acknowledges best-effort/cleanup errors).
+
+| # | File | Line | Fix |
+|:-:|------|:----:|-----|
+| L1 | `v5/client/internal/storage/storage.go` | 159 | `f.Sync()` → `_ = f.Sync()` (best-effort fsync) |
+| L2 | `v5/client/internal/updater/updater.go` | 165 | `u.restoreBackup(...)` → `_ = ...` (cleanup after swap failure; original error already returned) |
+| L3 | `v5/client/internal/updater/updater.go` | 364 | `os.Chmod(...)` → `_ = ...` (post-revert permission set) |
+| L4 | `v5/client/internal/manager/process.go` | 261 | `m.cmd.Wait()` → `_ = ...` (graceful shutdown goroutine) |
+| L5 | `v5/client/internal/manager/process.go` | 409 | `cmd.Wait()` → `_ = ...` (startup probe after immediate exit) |
+| L6 | `v5/client/internal/tunnel/tunnel.go` | 140 | `iptables -F OUTPUT` → `_ = ...Run()` (best-effort rule removal) |
+| L7 | `v5/client/internal/tunnel/tunnel.go` | 163 | `pfctl -F all` → `_ = ...Run()` (best-effort) |
+| L8 | `v5/client/internal/tunnel/tunnel.go` | 164 | `pfctl -d` → `_ = ...Run()` (best-effort) |
+| L9 | `v5/client/internal/tunnel/tunnel.go` | 257 | `t.Stop()` → `_ = t.Stop()` (rollback on TUN setup failure) |
+| L10 | `v5/client/internal/tunnel/tunnel.go` | 294 | `t.Stop()` → `_ = t.Stop()` (rollback on TUN setup failure) |
+
+Also fixed siblings not flagged by the linter: `f.Close()` in the same storage block,
+and the `linuxTUN.Stop()` best-effort cleanup loop.
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

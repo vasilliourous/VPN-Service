@@ -258,7 +258,7 @@ func (m *Manager) stopLocked() error {
 	// Try graceful shutdown first
 	done := make(chan struct{}, 1)
 	go func() {
-		m.cmd.Wait()
+		_ = m.cmd.Wait()
 		done <- struct{}{}
 	}()
 
@@ -406,7 +406,7 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	time.Sleep(500 * time.Millisecond)
 	if cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) != nil {
 		// Process already exited — wait for it to fully release resources
-		cmd.Wait()
+		_ = cmd.Wait()
 		m.cmd = nil
 		return fmt.Errorf("sing-box exited immediately — check permissions or config")
 	}

@@ -137,7 +137,7 @@ func killSwitchLinux(enable bool, iface string) error {
 		}
 	} else {
 		// Remove rules (best effort, ignore errors)
-		exec.Command("iptables", "-F", "OUTPUT").Run()
+		_ = exec.Command("iptables", "-F", "OUTPUT").Run()
 	}
 	return nil
 }
@@ -160,8 +160,8 @@ pass out proto udp from any to any port 53
 			return fmt.Errorf("cannot set pf rules: %w", err)
 		}
 	} else {
-		exec.Command("pfctl", "-F", "all").Run()
-		exec.Command("pfctl", "-d").Run()
+		_ = exec.Command("pfctl", "-F", "all").Run()
+		_ = exec.Command("pfctl", "-d").Run()
 	}
 	return nil
 }
@@ -254,7 +254,7 @@ func (t *linuxTUN) Start() error {
 	}
 	for _, cmd := range cmds {
 		if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
-			t.Stop() // Rollback on failure
+			_ = t.Stop() // Rollback on failure
 			return fmt.Errorf("TUN setup failed at %s: %w", cmd[0], err)
 		}
 	}
@@ -268,7 +268,7 @@ func (t *linuxTUN) Stop() error {
 		{"ip", "tuntap", "del", "dev", t.cfg.Name, "mode", "tun"},
 	}
 	for _, cmd := range cmds {
-		exec.Command(cmd[0], cmd[1:]...).Run() // Best effort cleanup
+		_ = exec.Command(cmd[0], cmd[1:]...).Run() // Best effort cleanup
 	}
 	t.up = false
 	return nil
@@ -291,7 +291,7 @@ func (t *darwinTUN) Start() error {
 	}
 	for _, cmd := range cmds {
 		if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
-			t.Stop()
+			_ = t.Stop()
 			return fmt.Errorf("TUN setup failed at %s: %w", cmd[0], err)
 		}
 	}
