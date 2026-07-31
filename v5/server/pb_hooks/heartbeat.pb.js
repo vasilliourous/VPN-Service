@@ -41,9 +41,13 @@ routerAdd("POST", "/api/heartbeat", function(e) {
             }
         } catch(ex) { /* no update_config collection */ }
 
-        // Return tier config
+        // Newest record wins (defends against duplicate records from older
+        // seed runs — see FIXES.md). Inline filter value — {:param} binding
+        // is unreliable on PB 0.22.
         var tier = record.getString("tier");
-        var cfgRec = $app.dao().findFirstRecordByData("tier_configs", "tier", tier);
+        var tierVal = tier.replace(/[^a-zA-Z0-9_]/g, "_");
+        var cfgRecs = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal+"'", "-created", 1, 0);
+        var cfgRec = cfgRecs.length > 0 ? cfgRecs[0] : null;
         if (cfgRec) {
             try { response.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { response.server_config = cfgRec.get("config"); }
             response.udp_relay = cfgRec.get("udp_relay");

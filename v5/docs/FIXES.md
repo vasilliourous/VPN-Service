@@ -245,6 +245,60 @@ all of the above. Verified: Windows build (real tags), golangci-lint 0 issues,
 `go vet`, `go test` all green. The darwin `UTType` shim and the linux
 `webkit2_41` tag remain required in v2.12.0 (confirmed in its source).
 
+---
+
+## SERVER-SIDE — STALE/EMPTY tier_configs REJECTS CLIENTS (2026-07-31)
+
+**Symptom:** with the app running (as admin), Connect worked but the tunnel
+died instantly: `inbound/tun[tun-in]: ... wsasend: An existing connection was
+forcibly closed by the remote host` (both upload and download) to
+`114.23.136.59:8445`. TCP connects fine (all ss ports open) — the ssserver
+**rejects the Shadowsocks handshake**: wrong password/method.
+
+**Investigation (verified from outside):**
+- DNS: `networkingguides.duckdns.org` → **114.23.136.59** (older docs say
+  .47 — the VPS IP changed; docs updated).
+- All three tier passwords from `secrets.env.age` were tested against the live
+  ss servers with a real sing-box client — **all three authenticate**
+  (HTTP 200 through the tunnel).
+- **Correction (with SSH access, the story simplified):** the live
+  `tier_configs` collection was **correct all along** — all three records
+  match `/etc/shadowsocks/*.json` exactly, one record per tier. The earlier
+  "empty collection" conclusion was wrong: the collection's API rules are
+  admin-only (`@request.auth.admin = true`), so unauthenticated list/create
+  requests returned misleading empty/generic-400 responses.
+- **The real problem is the CLIENT's stale stored config**: the device was
+  activated on the PREVIOUS PocketBase instance (before the Jul 28 re-setup
+  replaced the data dir and rotated the ss passwords). The current client
+  never refreshes stored connection parameters:
+  - the heartbeat hook returns `server_config`, but the client ignored it,
+  - re-activation short-circuits client-side ("Already activated" returns
+    before any server call),
+  - so the app kept connecting with an old password → ssserver RST.
+
+**Fixes (repo + deployed to VPS):**
+- `v5/server/pb_hooks/activation.pb.js` + `heartbeat.pb.js` — always pick the
+  **newest** `tier_configs` record; the "Already activated" response now
+  includes `server_config`. NOTE: `{:param}` binding is unreliable in
+  `findRecordsByFilter` on PB 0.22 — filters use sanitized inline values.
+- `v5/server/scripts/seed-pb.py` — tier seeding is an **idempotent upsert**
+  (delete older duplicates, PATCH existing or POST new).
+- `v5/server/scripts/fix-tier-configs.py` — repair script for the VPS
+  (ground-truth passwords from `/etc/shadowsocks/*.json`).
+- Client (`v5/client/app.go`): heartbeat responses now **apply
+  `server_config`** (self-heal within one heartbeat once a client with this
+  fix runs).
+- Client (`v5/client/internal/manager/process.go`): sing-box stderr captured
+  and surfaced in Connect errors ("TUN interface creation was denied — run
+  MyVPN as administrator: ... Access is denied.").
+
+**Live-VPS actions performed (2026-07-31, authorized):** deployed both hooks
+to `/opt/pocketbase/pb_hooks/` (+ `/root/server/pb_hooks/`), restarted
+PocketBase, verified the heartbeat route serves the correct `server_config`
+(end-to-end test with a real code: eco → `networkingguides.duckdns.org:8443`
++ matching password). Client unblock: run the new build (heartbeat refresh)
+or delete `%APPDATA%\myvpn\storage.json` and re-enter the activation code.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

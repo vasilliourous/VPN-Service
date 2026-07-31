@@ -179,10 +179,27 @@ if pw_from_file:
             "server": DOMAIN, "server_port": port,
             "password": pw, "method": "aes-256-gcm",
         })
-        resp = api("POST", "/api/collections/tier_configs/records", {
-            "tier": t, "config": config_str, "active": True, "udp_relay": udp,
-        })
-        log(f"  {t}: {'seeded' if resp.get('id') else resp.get('message', '')}")
+        body = {"tier": t, "config": config_str, "active": True, "udp_relay": udp}
+
+        # ── Idempotent upsert ──
+        # IMPORTANT: always POSTing new records created duplicates on re-runs,
+        # and activation/heartbeat read the FIRST match — stale passwords were
+        # served to clients after re-deploys (see FIXES.md).
+        existing = api("GET", f"/api/collections/tier_configs/records?filter=(tier='{t}')&perPage=100")
+        items = existing.get("items", []) if isinstance(existing, dict) else []
+        # Delete older duplicates, keeping only the newest record for the tier.
+        if len(items) > 1:
+            items.sort(key=lambda r: r.get("created", ""))
+            for dup in items[:-1]:
+                resp = api("DELETE", f"/api/collections/tier_configs/records/{dup['id']}")
+                log(f"  {t}: removed duplicate record {dup['id'][:12]} ({resp.get('code', 'ok')})")
+        if items:
+            rid = items[-1]["id"]
+            resp = api("PATCH", f"/api/collections/tier_configs/records/{rid}", body)
+            log(f"  {t}: {'updated ' + rid[:12] if resp.get('id') else 'UPDATE FAILED: ' + str(resp.get('message', resp))}")
+        else:
+            resp = api("POST", "/api/collections/tier_configs/records", body)
+            log(f"  {t}: {'seeded' if resp.get('id') else 'CREATE FAILED: ' + str(resp.get('message', resp))}")
         tiers_seeded += 1
 else:
     log("  No tier passwords found in environment or /root/.tier_passwords — skipping tier config seeding")

@@ -399,13 +399,45 @@ func (a *App) startHeartbeatLoop(code string) {
 		if result.Success {
 			_ = a.store.SetHeartbeat(time.Now().Unix())
 
-			// Check for staged-rollout update signal
-			if result.Resp != nil && result.Resp.UpdateAvailable != "" {
-				wailsruntime.EventsEmit(a.ctx, "update:available", map[string]interface{}{
-					"version": result.Resp.UpdateAvailable,
-					"url":     result.Resp.UpdateURL,
-					"sha256":  result.Resp.UpdateSHA256,
-				})
+			if result.Resp != nil {
+				// ── Server config refresh ──
+				// The hub can push updated connection parameters (new IP,
+				// rotated password, tier change). Apply them so existing
+				// devices self-heal without re-activation.
+				if result.Resp.ServerConfig != nil {
+					state := a.store.GetData()
+					tier := result.Resp.Tier
+					if tier == "" {
+						tier = state.Tier
+					}
+					cfg := &storage.ServerConfig{
+						Server:     result.Resp.ServerConfig.Server,
+						ServerPort: result.Resp.ServerConfig.ServerPort,
+						Password:   result.Resp.ServerConfig.Password,
+						Method:     result.Resp.ServerConfig.Method,
+					}
+					// Only rewrite storage when something actually changed.
+					cur := state.ServerConfig
+					if cur == nil || cur.Server != cfg.Server || cur.ServerPort != cfg.ServerPort ||
+						cur.Password != cfg.Password || cur.Method != cfg.Method ||
+						state.UDPRelay != result.Resp.UDPRelay {
+						if err := a.store.SetActivation(state.Code, tier, state.DeviceFingerprint, cfg, result.Resp.UDPRelay); err != nil {
+							wailsruntime.LogWarning(a.ctx, "Cannot apply server config refresh: "+err.Error())
+						} else {
+							a.tier = tier
+							log.Printf("Server config refreshed from heartbeat (%s:%d)", cfg.Server, cfg.ServerPort)
+						}
+					}
+				}
+
+				// Check for staged-rollout update signal
+				if result.Resp.UpdateAvailable != "" {
+					wailsruntime.EventsEmit(a.ctx, "update:available", map[string]interface{}{
+						"version": result.Resp.UpdateAvailable,
+						"url":     result.Resp.UpdateURL,
+						"sha256":  result.Resp.UpdateSHA256,
+					})
+				}
 			}
 		} else {
 			_ = a.store.SetHeartbeatFailure(time.Now().Unix())

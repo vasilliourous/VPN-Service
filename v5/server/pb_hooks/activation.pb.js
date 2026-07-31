@@ -51,7 +51,17 @@ routerAdd("POST", "/api/activate", function(e) {
         var boundFp = rec.getString("bound_fingerprint");
         if (boundFp) {
             if (boundFp !== fp) return e.json(403, {code:403, message:"Code bound to another device"});
-            return e.json(200, {code:200, message:"Already activated", tier:rec.getString("tier"), device_fingerprint:boundFp});
+            // Same-device re-activation: return the current tier config too, so
+            // clients can refresh stale connection parameters (see FIXES.md).
+            var tierVal2 = rec.getString("tier").replace(/[^a-zA-Z0-9_]/g, "_");
+            var cfgRecs2 = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal2+"'", "-created", 1, 0);
+            var cfgRec2 = cfgRecs2.length > 0 ? cfgRecs2[0] : null;
+            var resp2 = {code:200, message:"Already activated", tier:rec.getString("tier"), device_fingerprint:boundFp};
+            if (cfgRec2) {
+                try { resp2.server_config = JSON.parse(cfgRec2.get("config")); } catch(ex) { resp2.server_config = cfgRec2.get("config"); }
+                resp2.udp_relay = cfgRec2.get("udp_relay");
+            }
+            return e.json(200, resp2);
         }
         if (rec.getBool("suspended")) return e.json(403, {code:403, message:"Code suspended"});
         var exp = rec.get("expires_at");
@@ -65,8 +75,12 @@ routerAdd("POST", "/api/activate", function(e) {
         // Clean rate limiting
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE rate_key={:key}").bind({key:rateKey}).execute();
 
-        // Get tier config using findFirstRecordByData (simplest cross-version API)
-        var cfgRec = $app.dao().findFirstRecordByData("tier_configs", "tier", rec.getString("tier"));
+        // Get tier config — newest record wins (defends against duplicate
+        // records from older seed runs — see FIXES.md).
+        // NOTE: inline filter value — {:param} binding is unreliable on PB 0.22.
+        var tierVal = rec.getString("tier").replace(/[^a-zA-Z0-9_]/g, "_");
+        var cfgRecs = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal+"'", "-created", 1, 0);
+        var cfgRec = cfgRecs.length > 0 ? cfgRecs[0] : null;
         var resp = {code:200, message:"Activation successful", tier:rec.getString("tier"), device_fingerprint:fp};
         if (cfgRec) {
             try { resp.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { resp.server_config = cfgRec.get("config"); }

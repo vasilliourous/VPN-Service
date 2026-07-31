@@ -23,12 +23,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,6 +64,36 @@ var (
 	ErrInvalidConfig     = fmt.Errorf("invalid sing-box configuration")
 	ErrMaxRestarts       = fmt.Errorf("maximum restart attempts exceeded")
 )
+
+// boundedBuffer is a thread-safe writer that keeps only the last max bytes
+// written — used to capture sing-box stderr without unbounded memory growth.
+type boundedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(p) >= b.max {
+		b.buf = append([]byte(nil), p[len(p)-b.max:]...)
+		return len(p), nil
+	}
+	if len(b.buf)+len(p) > b.max {
+		b.buf = append(b.buf, p...)
+		b.buf = b.buf[len(b.buf)-b.max:]
+	} else {
+		b.buf = append(b.buf, p...)
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
 
 // HelperClient communicates with the privileged TUN helper service.
 type HelperClient struct {
@@ -389,10 +421,13 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 		return fmt.Errorf("sing-box binary not found at %s", m.singBoxPath)
 	}
 
-	// Start sing-box
+	// Start sing-box. stderr is mirrored to our log AND captured in a bounded
+	// buffer so startup failures can be reported back to the UI with the real
+	// sing-box error (e.g. TUN "Access is denied" on non-elevated Windows).
+	stderrBuf := &boundedBuffer{max: 8192}
 	cmd := exec.CommandContext(ctx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
 
 	// Detach — allow parent to manage lifecycle (platform-specific)
 	cmd.SysProcAttr = newProcAttr()
@@ -413,7 +448,14 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 		// Process already exited — wait for it to fully release resources
 		_ = cmd.Wait()
 		m.cmd = nil
-		return fmt.Errorf("sing-box exited immediately — check permissions or config")
+		detail := strings.TrimSpace(stderrBuf.String())
+		if detail == "" {
+			detail = "no error output"
+		}
+		if strings.Contains(detail, "Access is denied") {
+			return fmt.Errorf("TUN interface creation was denied — run MyVPN as administrator: %s", detail)
+		}
+		return fmt.Errorf("sing-box exited immediately: %s", detail)
 	}
 
 	// Start health check loop

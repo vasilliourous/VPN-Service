@@ -293,7 +293,8 @@ v5/legacy/
    for hook load errors.
 5. **TCP Brutal must be re-checked after every kernel update.** DKMS should
    auto-rebuild, but verify with `lsmod | grep tcp_brutal`.
-6. **The server domain is `networkingguides.duckdns.org`** pointing to `114.23.136.47`.
+6. **The server domain is `networkingguides.duckdns.org`** pointing to `114.23.136.59`
+   (verified 2026-07-31; an older note said `.47` — the VPS IP changed).
    This is the VPS hostname — DNS is managed by the hosting provider.
 
 ### Key credentials (live VPS as of 2026-07-26)
