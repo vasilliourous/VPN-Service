@@ -223,6 +223,28 @@ Combined with the Windows Event Viewer (Application log → "Application Error"
 for `myvpn.exe`, showing the faulting module), the next run identifies the
 exact dying stage.
 
+### Follow-up 2 (2026-07-31) — WAILS v2.9.1 → v2.12.0 (go-webview2 crash fixes)
+
+The instrumented log showed `MyVPN starting` → `DOM ready — webview loaded the
+UI` and then **silent death**, with `Startup complete` and `Shutting down`
+never logged — i.e. the process died right when the Vue app started calling
+bound Go methods over the WebView2 JS↔Go IPC. Wails v2.9.1 bundles
+`go-webview2 v1.0.10` (2023-10), which predates the upstream crash fixes:
+
+| go-webview2 | Fix |
+|-------------|-----|
+| v1.0.12 | infinite recursion fix |
+| v1.0.13 | overlapped I/O error on long JS scripts |
+| v1.0.16 | **panic when sending long data from JS to Go** |
+| v1.0.19 | COM error handling |
+| v1.0.20/21 | **random crashes** |
+
+**Fix:** upgraded `github.com/wailsapp/wails/v2` **v2.9.1 → v2.12.0** (needs
+only Go 1.22, so CI is unchanged) which bundles **go-webview2 v1.0.22** with
+all of the above. Verified: Windows build (real tags), golangci-lint 0 issues,
+`go vet`, `go test` all green. The darwin `UTType` shim and the linux
+`webkit2_41` tag remain required in v2.12.0 (confirmed in its source).
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the
