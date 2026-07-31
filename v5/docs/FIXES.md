@@ -205,6 +205,24 @@ dies.
 **Diagnosis path for future Windows issues:** run the exe, then read
 `%APPDATA%\myvpn\myvpn.log` — any panic stack or startup error will be there.
 
+### Follow-up (2026-07-31) — exit-path instrumentation
+
+With the log in place, a fresh CI build (run 42 — all jobs green incl. macOS)
+still flashed and died with ONLY `MyVPN starting (version main)` in the log —
+no panic, no `wails.Run` error. Since go-webview2 `log.Fatalf`s on WebView2
+env/controller failure (which would have been logged), WebView2 init succeeded;
+the death is either a native crash, a browser-process failure, or an external
+kill (school-managed machines: AV/AppLocker). Added stage markers to the log:
+
+- `DOM ready — webview loaded the UI` (new `OnDomReady` hook in `main.go`)
+- `Startup complete (activated=...)` (end of `App.Startup`)
+- `Shutting down MyVPN...` (`App.Shutdown` — present iff the app exited via
+  the normal window-close path)
+
+Combined with the Windows Event Viewer (Application log → "Application Error"
+for `myvpn.exe`, showing the faulting module), the next run identifies the
+exact dying stage.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

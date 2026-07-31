@@ -23,6 +23,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -69,6 +70,11 @@ func main() {
 		},
 		OnStartup:  app.Startup,
 		OnShutdown: app.Shutdown,
+		OnDomReady: func(ctx context.Context) {
+			// Proves the WebView2 loaded the embedded page — if this line is
+			// missing from myvpn.log, the webview never finished loading.
+			log.Printf("DOM ready — webview loaded the UI")
+		},
 		Bind: []interface{}{
 			app,
 		},
@@ -90,9 +96,9 @@ func main() {
 	})
 
 	if err != nil {
-		// Never die invisibly — the error is also written to myvpn.log
-		// (see openLogFile) so GUI builds without a console still produce
-		// a diagnosis.
+		// Never die invisibly — the error is written to myvpn.log (see
+		// openLogFile) AND shown in a native message box on Windows.
+		showFatalError("MyVPN failed to start: " + err.Error())
 		log.Fatalf("MyVPN failed to start: %v", err)
 	}
 }

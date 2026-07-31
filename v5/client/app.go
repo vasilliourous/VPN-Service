@@ -187,6 +187,7 @@ func (a *App) Startup(ctx context.Context) {
 	}
 
 	wailsruntime.LogInfo(a.ctx, "MyVPN started (version "+a.version+")")
+	log.Printf("Startup complete (activated=%v)", state.Activated)
 }
 
 // Shutdown is called by Wails when the application is quitting.
