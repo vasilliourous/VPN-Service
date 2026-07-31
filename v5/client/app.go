@@ -95,9 +95,10 @@ type UpdateCheckResult struct {
 // ──────────────────────────────────────────
 
 // NewApp creates the App. Called by main.go.
+// version comes from the package-level var set via -ldflags "-X main.version=..."
 func NewApp() *App {
 	return &App{
-		version: "2.0.0",
+		version: version,
 		hubURL:  "https://networkingguides.duckdns.org",
 	}
 }

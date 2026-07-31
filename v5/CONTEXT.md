@@ -147,13 +147,21 @@ All documented in `v5/docs/FIXES.md`:
 
 ## 5. Client Code Structure (v5/client/)
 
+> **⚠️ Updated for the Wails migration (2026).** The GUI moved from Fyne to
+> **Wails v2 + Vue 3** (`frontend/`). The old Fyne GUI, helper binary, and old
+> entry point were moved to `v5/legacy/` (reference only — not part of the Go
+> module). The `internal/` backend packages are unchanged. See
+> `docs/WAILS-MIGRATION.md` and `docs/BACKEND-API.md`.
+
 ```
 v5/client/
-├── cmd/myvpn/main.go           # Entry point: flags → update recovery → GUI
+├── main.go                      # Wails app entry (embedds frontend/dist, binds App)
+├── app.go                       # App struct — wraps internal/ for the Vue UI
+├── wails.json                   # Wails project configuration
 ├── internal/
 │   ├── storage/storage.go      # Persistent JSON state (thread-safe, atomic writes, backups)
 │   ├── activation/
-│   │   ├── activation.go       # Activation client with retry + context
+│   │   ├── activation.go       # Activation client with retry + context + ValidateCodeFormat
 │   │   ├── fingerprint.go      # SHA256 hardware fingerprint (cross-platform)
 │   │   ├── fingerprint_linux.go
 │   │   ├── fingerprint_darwin.go
@@ -166,16 +174,21 @@ v5/client/
 │   │   ├── recover.go          # Crash detection and auto-revert
 │   │   ├── update_unix.go      # Unix binary swap + fork
 │   │   └── update_windows.go   # Windows binary swap + fork
-│   ├── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
-│   ├── helper/
-│   │   ├── main.go             # Privileged helper service (IPC socket)
-│   │   └── install.go          # Helper service install/uninstall
-│   └── gui/
-│       ├── app.go              # Fyne desktop app with system tray
-│       └── diagnostics.go      # Support diagnostics report
+│   └── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
+├── frontend/                    # Vue 3 + TypeScript + Vite UI
+│   └── src/                    # App.vue, components/, stores/, lib/bridge.ts
 ├── engines/README.md           # Engine binary placeholder
 ├── go.mod
-└── Makefile                    # Cross-platform build
+└── Makefile                    # Wails build targets
+```
+
+Legacy (NOT in the Go module — kept for reference/rollback):
+
+```
+v5/legacy/
+├── gui/                        # Old Fyne desktop app
+├── helper/                     # Old privileged TUN helper binary
+└── cmd/myvpn/                  # Old Fyne entry point
 ```
 
 ### Key Metrics
@@ -187,7 +200,7 @@ v5/client/
 | Engine | sing-box 1.10.0 |
 | Min Go version | 1.22 |
 | Platforms | Linux, macOS (Intel+ARM), Windows |
-| Dependencies | Fyne v2 + go-shadowsocks2 (for reference) |
+| Dependencies | Wails v2 + Vue 3 (Fyne removed) |
 
 ---
 

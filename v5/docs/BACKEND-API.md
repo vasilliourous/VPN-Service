@@ -664,6 +664,10 @@ These files use build tags and must be included in any build:
 | `manager` | `process_windows.go` | `windows` | `CREATE_NEW_PROCESS_GROUP` |
 | `updater` | `update_unix.go` | `!windows` | Atomic rename + fork with `Setpgid` |
 | `updater` | `update_windows.go` | `windows` | `.old` rename trick + fork with `CREATE_NEW_PROCESS_GROUP` |
-| `helper` | `process_unix.go` | `!windows` | Signal handling + process group kill (legacy, not used in Wails) |
-| `helper` | `process_windows.go` | `windows` | Process handle management (legacy, not used in Wails) |
+
+> **Note:** The old Fyne GUI (`internal/gui/`) and the separate TUN helper binary
+> (`internal/helper/`) were moved OUT of the Go module to `v5/legacy/`
+> (`v5/legacy/gui/`, `v5/legacy/helper/`, `v5/legacy/cmd/myvpn/`) so they are not
+> compiled, scanned by `go vet`, or re-added to `go.mod` by `go mod tidy`.
+> They remain in the repo for reference and rollback only.
 | `tunnel` | (platform code inline) | — | Runtime `GOOS` check, not build tags |

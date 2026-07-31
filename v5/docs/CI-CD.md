@@ -25,6 +25,17 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
 
 **File:** `.github/workflows/build.yml` (in v5/)
 
+> **⚠️ IMPORTANT — Frontend build ordering.** The client embeds the Vue frontend
+> via `//go:embed all:frontend/dist` in `v5/client/main.go`. The `go build` / `go vet`
+> steps **fail with "no matching files found"** unless `v5/client/frontend/dist` exists.
+> Every CI job builds the frontend first:
+>
+> ```bash
+> cd v5/client/frontend && npm install && npm run build
+> ```
+>
+> If you add a new job that compiles Go, add the frontend build step before it.
+
 ---
 
 ## Triggering a Release
@@ -51,10 +62,10 @@ Each release produces 4 platform bundles:
 
 | File | Platform | Contents |
 |------|----------|----------|
-| `myvpn-Linux-amd64.zip` | Linux x86_64 | `myvpn` + `sing-box` + `myvpn-helper` |
-| `myvpn-macOS-amd64.zip` | macOS Intel | `myvpn` + `sing-box` + `myvpn-helper` |
-| `myvpn-macOS-arm64.zip` | macOS Apple Silicon | `myvpn` + `sing-box` + `myvpn-helper` |
-| `myvpn-Windows-amd64.zip` | Windows x86_64 | `myvpn.exe` + `sing-box.exe` + `myvpn-helper.exe` |
+| `myvpn-Linux-amd64.zip` | Linux x86_64 | `myvpn` + `sing-box` |
+| `myvpn-macOS-amd64.zip` | macOS Intel | `myvpn` + `sing-box` |
+| `myvpn-macOS-arm64.zip` | macOS Apple Silicon | `myvpn` + `sing-box` |
+| `myvpn-Windows-amd64.zip` | Windows x86_64 | `myvpn.exe` + `sing-box.exe` |
 
 Each bundle also includes a `checksums.sha256` file for integrity verification.
 

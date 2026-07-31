@@ -1,5 +1,11 @@
 # MyVPN Client App — Developer Guide
 
+> **⚠️ SUPERSEDED (Fyne era).** This guide describes the old Fyne-based client.
+> The client was migrated to **Wails (Go + Vue 3)** — see
+> [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the new architecture and build
+> instructions, and [`BACKEND-API.md`](BACKEND-API.md) for the internal package API.
+> Kept for historical reference.
+
 > **This document tells a Go developer exactly how to build a MyVPN-compatible client.**  
 > The reference implementation is in `v5/client/`.  
 > You can use this guide to build from scratch, port to another language, or

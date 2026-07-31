@@ -1,7 +1,11 @@
-# MyVPN V5 CI/CD Pipeline
+# MyVPN V5 CI/CD Pipeline — Wails Edition
 #
-# Builds and releases the MyVPN desktop client from v5/client/.
-# Uses native platform runners (no cross-compilation issues with CGO/Fyne).
+# Builds and releases the MyVPN desktop client (Wails v2 + Vue 3).
+#
+# IMPORTANT: The Go binary embeds the Vue frontend via //go:embed all:frontend/dist
+# in v5/client/main.go. The frontend MUST be built BEFORE any `go build`/`go vet`
+# step runs — otherwise the compiler fails with:
+#   main.go: pattern all:frontend/dist: no matching files found
 #
 # Triggered by:
 #   - Push to main (test build only)
@@ -26,6 +30,7 @@ permissions:
 
 env:
   CLIENT_DIR: v5/client
+  FRONTEND_DIR: v5/client/frontend
 
 jobs:
   # ── Lint + Test + Vet (Ubuntu) ──
@@ -35,17 +40,36 @@ jobs:
     defaults:
       run:
         working-directory: ${{ env.CLIENT_DIR }}
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
           cache: true
 
-      - name: Install Fyne dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Wails needs WebKitGTK headers on Linux (CGO)
+      - name: Install Linux webview deps (Wails)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # ── Frontend MUST be built before Go compiles (//go:embed) ──
+      - name: Build frontend (required for //go:embed)
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          npm install
+          npm run build
+          ls -la dist
+
+      # Generates go.sum (not committed) — required for `go build`
+      - name: go mod tidy
+        run: go mod tidy
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
@@ -75,57 +99,74 @@ jobs:
             goos: linux
             goarch: amd64
             ext: ""
+            cgo: "1"   # Wails needs CGO for WebKitGTK
           - label: macOS-amd64
             os: macos-latest
             goos: darwin
             goarch: amd64
             ext: ""
+            cgo: "1"   # Wails needs CGO for WKWebView
           - label: macOS-arm64
             os: macos-latest
             goos: darwin
             goarch: arm64
             ext: ""
+            cgo: "1"   # Wails needs CGO for WKWebView
           - label: Windows-amd64
             os: windows-latest
             goos: windows
             goarch: amd64
             ext: ".exe"
+            cgo: "0"   # Wails Windows is pure Go (WebView2 COM) — no gcc needed
 
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: ${{ env.CLIENT_DIR }}
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
           cache: true
 
-      - name: Install Fyne deps (Linux)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Wails needs WebKitGTK headers on Linux (CGO)
+      - name: Install Linux webview deps (Wails)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libgl1-mesa-dev xorg-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # ── Frontend MUST be built before Go compiles (//go:embed) ──
+      - name: Build frontend (required for //go:embed)
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          npm install
+          npm run build
 
       - name: Build client app
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           VERSION="${{ github.ref_name }}"
           [ -z "$VERSION" ] && VERSION="dev"
-          go build -ldflags="-s -w -X main.version=${VERSION}" \
-            -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
-            ./cmd/myvpn/
-
-      - name: Build TUN helper (no CGO)
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          CGO_ENABLED=0 go build \
-            -o myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
-            ./internal/helper/
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          # On Windows, build as a GUI app (no console window)
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            LDFLAGS="$LDFLAGS -H windowsgui"
+          fi
+          go mod tidy
+          go build -ldflags="$LDFLAGS" \
+            -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
 
       - name: Download sing-box engine
         env:
@@ -156,15 +197,11 @@ jobs:
           mkdir -p dist
           BUNDLE="myvpn-${{ matrix.label }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zip -j "dist/${BUNDLE}.zip" \
-              myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe \
-              sing-box.exe \
-              myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+            powershell -Command "Compress-Archive -Path 'myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe','sing-box.exe' -DestinationPath 'dist\\${BUNDLE}.zip' -Force"
           else
             zip -j "dist/${BUNDLE}.zip" \
               myvpn-${{ matrix.goos }}-${{ matrix.goarch }} \
-              sing-box \
-              myvpn-helper-${{ matrix.goos }}-${{ matrix.goarch }}
+              sing-box
           fi
 
       - name: Upload build artifact
@@ -212,19 +249,15 @@ jobs:
 
             ### What's Included
 
-            - `myvpn` — Desktop client application (Go + Fyne)
+            - `myvpn` — Desktop client (single binary, Wails + Vue 3)
             - `sing-box` — Tunnel engine (Shadowsocks + TUN)
-            - `myvpn-helper` — Privileged TUN helper service
 
             ### Quick Install
 
             1. Download the bundle for your platform
             2. Extract the zip
-            3. Install the helper service (requires admin):
-               - **Linux**: `sudo ./myvpn-helper-linux-amd64 --install`
-               - **macOS**: `sudo ./myvpn-helper-darwin-arm64 --install`
-               - **Windows**: Run as Admin: `myvpn-helper-windows-amd64.exe --install`
-            4. Launch `myvpn`
-            5. Enter your activation code
+            3. Launch `myvpn`
+            4. Enter your activation code
 
-            See `v5/docs/CLIENT-GUIDE.md` for full build and install instructions.
+            See `v5/docs/WAILS-MIGRATION.md` for architecture details and
+            `v5/docs/BACKEND-API.md` for the backend API reference.

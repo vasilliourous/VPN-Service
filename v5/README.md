@@ -14,22 +14,27 @@ v5/
 ├── README.md              # This file — V5 overview
 ├── CONTEXT.md             # Agent/developer context — network analysis, protocol tests, reasoning
 │
-├── client/                # Hardened client source code (Go + Fyne)
-│   ├── cmd/myvpn/        # Entry point with signal handling & panic recovery
+├── client/                # Desktop client source code (Go + Wails + Vue 3)
+│   ├── main.go            # Wails app entry point (embedds frontend, binds App)
+│   ├── app.go             # App struct — wraps internal/ packages for the UI
+│   ├── wails.json         # Wails project configuration
 │   ├── internal/
 │   │   ├── activation/    # Luhn-mod-N validation, device fingerprinting, server activation
-│   │   ├── gui/           # Fyne desktop app with system tray support
 │   │   ├── heartbeat/     # Periodic health check with exponential backoff & jitter
-│   │   ├── helper/        # Privileged TUN helper service (systemd/launchd/Windows Service)
 │   │   ├── manager/       # Sing-box process lifecycle with health monitoring
 │   │   ├── storage/       # Thread-safe JSON persistence with backup rotation
 │   │   ├── tunnel/        # TUN interface and kill switch (Linux/macOS/Windows)
 │   │   └── updater/       # Two-phase crash-safe update system
+│   ├── frontend/          # Vue 3 + Vite + TypeScript UI (embedded into the binary)
 │   ├── engines/           # Sing-box engine binaries placeholder
 │   ├── go.mod
-│   └── Makefile           # Cross-platform build system
+│   └── Makefile           # Build system
+│
+├── legacy/                # Old Fyne GUI + helper binary (reference only, NOT in module)
 │
 ├── docs/
+│   ├── BACKEND-API.md     # Complete API reference for all internal/ packages
+│   ├── WAILS-MIGRATION.md # Migration plan from Fyne → Wails (build & rollback)
 │   ├── ARCHITECTURE.md    # How to architect a compatible client
 │   ├── CLIENT-GUIDE.md    # How to build the client app (build commands, platform notes)
 │   ├── DEPLOY.md          # Server deployment guide (from blank VPS to live)
@@ -161,15 +166,19 @@ Each release produces 4 platform bundles:
 - `myvpn-Windows-amd64.zip` — Windows x86_64
 
 Each bundle contains:
-- `myvpn` — Desktop client (Go + Fyne)
+- `myvpn` — Desktop client (Wails + Vue 3, single binary)
 - `sing-box` — Tunnel engine (Shadowsocks + TUN)
-- `myvpn-helper` — Privileged TUN helper service
 
 ### Local CI Simulation
 
 ```bash
 cd v5/client && make ci
 ```
+
+> **Note:** `make ci` was removed in the Wails migration — the CI pipeline
+> runs on GitHub Actions (see `v5/.github/workflows/build.yml`). For local
+> development use `wails dev`; for local builds run `npm install && npm run build`
+> in `frontend/` first, then `go build .` (the `//go:embed` requires `frontend/dist`).
 
 ---
 

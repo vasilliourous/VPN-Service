@@ -1,5 +1,11 @@
 # MyVPN Architecture Guide
 
+> **⚠️ PARTIALLY SUPERSEDED.** This document describes the client architecture.
+> The GUI layer moved from Fyne to **Wails + Vue 3** — see
+> [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md). The backend components (activation,
+> heartbeat, manager, storage, updater) and the TUN-based design described here
+> remain accurate; see [`BACKEND-API.md`](BACKEND-API.md) for their exact API.
+
 > **How to architect a compatible MyVPN client.** This document describes the
 > key components, their responsibilities, and how they fit together — from an
 > implementation perspective. Use it alongside `CLIENT-GUIDE.md` (build steps),

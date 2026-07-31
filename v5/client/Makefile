@@ -29,7 +29,7 @@ UNAME_OS    := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 UNAME_ARCH  := $(shell uname -m)
 
 # ── Help ──
-.PHONY: help dev build build-all clean test vet install-deps
+.PHONY: help dev build build-all clean test vet install-deps frontend-install frontend-build
 
 help:
 	@echo "MyVPN Wails Desktop App"
@@ -50,11 +50,21 @@ help:
 	@echo ""
 
 # ── Development (hot-reload) ──
-dev:
+# The Go binary embeds frontend/dist (//go:embed), so the frontend must be
+# built before `wails dev` compiles the Go code.
+dev: frontend-build
 	wails dev
 
+# ── Frontend (Vue 3 + Vite) ──
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-build: frontend-install
+	cd frontend && npm run build
+
 # ── Build for current platform ──
-build:
+build: frontend-build
 	mkdir -p $(BUILD_DIR)
 	wails build -o $(BUILD_DIR)/$(APP_NAME)
 

@@ -7,6 +7,7 @@
 // Build:
 //   wails build   (produces a single native binary)
 //   wails dev     (hot-reload development)
+//   go build .    (works too — frontend/dist must exist first, see CI workflow)
 
 package main
 
@@ -25,6 +26,11 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is set at build time via:
+//
+//	go build -ldflags "-X main.version=2.0.0"
+var version = "2.0.0"
+
 func main() {
 	app := NewApp()
 
@@ -35,8 +41,8 @@ func main() {
 		MinWidth:  380,
 		MinHeight: 500,
 
-		// Start hidden so the window only appears when the user clicks the tray icon.
-		// The system tray is created during Startup and the user opens the window from there.
+		// Start hidden so the window only appears when the user opens it
+		// from the dock/taskbar/tray.
 		StartHidden: true,
 
 		AssetServer: &assetserver.Options{
@@ -54,8 +60,6 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			DisableWindowIcon:    false,
-			// Prevents the terminal window from appearing
-			WebviewUserDataPath: "",
 		},
 		Mac: &mac.Options{
 			TitleBar:             mac.TitleBarHiddenInset(),
@@ -63,10 +67,7 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 		},
-		Linux: &linux.Options{
-			// Icons for the system tray
-			Icon: &linux.Icon{},
-		},
+		Linux: &linux.Options{},
 	})
 
 	if err != nil {
