@@ -334,6 +334,13 @@ func (h *Heartbeat) getInterval() time.Duration {
 	return h.interval
 }
 
+// DoBeat performs a single heartbeat synchronously using the code and
+// fingerprint bound at construction. It does not affect the periodic loop.
+// Useful for on-demand checks (e.g. manual "check for update" from the UI).
+func (h *Heartbeat) DoBeat() Result {
+	return h.beat()
+}
+
 // Failures returns the consecutive heartbeat failure count.
 func (h *Heartbeat) Failures() int {
 	h.mu.Lock()

@@ -44,7 +44,7 @@ type App struct {
 	version   string
 	hubURL    string
 
-	// Cached state (source of truth is storage)
+	// Cached runtime state (persisted state lives in storage)
 	connected bool
 	tier      string
 	fp        string
@@ -125,19 +125,20 @@ func (a *App) Startup(ctx context.Context) {
 	// ── Find sing-box binary ──
 	singBoxPath := findSingBox()
 	if singBoxPath == "" {
-		wailsruntime.LogWarn(a.ctx, "sing-box binary not found — tunnel will not work")
+		wailsruntime.LogWarning(a.ctx, "sing-box binary not found — tunnel will not work")
 	}
 
 	// ── Manager (direct mode — no helper binary) ──
 	tmpDir := filepath.Join(os.TempDir(), "myvpn")
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
-		wailsruntime.LogWarn(a.ctx, "Cannot create temp dir: "+err.Error())
+		wailsruntime.LogWarning(a.ctx, "Cannot create temp dir: "+err.Error())
 	}
 	configPath := filepath.Join(tmpDir, "sing-box-config.json")
-	a.mgr = manager.NewManager(singBoxPath, configPath, "") // empty helperPath = direct mode
-
-	// ── Heartbeat ──
-	a.hb = heartbeat.New(a.hubURL)
+	a.mgr = manager.NewManager(singBoxPath, configPath, "")
+	// IMPORTANT: force direct mode. NewManager defaults to helper mode on
+	// Windows, but the helper binary no longer exists — helper mode would
+	// fail with "myvpn-helper binary not found".
+	a.mgr.SetHelperMode(false)
 
 	// ── Updater (crash recovery) ──
 	execPath, err := os.Executable()
@@ -149,10 +150,10 @@ func (a *App) Startup(ctx context.Context) {
 		// Run update recovery before anything else
 		updater.CleanStaleMarkers(appDir, 48*time.Hour)
 		if _, err := updater.CheckOnStartup(false); err != nil {
-			wailsruntime.LogWarn(a.ctx, "Update recovery warning: "+err.Error())
+			wailsruntime.LogWarning(a.ctx, "Update recovery warning: "+err.Error())
 		}
 		if err := updater.ConfirmIfPending(appDir); err != nil {
-			wailsruntime.LogWarn(a.ctx, "Update confirm warning: "+err.Error())
+			wailsruntime.LogWarning(a.ctx, "Update confirm warning: "+err.Error())
 		}
 	}
 
@@ -160,18 +161,18 @@ func (a *App) Startup(ctx context.Context) {
 	state := a.store.GetData()
 	a.tier = state.Tier
 	if state.Activated && state.ServerConfig != nil {
-		wailsruntime.LogInfo(a.ctx, "Device is activated (tier: " + state.Tier + ")")
+		wailsruntime.LogInfo(a.ctx, "Device is activated (tier: "+state.Tier+")")
 	}
 
-	// ── Create system tray ──
+	// ── Window close → hide behaviour ──
 	a.setupSystemTray()
 
 	// ── If already activated, start heartbeat ──
-	if state.Activated {
-		go a.startHeartbeatLoop()
+	if state.Activated && state.Code != "" {
+		a.startHeartbeatLoop(state.Code)
 	}
 
-	wailsruntime.LogInfo(a.ctx, "MyVPN started (version " + a.version + ")")
+	wailsruntime.LogInfo(a.ctx, "MyVPN started (version "+a.version+")")
 }
 
 // Shutdown is called by Wails when the application is quitting.
@@ -242,8 +243,20 @@ func (a *App) Activate(code string) ActivateResult {
 		}
 	}
 
+	// activation.ServerConfig and storage.ServerConfig are distinct types —
+	// map between them explicitly.
+	var storageCfg *storage.ServerConfig
+	if resp.ServerCfg != nil {
+		storageCfg = &storage.ServerConfig{
+			Server:     resp.ServerCfg.Server,
+			ServerPort: resp.ServerCfg.ServerPort,
+			Password:   resp.ServerCfg.Password,
+			Method:     resp.ServerCfg.Method,
+		}
+	}
+
 	// Persist activation
-	if err := a.store.SetActivation(code, resp.Tier, resp.DeviceFP, resp.ServerCfg, resp.UDPRelay); err != nil {
+	if err := a.store.SetActivation(code, resp.Tier, resp.DeviceFP, storageCfg, resp.UDPRelay); err != nil {
 		return ActivateResult{
 			Success: false,
 			Message: "Failed to save activation: " + err.Error(),
@@ -252,10 +265,10 @@ func (a *App) Activate(code string) ActivateResult {
 
 	a.tier = resp.Tier
 
-	// Start heartbeat loop
-	go a.startHeartbeatLoop()
+	// Start heartbeat loop (code is bound at construction)
+	a.startHeartbeatLoop(code)
 
-	wailsruntime.LogInfo(a.ctx, "Activation successful (tier: " + resp.Tier + ")")
+	wailsruntime.LogInfo(a.ctx, "Activation successful (tier: "+resp.Tier+")")
 
 	return ActivateResult{
 		Success: true,
@@ -266,7 +279,7 @@ func (a *App) Activate(code string) ActivateResult {
 
 // IsActivated returns whether the device has been activated.
 func (a *App) IsActivated() bool {
-	return a.store.GetData().Activated
+	return a.store.IsActivated()
 }
 
 // ── Connection ──
@@ -286,8 +299,9 @@ func (a *App) Connect() OpResult {
 		ServerPort: state.ServerConfig.ServerPort,
 		Method:     state.ServerConfig.Method,
 		Password:   state.ServerConfig.Password,
-		Tier:       state.Tier,
+		TierName:   state.Tier,
 		UDPRelay:   state.UDPRelay,
+		HubURL:     a.hubURL,
 	}
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
@@ -298,12 +312,11 @@ func (a *App) Connect() OpResult {
 	}
 
 	a.connected = true
-	a.store.SetConnected(true)
 
 	// Notify frontend
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 
-	wailsruntime.LogInfo(a.ctx, "Connected to " + state.ServerConfig.Server)
+	wailsruntime.LogInfo(a.ctx, "Connected to "+state.ServerConfig.Server)
 	return OpResult{Success: true, Message: "Connected"}
 }
 
@@ -319,7 +332,6 @@ func (a *App) disconnect() OpResult {
 
 	a.mgr.Stop()
 	a.connected = false
-	a.store.SetConnected(false)
 
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 
@@ -333,33 +345,46 @@ func (a *App) GetStatus() StatusResult {
 
 func (a *App) buildStatus() StatusResult {
 	state := a.store.GetData()
-	graceDays := 7
-	if state.LastHeartbeatOK > 0 {
-		graceDays = int(a.hb.RemainingGracePeriod(state.LastHeartbeatOK).Hours() / 24)
-	}
 	return StatusResult{
 		Connected: a.connected,
 		Tier:      a.tier,
 		State:     a.mgr.State(),
-		Failures:  a.hb.Failures(),
-		GraceDays: graceDays,
+		Failures:  a.heartbeatFailures(),
+		GraceDays: a.graceDays(state.LastHeartbeatOK),
 	}
+}
+
+// heartbeatFailures returns the heartbeat failure count (0 if heartbeat not running).
+func (a *App) heartbeatFailures() int {
+	if a.hb == nil {
+		return 0
+	}
+	return a.hb.Failures()
+}
+
+// graceDays returns the remaining grace period in days (7 if never heartbeated).
+func (a *App) graceDays(lastHeartbeatOK int64) int {
+	if a.hb == nil {
+		return 7
+	}
+	return int(a.hb.RemainingGracePeriod(lastHeartbeatOK).Hours() / 24)
 }
 
 // ── Heartbeat ──
 
-func (a *App) startHeartbeatLoop() {
-	state := a.store.GetData()
-	if !state.Activated || state.Code == "" {
+// startHeartbeatLoop creates (or re-creates) the heartbeat with the given code
+// and starts the periodic loop. Safe to call multiple times — a running
+// heartbeat is left untouched.
+func (a *App) startHeartbeatLoop(code string) {
+	if a.hb != nil && a.hb.IsRunning() {
 		return
 	}
 
-	a.hb.Start(a.ctx, state.Code, a.fp, func(result heartbeat.Result) {
+	a.hb = heartbeat.New(a.hubURL, code, a.fp, func(result heartbeat.Result) {
 		if result.Success {
 			a.store.SetHeartbeat(time.Now().Unix())
-			a.store.ResetHeartbeatFailures()
 
-			// Check for update signal
+			// Check for staged-rollout update signal
 			if result.Resp != nil && result.Resp.UpdateAvailable != "" {
 				wailsruntime.EventsEmit(a.ctx, "update:available", map[string]interface{}{
 					"version": result.Resp.UpdateAvailable,
@@ -369,27 +394,25 @@ func (a *App) startHeartbeatLoop() {
 			}
 		} else {
 			a.store.SetHeartbeatFailure(time.Now().Unix())
-			wailsruntime.LogWarn(a.ctx, "Heartbeat failed: "+result.Error.Error())
+			wailsruntime.LogWarning(a.ctx, "Heartbeat failed: "+result.Error.Error())
 		}
 
-		// Always emit status update so the UI reflects grace period changes
+		// Always emit status so the UI reflects grace period changes
 		wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 	})
+
+	a.hb.Start()
 }
 
 // ── Updates ──
 
 // CheckForUpdate performs a manual heartbeat to check for available updates.
 func (a *App) CheckForUpdate() UpdateCheckResult {
-	state := a.store.GetData()
-	if !state.Activated {
+	if a.hb == nil {
 		return UpdateCheckResult{Available: false}
 	}
 
-	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
-	defer cancel()
-
-	result := a.hb.DoHeartbeat(ctx, state.Code, a.fp)
+	result := a.hb.DoBeat()
 	if !result.Success || result.Resp == nil || result.Resp.UpdateAvailable == "" {
 		return UpdateCheckResult{Available: false}
 	}
@@ -434,8 +457,8 @@ Reported: %s
 		a.tier,
 		mgrState,
 		state.LastHeartbeatOK,
-		state.HeartbeatFailures,
-		int(a.hb.RemainingGracePeriod(state.LastHeartbeatOK).Hours()/24),
+		a.heartbeatFailures(),
+		a.graceDays(state.LastHeartbeatOK),
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
@@ -482,10 +505,8 @@ func findSingBox() string {
 // On close, the window hides to the system tray instead of quitting.
 // The app exits via the tray menu (Quit) or system Quit command.
 func (a *App) setupSystemTray() {
-	// Hide window on close instead of quitting (like a typical VPN app).
-	// On macOS this is natural (app stays in menu bar).
-	// On Windows/Linux the tray icon keeps the app alive.
-	wailsruntime.WindowSetBackgroundColour(a.ctx, 13, 13, 15, 255) // #0D0D0F
+	// Dark background matches the UI theme (#0D0D0F)
+	wailsruntime.WindowSetBackgroundColour(a.ctx, 13, 13, 15, 255)
 
 	// Listen for "show" event triggered from the tray or dock
 	wailsruntime.EventsOn(a.ctx, "tray:show", func(optionalData ...interface{}) {

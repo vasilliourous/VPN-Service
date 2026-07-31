@@ -189,23 +189,21 @@ func (a *App) Startup(ctx context.Context)        // Wails lifecycle hook
 func (a *App) Shutdown(ctx context.Context)         // Wails lifecycle hook
 
 // ── Activation ──
-func (a *App) ValidateCodeLocally(code string) *ValidationResult  // Luhn-mod-N, no server call
-func (a *App) Activate(code string) *ActivationResult             // Server activation
-func (a *App) IsActivated() bool                                   // Check stored state
+func (a *App) ValidateCode(code string) ValidateResult      // Luhn-mod-N, no server call
+func (a *App) Activate(code string) ActivateResult          // Server activation + persist + start heartbeat
+func (a *App) IsActivated() bool                             // Check stored state
 
 // ── Connection ──
-func (a *App) Connect() *OpResult       // Start sing-box
-func (a *App) Disconnect() *OpResult    // Stop sing-box
-func (a *App) GetStatus() *Status       // Current connection state
+func (a *App) Connect() OpResult        // Start sing-box
+func (a *App) Disconnect() OpResult     // Stop sing-box
+func (a *App) GetStatus() StatusResult  // Current connection state
 
-// ── Heartbeat ──
-func (a *App) StartHeartbeat()           // Begin periodic heartbeats
-func (a *App) StopHeartbeat()            // Stop heartbeats
-func (a *App) GetRemainingGraceDays() int
+// ── Heartbeat (started automatically after activation) ──
+// (no public Start/Stop bindings — the loop runs in the background and
+//  emits "status:changed" / "update:available" events to the frontend)
 
 // ── Updates ──
-func (a *App) CheckForUpdate() *UpdateCheckResult
-func (a *App) ApplyUpdate(info UpdateInfo) *OpResult
+func (a *App) CheckForUpdate() UpdateCheckResult   // Manual heartbeat → update signal
 
 // ── Diagnostics ──
 func (a *App) GetDiagnostics() string    // Text report for support
@@ -213,6 +211,12 @@ func (a *App) GetDiagnostics() string    // Text report for support
 // ── Codec ──
 func (a *App) GetCodeCharset() string    // "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 func (a *App) GetCodePrefix() string     // "MYVPN"
+func (a *App) GetVersion() string        // App version
+func (a *App) GetHubURL() string         // Hub URL
+
+// ── Events emitted Go → frontend ──
+//   "status:changed"    StatusResult — connection/grace changes
+//   "update:available"  {version, url, sha256} — staged rollout signal
 ```
 
 All methods use Go native types (not Wails-specific wrappers). Wails automatically

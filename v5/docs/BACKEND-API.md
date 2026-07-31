@@ -248,10 +248,19 @@ type Config struct {
     ServerPort int
     Method     string
     Password   string
-    Tier       string   // "eco", "stealth", or "strike"
+    TierName   string   // "eco", "stealth", or "strike" (NOTE: field is TierName, not Tier)
     UDPRelay   bool
+    HubURL     string
 }
+
+// Validate checks required fields (Server, ServerPort, Password, Method).
+func (c *Config) Validate() error
 ```
+
+> **⚠️ Windows helper default:** `NewManager` sets `useHelper = true` on Windows
+> (the old architecture needed a privileged helper for TUN). The helper binary
+> no longer exists — call `mgr.SetHelperMode(false)` after construction to
+> force direct mode on all platforms.
 
 ### Constructor
 
@@ -266,7 +275,12 @@ func NewManager(singBoxPath, configPath, helperPath string) *Manager
 ### Methods
 
 ```go
-// Start launches sing-box. If a helper path was provided, it sends the config
+// SetHelperMode enables or disables helper mode.
+// MUST be called with false in the Wails architecture — the helper binary
+// no longer exists and NewManager defaults to helper mode on Windows.
+func (m *Manager) SetHelperMode(enabled bool)
+
+// Start launches sing-box. If helper mode is enabled, it sends the config
 // to the helper via IPC; otherwise it spawns sing-box directly.
 // Returns ErrProcessNotRunning if sing-box exits immediately (config error / permissions).
 func (m *Manager) Start(ctx context.Context, cfg Config) error
@@ -280,11 +294,6 @@ func (m *Manager) IsRunning() bool
 
 // State returns a status string: "running", "stopped", or "crashed".
 func (m *Manager) State() string
-
-// StartHelper launches the privileged TUN helper (pkexec/sudo/UAC).
-// Only needed if helperPath was provided to NewManager.
-// In the new Wails architecture, this is NOT used — elevation is handled by Wails.
-func (m *Manager) StartHelper() error
 ```
 
 ### Configuration Generation (internal, used by Start)
@@ -375,25 +384,35 @@ type HeartbeatError struct {
 ### Constructor
 
 ```go
-// New creates a Heartbeat. hubURL is the base URL of the server.
-func New(hubURL string) *Heartbeat
+// New creates a Heartbeat manager. The code and fingerprint are BOUND AT
+// CONSTRUCTION — they are sent with every heartbeat request.
+func New(hubURL, code, fingerprint string, callback Callback) *Heartbeat
+
+// Callback is invoked after each heartbeat attempt.
+type Callback func(Result)
 ```
 
 ### Methods
 
 ```go
-// Start begins the heartbeat loop in a goroutine.
-//   code, fingerprint: sent with each heartbeat for server validation
-//   callback: invoked on each heartbeat result (use this to update UI / check for updates)
+// Start begins the periodic heartbeat loop in a goroutine.
+// No arguments — uses the code/fingerprint bound at construction.
 // The interval starts at MinInterval, doubles on failure, resets on success.
-func (h *Heartbeat) Start(ctx context.Context, code, fingerprint string, callback func(Result))
+func (h *Heartbeat) Start()
 
 // Stop terminates the heartbeat loop.
 func (h *Heartbeat) Stop()
 
-// DoHeartbeat performs a single heartbeat request synchronously and returns the result.
-// Useful for manual/on-demand heartbeats outside the loop.
-func (h *Heartbeat) DoHeartbeat(ctx context.Context, code, fingerprint string) Result
+// IsRunning returns whether the loop is active.
+func (h *Heartbeat) IsRunning() bool
+
+// DoBeat performs a single heartbeat synchronously using the bound
+// code/fingerprint. It does not affect the periodic loop.
+// Useful for manual/on-demand checks (e.g. "check for update" from the UI).
+func (h *Heartbeat) DoBeat() Result
+
+// Stats returns (total, successes, failures) heartbeat counts.
+func (h *Heartbeat) Stats() (total, successes, failures int)
 
 // Failures returns the consecutive heartbeat failure count.
 func (h *Heartbeat) Failures() int
@@ -403,6 +422,10 @@ func (h *Heartbeat) Failures() int
 // Returns 0 if the grace period has expired.
 func (h *Heartbeat) RemainingGracePeriod(lastHeartbeatOK int64) time.Duration
 ```
+
+> **⚠️ Construction pattern:** because code/fingerprint are bound in `New()`,
+> create a fresh `Heartbeat` after activation (or when the code changes).
+> Call `Start()` with no arguments — NOT with code/fingerprint.
 
 ### Behavior
 
@@ -436,24 +459,27 @@ const SentinelPending   = ".update-pending"    // Created before swap → indica
 const SentinelConfirmed = ".update-confirmed"  // Created by new binary → confirms update succeeded
 const SentinelReverted  = ".reverted"          // Created after auto-revert → marks rollback
 const BackupDir         = ".myvpn-backups"     // Directory containing previous binary backups
+
+const DownloadTimeout = 5 * time.Minute
+const MaxDownloadSize  = 500 * 1024 * 1024  // 500MB
+const MinDownloadSize  = 1024 * 1024        // 1MB
 ```
 
 ### Types
 
 ```go
 type UpdateInfo struct {
-    Version  string
-    URL      string
-    SHA256   string
-    Platform string
+    Version                string
+    SHA256                 string
+    DownloadURL            string  // generic/fallback
+    DownloadURLLinux       string
+    DownloadURLWindows     string
+    DownloadURLMacOSIntel  string
+    DownloadURLMacOSARM    string
 }
 
-type UpdateProgress struct {
-    BytesDone  int64
-    BytesTotal int64
-    Phase      string // "downloading", "verifying", "swapping", "done", "failed"
-    Error      string
-}
+// PlatformDownloadURL returns the right URL for the current OS/arch.
+func (ui *UpdateInfo) PlatformDownloadURL() string
 
 type RecoveryState struct {
     RolledBack      bool
@@ -476,24 +502,13 @@ func New(appDir, binaryName, currentVersion string) *Updater
 ### Methods
 
 ```go
-// CheckAndUpdate checks if an update is available and applies it.
-// If the update is for a different platform (e.g. update_linux when on Windows),
-// it selects the correct platform URL automatically.
-// Returns true if an update was applied (caller should re-launch).
-func (u *Updater) CheckAndUpdate(ctx context.Context, updateInfo UpdateInfo, progress func(UpdateProgress)) (bool, error)
-
-// DownloadAndVerify downloads the new binary and checks its SHA256.
-// Returns the path to the downloaded file.
-func (u *Updater) DownloadAndVerify(ctx context.Context, url, expectedSHA256 string, progress func(UpdateProgress)) (string, error)
-
-// ApplyUpdate swaps the current binary with the downloaded one and forks the new process.
-// This is the two-phase commit:
-//   1. Create .update-pending sentinel
-//   2. Backup current binary to BackupDir
-//   3. Swap binary (platform-specific)
-//   4. Fork new process
-//   5. Parent exits (new process creates .update-confirmed on success)
-func (u *Updater) ApplyUpdate(downloadedPath string) error
+// PerformUpdate downloads, verifies, and applies an update (crash-safe).
+//   info.Version and info.SHA256 are required; the platform-specific download
+//   URL is selected automatically via UpdateInfo.PlatformDownloadURL().
+// Flow: backup current → download → verify SHA256 → create .update-pending
+//       sentinel → swap binary → fork new process → parent exits.
+// The new process confirms the update on startup (see ConfirmIfPending).
+func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error
 ```
 
 ### Standalone Functions
@@ -540,18 +555,19 @@ func DiagnoseRecovery(appDir string) *RecoveryState
 
 ```
 Heartbeat detects update available →
-  1. DownloadAndVerify() → download URL, check SHA256
-  2. ApplyUpdate():
-     a. Create .update-pending sentinel
-     b. Backup current binary → .myvpn-backups/
-     c. Swap new binary in place (platform-specific)
-     d. Fork new process (inherits args, stdin/stdout/stderr)
-     e. Parent exits
-  3. New binary starts:
+  1. PerformUpdate(ctx, info):
+     a. Backup current binary → .myvpn-backups/
+     b. Download new binary (platform URL from UpdateInfo.PlatformDownloadURL())
+     c. Verify SHA256
+     d. Create .update-pending sentinel
+     e. Swap new binary in place (platform-specific)
+     f. Fork new process (inherits args, stdin/stdout/stderr)
+     g. Parent exits
+  2. New binary starts:
      a. CheckOnStartup() → sees .update-pending, no .update-confirmed yet
      b. ConfirmIfPending() → creates .update-confirmed
      c. Cleanup → removes both sentinels
-  4. If new binary crashes before step 3b:
+  3. If new binary crashes before step 2b:
      a. Next start → sees .update-pending, no .update-confirmed
      b. CheckOnStartup() → auto-reverts to backup
      c. Creates .reverted sentinel
@@ -642,7 +658,7 @@ main.go (entry point)
         ├── heartbeat.Stop()
         ├── heartbeat.RemainingGracePeriod()
         │
-        └── updater.CheckAndUpdate()    ← depends on heartbeat.Response
+        └── updater.PerformUpdate()    ← depends on heartbeat.Response
 ```
 
 **Key rule:** No internal package imports any other internal package. They are all
