@@ -23,7 +23,7 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
               └───────────────────────────────┘
 ```
 
-**File:** `.github/workflows/build.yml` (in v5/)
+**File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; a stale copy under `v5/.github/` is inert and must not be edited)
 
 > **⚠️ IMPORTANT — Frontend build ordering.** The client embeds the Vue frontend
 > via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go` (build tag

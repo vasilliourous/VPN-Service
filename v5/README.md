@@ -153,7 +153,7 @@ The client is built and released via **GitHub Actions**.
 | Tag `v*` (e.g., `v2.0.0`) | Full build + bundle + GitHub Release |
 | Pull request | Lint + vet + test build |
 
-**File:** `v5/.github/workflows/build.yml`
+**File:** `.github/workflows/build.yml` (repo root — GitHub Actions only runs root workflows)
 **Docs:** `v5/docs/CI-CD.md`
 **Trigger:** `git tag v2.0.0 && git push origin v2.0.0`
 
@@ -176,7 +176,7 @@ cd v5/client && make ci
 ```
 
 > **Note:** `make ci` was removed in the Wails migration — the CI pipeline
-> runs on GitHub Actions (see `v5/.github/workflows/build.yml`). For local
+> runs on GitHub Actions (see `.github/workflows/build.yml`). For local
 > development use `wails dev`; for local builds run `npm install && npm run build`
 > in `frontend/` first, then `go build .` (the `//go:embed` requires `frontend/dist`).
 
