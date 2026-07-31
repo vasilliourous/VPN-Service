@@ -90,14 +90,17 @@ jobs:
           working-directory: ${{ env.CLIENT_DIR }}
 
       - name: go vet
-        # Use the real Wails tags so vet checks the desktop implementation
-        run: go vet -tags "frontend desktop production" ./...
+        # Use the real Wails tags so vet checks the desktop implementation.
+        # webkit2_41: ubuntu-latest ships WebKitGTK 4.1 only — the Wails linux
+        # cgo code needs this tag or it looks for webkit2gtk-4.0.
+        run: go vet -tags "frontend desktop production webkit2_41" ./...
 
       - name: Build check (compile test)
         # -tags frontend embeds the real UI (frontend/dist was built above);
         # desktop+production are REQUIRED — without them Wails compiles the
-        # stub app that shows the "correct build tags" error at runtime.
-        run: go build -tags "frontend desktop production" ./...
+        # stub app that shows the "correct build tags" error at runtime;
+        # webkit2_41 matches the WebKitGTK version on ubuntu-latest.
+        run: go build -tags "frontend desktop production webkit2_41" ./...
 
       - name: Run unit tests
         run: go test ./... -v -count=1
@@ -116,24 +119,28 @@ jobs:
             goarch: amd64
             ext: ""
             cgo: "1"   # Wails needs CGO for WebKitGTK
+            tags: "frontend desktop production webkit2_41"  # ubuntu-latest ships WebKitGTK 4.1
           - label: macOS-amd64
             os: macos-latest
             goos: darwin
             goarch: amd64
             ext: ""
             cgo: "1"   # Wails needs CGO for WKWebView
+            tags: "frontend desktop production"
           - label: macOS-arm64
             os: macos-latest
             goos: darwin
             goarch: arm64
             ext: ""
             cgo: "1"   # Wails needs CGO for WKWebView
+            tags: "frontend desktop production"
           - label: Windows-amd64
             os: windows-latest
             goos: windows
             goarch: amd64
             ext: ".exe"
             cgo: "0"   # Wails Windows is pure Go (WebView2 COM) — no gcc needed
+            tags: "frontend desktop production"
 
     runs-on: ${{ matrix.os }}
     defaults:
@@ -198,7 +205,7 @@ jobs:
           # -tags frontend embeds the real UI (frontend/dist was built above)
           # desktop+production are REQUIRED Wails tags — without them the
           # binary is the stub app that errors at runtime
-          go build -tags "frontend desktop production" -ldflags="$LDFLAGS" \
+          go build -tags "${{ matrix.tags }}" -ldflags="$LDFLAGS" \
             -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
 
       - name: Download sing-box engine

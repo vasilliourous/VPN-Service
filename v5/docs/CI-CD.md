@@ -40,6 +40,9 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
 > app that shows the "Wails applications will not build without the correct
 > build tags" error dialog at runtime. (`wails build` adds them automatically;
 > this workflow uses raw `go build`, so they must be passed explicitly.)
+> **Linux only:** add `webkit2_41` — ubuntu-latest ships WebKitGTK 4.1, and the
+> Wails Linux cgo code selects the webkit version via this build tag (without
+> it, cgo looks for `webkit2gtk-4.0`, which is not available on 24.04).
 > Without the `frontend` tag, Go compiles `assets_stub.go` (empty asset FS) —
 > the binary builds but has no UI.
 

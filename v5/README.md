@@ -187,7 +187,9 @@ cd v5/client && make build
 > `wails.json`; `make dev` also builds the frontend first. For manual
 > `go build`, pass the full Wails tag set — `-tags "frontend desktop production"`
 > (`desktop,production` are required Wails tags; without them the binary is the
-> stub app that shows the "correct build tags" error at runtime). Without the
+> stub app that shows the "correct build tags" error at runtime). On Linux,
+> add `webkit2_41` when building against WebKitGTK 4.1 (Ubuntu 24.04+):
+> `-tags "frontend desktop production webkit2_41"`. Without the
 > `frontend` tag, `go build .` compiles with the empty `assets_stub.go`
 > asset FS (no UI).
 

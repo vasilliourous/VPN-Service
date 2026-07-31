@@ -93,6 +93,25 @@ WebKitGTK headers locally (CI installs `libgtk-3-dev libwebkit2gtk-4.1-dev` —
 includes `pkg-config`); macOS builds require CGO on a macOS runner (matrix
 already sets `cgo: "1"` for macOS).
 
+### Follow-up (2026-07-31) — Linux lint failure: missing `webkit2_41` tag
+
+The first green push still failed the `Lint & Vet` job on ubuntu-latest. Cause:
+Wails' Linux desktop cgo code selects the WebKitGTK version via a build tag —
+
+```c
+#cgo !webkit2_41 pkg-config: webkit2gtk-4.0
+#cgo webkit2_41 pkg-config: webkit2gtk-4.1
+```
+
+ubuntu-latest (24.04) ships only WebKitGTK **4.1** (`libwebkit2gtk-4.1-dev`),
+so the tag-less build looked for `webkit2gtk-4.0` and failed at the pkg-config
+step. The `wails` CLI does not auto-add this tag in v2.9.1 — it must be passed
+manually. **Fix:** `.github/workflows/build.yml` adds `webkit2_41` to the lint
+job (`go vet` / compile check) and the Linux matrix entry; macOS/Windows keep
+`frontend desktop production` (the tag is linux-only). Docs and `main.go`
+comments updated to mention `-tags "frontend desktop production webkit2_41"`
+for Ubuntu 24.04+ builds.
+
 ---
 
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)

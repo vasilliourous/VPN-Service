@@ -11,7 +11,9 @@
 //                               (manual build — frontend/dist must exist, and
 //                                desktop+production are REQUIRED Wails tags:
 //                                without them the binary is the stub app that
-//                                shows the "correct build tags" error)
+//                                shows the "correct build tags" error.
+//                                On Linux, add webkit2_41 when building against
+//                                WebKitGTK 4.1, e.g. Ubuntu 24.04+)
 //   go build .                  (compiles without frontend/dist — stub assets, no UI)
 //   wails dev                   (hot-reload — uses Vite dev server, stub is fine)
 //

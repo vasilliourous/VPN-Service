@@ -345,6 +345,8 @@ to the shadowsocks outbound.
 - **Fingerprint:** Reads `/sys/class/net/*/address`, `/sys/block/*/device/serial`,
   `/sys/class/dmi/id/product_uuid`, `/etc/machine-id`
 - **WebView deps:** `libgtk-3-dev` + `libwebkit2gtk-4.0-dev` (22.04) or `4.1` (24.04+)
+- **Build tag:** add `webkit2_41` when building against WebKitGTK 4.1 (Ubuntu 24.04+):
+  `go build -tags "frontend desktop production webkit2_41" .`
 
 ### macOS
 - **TUN:** sing-box creates `myvpn0` directly
