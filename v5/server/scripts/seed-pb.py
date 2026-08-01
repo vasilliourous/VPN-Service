@@ -150,9 +150,13 @@ resp = api("POST", "/api/collections/update_config/records", {
 })
 log(f"  update_config: {'seeded' if resp.get('id') else resp.get('message', '')}")
 
-# ── Step 4: Seed tier configs ──
-# Priority: 1) Already in os.environ (from decrypted secrets via setup.sh)
-#           2) /root/.tier_passwords file (from 02-shadowsocks.sh)
+    # ── Step 4: Seed tier configs ──
+    # udp_relay MUST stay false: it historically enabled the client's sing-box
+    # "udp_over_tcp v2" option, but that protocol is proprietary to sing-box —
+    # shadowsocks-rust closes those connections (RST, observed 2026-08-01).
+    # UDP flows via standard ss UDP (server mode tcp_and_udp).
+    # Priority: 1) Already in os.environ (from decrypted secrets via setup.sh)
+    #           2) /root/.tier_passwords file (from 02-shadowsocks.sh)
 pw_file = "/root/.tier_passwords"
 tiers_seeded = 0
 pw_from_file = False
@@ -170,7 +174,7 @@ if not pw_from_file and os.path.exists(pw_file):
     pw_from_file = True
 
 if pw_from_file:
-    for t, port, udp in [("eco", 8443, False), ("stealth", 8444, False), ("strike", 8445, True)]:
+    for t, port, udp in [("eco", 8443, False), ("stealth", 8444, False), ("strike", 8445, False)]:
         pw = os.environ.get(f"{t.upper()}_PASS", "")
         if not pw:
             log(f"  {t}: no password found — skipping")

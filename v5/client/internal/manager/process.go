@@ -178,8 +178,12 @@ type Config struct {
 	Password   string
 	Method     string
 	TierName   string
-	UDPRelay   bool
-	HubURL     string
+	// UDPRelay is INFORMATIONAL only (tier supports UDP): it must NOT enable
+	// UDP-over-TCP. sing-box's udp_over_tcp is a proprietary SagerNet protocol
+	// that shadowsocks-rust rejects (RST — see generateConfig note and
+	// docs/FIXES.md Follow-up 9). UDP flows raw (standard ss UDP).
+	UDPRelay bool
+	HubURL   string
 }
 
 // Validate checks that the config is valid.
@@ -701,13 +705,17 @@ func generateConfig(cfg Config) ([]byte, error) {
 		}
 	}
 
-	// Add UDP over TCP for Strike or if UDP relay is enabled
-	if cfg.UDPRelay {
-		config.Outbounds[0].UDPOverTCP = &UDPOverTCPConfig{
-			Enabled: true,
-			Version: 2,
-		}
-	}
+	// NOTE: UDP-over-TCP (udp_over_tcp) is deliberately NOT configured.
+	// sing-box's UDP-over-TCP is a proprietary SagerNet protocol (magic
+	// domains sp.udp-over-tcp.arpa / sp.v2.udp-over-tcp.arpa), NOT the
+	// Shadowsocks standard — the deployed server (shadowsocks-rust) does not
+	// implement it and RSTs every such connection (observed 2026-08-01:
+	// "An existing connection was forcibly closed by the remote host" ~300ms
+	// after each UoT dial; browsers then spin in QUIC retry loops → "connects
+	// but nothing loads"). UDP therefore goes RAW (standard ss UDP; Strike
+	// server mode tcp_and_udp) and works wherever the network allows UDP; on
+	// UDP-blocking networks (N4L school WiFi) clients fall back to TCP.
+	// Revisit only if a sing-box SERVER is deployed for the tier.
 
 	return json.MarshalIndent(config, "", "  ")
 }
@@ -760,19 +768,13 @@ type Inbound struct {
 }
 
 type Outbound struct {
-	Type           string            `json:"type"`
-	Tag            string            `json:"tag,omitempty"`
-	Server         string            `json:"server,omitempty"`
-	ServerPort     int               `json:"server_port,omitempty"`
-	Method         string            `json:"method,omitempty"`
-	Password       string            `json:"password,omitempty"`
-	ConnectTimeout string            `json:"connect_timeout,omitempty"`
-	UDPOverTCP     *UDPOverTCPConfig `json:"udp_over_tcp,omitempty"`
-}
-
-type UDPOverTCPConfig struct {
-	Enabled bool `json:"enabled"`
-	Version int  `json:"version,omitempty"`
+	Type           string `json:"type"`
+	Tag            string `json:"tag,omitempty"`
+	Server         string `json:"server,omitempty"`
+	ServerPort     int    `json:"server_port,omitempty"`
+	Method         string `json:"method,omitempty"`
+	Password       string `json:"password,omitempty"`
+	ConnectTimeout string `json:"connect_timeout,omitempty"`
 }
 
 type RouteConfig struct {

@@ -613,6 +613,50 @@ workflow change needed.
 
 ---
 
+### Follow-up 9 — REMOVED udp_over_tcp: sing-box's UDP-over-TCP is proprietary (2026-08-01)
+
+**Symptom:** client says Connected and DNS resolves, but pages hang ("nothing
+loads properly"). The log shows successful DNS exchanges and DoH through the
+tunnel (`outbound/shadowsocks[proxy]: outbound connection to 1.1.1.1:443`),
+but every UDP/QUIC flow dies:
+
+```
+outbound/shadowsocks[proxy]: outbound UoT packet connection to 142.251.12.84:443
+connection: packet download closed: read tcp ...->114.23.136.59:8445:
+  wsarecv: An existing connection was forcibly closed by the remote host.
+```
+
+(Repeated ~300ms apart — Chrome/Edge QUIC retry storm. Hiddify mobile VPN
+mode and Hiddify desktop System Proxy work with the same server; Hiddify
+desktop VPN mode fails the same way.)
+
+**Root cause:** `generateConfig` emitted
+`"udp_over_tcp": { "enabled": true, "version": 2 }` for tiers with
+`udp_relay` (Strike). But sing-box's UDP-over-TCP is a **proprietary SagerNet
+protocol** — magic domains `sp.udp-over-tcp.arpa` (v1) / `sp.v2.udp-over-tcp.arpa`
+(v2) — **not** the Shadowsocks SIP003 UDP-over-TCP. The deployed server is
+shadowsocks-rust, which does not implement it and RSTs every UoT connection.
+The TCP data path was fine all along; the failure was dead UDP plus browser
+QUIC retry loops. (This was also observed earlier the same day in
+`seed-live.py`'s notes: "every UoT conn RST after ~300ms".)
+
+**Fix:**
+- `v5/client/internal/manager/process.go` — `udp_over_tcp` is no longer
+  emitted for any tier. UDP goes **raw** (standard ss UDP; Strike server runs
+  `tcp_and_udp`), works wherever the network allows UDP, and browsers fall
+  back to TCP where it doesn't (N4L school WiFi). `UDPOverTCPConfig` type and
+  `Outbound.UDPOverTCP` field removed; `Config.UDPRelay` is now informational
+  only.
+- `v5/server/scripts/seed-pb.py`, `fix-tier-configs.py` — strike seeds
+  `udp_relay: false` (it historically flipped on client UoT). `seed-live.py`
+  already had this.
+- **Live DB (pending):** tier_configs → strike must have `udp_relay: false`.
+  Clients self-heal via the heartbeat server_config refresh within one beat
+  (no rebuild needed for existing installs).
+- Revisit UoT only if a **sing-box server** is deployed for a tier.
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

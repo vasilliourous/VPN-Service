@@ -332,9 +332,10 @@ The manager generates a config like this (`generateConfig` in
 }
 ```
 
-Set `MYVPN_DEBUG=1` to switch the log level to `debug`. The Strike tier (or any
-activation with `udp_relay`) adds `"udp_over_tcp": { "enabled": true, "version": 2 }`
-to the shadowsocks outbound.
+Set `MYVPN_DEBUG=1` to switch the log level to `debug`. UDP is sent raw
+(standard ss UDP): sing-box's `udp_over_tcp` is proprietary to sing-box and
+shadowsocks-rust rejects it with RST (see FIXES.md Follow-up 9), so it is
+never emitted for any tier.
 
 ---
 

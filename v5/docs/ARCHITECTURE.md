@@ -189,9 +189,12 @@ The generated config looks like this:
 }
 ```
 
-(`MYVPN_DEBUG=1` switches the log level to `debug`. The Strike tier, or any
-activation with `udp_relay` enabled, adds `"udp_over_tcp": { "enabled": true, "version": 2 }`
-to the shadowsocks outbound.)
+(`MYVPN_DEBUG=1` switches the log level to `debug`. UDP is NOT wrapped in
+UDP-over-TCP: sing-box's `udp_over_tcp` is a proprietary SagerNet protocol
+(magic domains `sp.udp-over-tcp.arpa` / `sp.v2.udp-over-tcp.arpa`) that
+shadowsocks-rust rejects with RST (observed 2026-08-01 — see FIXES.md
+Follow-up 9). `udp_relay` is informational; UDP goes raw (standard ss UDP,
+server `tcp_and_udp` on Strike) and works only where the network allows UDP.)
 
 **Process lifecycle:**
 - `Start()` → generate config → write config file → spawn sing-box → 500ms
@@ -433,7 +436,7 @@ admin rights. sing-box creates TUN interfaces directly.
 |------|-----|
 | **Only 2 binaries** (myvpn + sing-box) | Less breakage surface area. No helper, no tun2socks, no sslocal. |
 | **No TLS in the tunnel** | JA3 fingerprinting is the #1 detection method. Shadowsocks AEAD has no TLS fingerprint. |
-| **No UDP in tunnel** | N4L drops all UDP. TCP only (except Strike's UDP-over-TCP wrapper). |
+| **UDP attempted raw, TCP fallback** | N4L drops all UDP, so UDP (incl. Strike's relay) only works on permissive networks; browsers fall back to TCP. sing-box's UoT is proprietary — never enabled (see FIXES.md Follow-up 9). |
 | **Server-enforced caps** | Client can't bypass its tier cap. tc caps (5/100/200 Mbps) are on the VPS. |
 | **Permanent device binding** | One code = one device forever. No deactivation. Admin can suspend (not destroy) binding. |
 | **Crash-safe updates** | Two-phase sentinel with auto-revert. No update signing keys needed. |

@@ -30,10 +30,14 @@ DOMAIN = os.environ.get("DOMAIN", "networkingguides.duckdns.org")
 ADMIN_CREDS = "/root/.pb_admin_creds"
 SS_CONFIG_DIR = "/etc/shadowsocks"
 
+# udp_relay MUST stay false: it historically enabled the client's sing-box
+# "udp_over_tcp v2" option, but that protocol is proprietary to sing-box —
+# shadowsocks-rust closes those connections (RST, observed 2026-08-01).
+# UDP flows via standard ss UDP (server mode tcp_and_udp).
 TIERS = [
     ("eco", 8443, False),
     ("stealth", 8444, False),
-    ("strike", 8445, True),
+    ("strike", 8445, False),
 ]
 
 

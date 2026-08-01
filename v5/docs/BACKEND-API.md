@@ -314,7 +314,8 @@ func (m *Manager) State() string
 //   - Shadowsocks outbound to the VPS
 //   - DNS via 1.1.1.1 through tunnel
 //   - Direct outbound for private IPs
-//   - Tier-appropriate settings (UDP relay for Strike)
+//   - Raw UDP for Strike (udp_over_tcp is NOT emitted — sing-box's UoT is
+//     proprietary and shadowsocks-rust rejects it; see FIXES.md Follow-up 9)
 func generateConfig(cfg Config) ([]byte, error)
 ```
 
