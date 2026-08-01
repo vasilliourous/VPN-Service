@@ -604,16 +604,19 @@ func generateConfig(cfg Config) ([]byte, error) {
 			Level: logLevel,
 		},
 		DNS: DNSConfig{
-			// DNS goes THROUGH the tunnel (final = dns-tunnel, which uses the
-			// default proxy outbound). It must NOT use the "direct" detour:
-			// direct outbound traffic is routed back into the TUN by
-			// auto_route, creating a DNS loop ("ping 1.1.1.1 works, but
-			// domains don't resolve"). dns-direct is kept only as an option.
+			// DNS goes THROUGH the tunnel. dns-tunnel MUST have an explicit
+			// detour: "proxy" — with an empty detour, sing-box dials the DNS
+			// transport through the ROUTER, which re-applies the route rules
+			// to its own connection and loops it back into the DNS handler
+			// ("DNS query loopback in transport[dns-tunnel]"). The direct
+			// detour on dns-direct has the same problem (auto_route captures
+			// direct outbound traffic) — kept only as an unused option.
 			Final: "dns-tunnel",
 			Servers: []DNSServer{
 				{
 					Tag:     "dns-tunnel",
 					Address: "https://1.1.1.1/dns-query",
+					Detour:  "proxy",
 				},
 				{
 					Tag:     "dns-direct",

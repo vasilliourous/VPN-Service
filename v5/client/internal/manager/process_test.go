@@ -103,6 +103,9 @@ func TestGeneratedConfig(t *testing.T) {
 	if !strings.Contains(s, `"final": "dns-tunnel"`) {
 		t.Errorf("dns.final must be dns-tunnel, got:\n%s", s)
 	}
+	if !strings.Contains(s, `"detour": "proxy"`) {
+		t.Errorf("dns-tunnel must have an explicit detour to the proxy outbound:\n%s", s)
+	}
 	if strings.Contains(s, `"strict_route": true`) {
 		t.Errorf("strict_route must not be enabled:\n%s", s)
 	}

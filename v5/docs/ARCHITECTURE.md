@@ -172,7 +172,7 @@ The generated config looks like this:
   "log": { "level": "warn" },
   "dns": { "final": "dns-tunnel",
            "servers": [
-             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" },
+             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query", "detour": "proxy" },
              { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
            ] },
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",

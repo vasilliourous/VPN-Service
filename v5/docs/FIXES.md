@@ -404,6 +404,20 @@ along; DNS was always looping.
 build, lint, vet, manager tests green; docs (ARCHITECTURE.md, CLIENT-GUIDE.md)
 updated to match.
 
+### Follow-up 3 — DNS query loopback: explicit detour required (2026-08-01)
+
+With `final: dns-tunnel` (no detour), sing-box flooded
+`DNS query loopback in transport[dns-tunnel]` for every query. Verified in
+`sing-box v1.10.0 route/router.go`: a DNS server with an **empty detour**
+dials via `dialer.NewRouter(router)` — the transport's own connection is
+re-routed by the route rules back into the DNS handler, and sing-dns's
+context-based loop detection fires (`sing-dns client.go`).
+
+**Fix:** `dns-tunnel` now has an explicit **`detour: "proxy"`** — the DoH dial
+goes straight through the Shadowsocks outbound (`dialer.NewDetour`), bypassing
+the router entirely. `TestGeneratedConfig` asserts the detour; all tests,
+Windows build, lint, vet green.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

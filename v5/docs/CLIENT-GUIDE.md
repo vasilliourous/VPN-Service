@@ -303,7 +303,7 @@ The manager generates a config like this (`generateConfig` in
   "dns": {
     "final": "dns-tunnel",
     "servers": [
-      { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" },
+      { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query", "detour": "proxy" },
       { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
     ]
   },
