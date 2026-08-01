@@ -115,4 +115,7 @@ func TestGeneratedConfig(t *testing.T) {
 	if !strings.Contains(s, `"auto_detect_interface": true`) {
 		t.Errorf("auto_detect_interface must be enabled:\n%s", s)
 	}
+	if !strings.Contains(s, `"sniff": true`) {
+		t.Errorf("tun inbound must have sniff enabled (required for the protocol:dns rule):\n%s", s)
+	}
 }

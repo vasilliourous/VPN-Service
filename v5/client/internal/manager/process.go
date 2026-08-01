@@ -634,6 +634,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 				MTU:           1500,
 				AutoRoute:     true,
 				StrictRoute:   false,
+				Sniff:         true,
 			},
 		},
 		Outbounds: []Outbound{
@@ -715,6 +716,7 @@ type Inbound struct {
 	MTU           int      `json:"mtu,omitempty"`
 	AutoRoute     bool     `json:"auto_route,omitempty"`
 	StrictRoute   bool     `json:"strict_route,omitempty"`
+	Sniff         bool     `json:"sniff,omitempty"`
 }
 
 type Outbound struct {

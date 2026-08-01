@@ -176,7 +176,8 @@ The generated config looks like this:
              { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
            ] },
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
-                 "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": true }],
+                 "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": false,
+                 "sniff": true }],
   "outbounds": [
     { "type": "shadowsocks", "tag": "proxy",
       "server": "networkingguides.duckdns.org", "server_port": 8443,

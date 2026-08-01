@@ -418,6 +418,27 @@ goes straight through the Shadowsocks outbound (`dialer.NewDetour`), bypassing
 the router entirely. `TestGeneratedConfig` asserts the detour; all tests,
 Windows build, lint, vet green.
 
+### Follow-up 4 — THE missing piece: `sniff: true` on the TUN inbound (2026-08-01)
+
+Verified empirically on the VPS (root, real TUN): without sniffing, DNS
+queries were routed to the **shadowsocks outbound** (`outbound connection to
+10.0.0.2:53` via proxy) — the `{"protocol": "dns", "outbound": "dns-out"}`
+rule NEVER matched. Source: `route/router.go:856` gates ALL sniffing (which
+sets `metadata.Protocol` for rule matching) behind
+`metadata.InboundOptions.SniffEnabled` — i.e. the TUN inbound's `"sniff": true`
+option. Every official sing-box TUN example includes it; our config never did
+— this single omission explains every DNS failure variant (direct detour loop,
+transport loopback, and the plain "no DNS at all" behavior).
+
+With `"sniff": true` the VPS test confirmed the full interception pipeline:
+`sniﬀed packet protocol: dns` → `match protocol=dns => dns-out` →
+`dns: exchange example.com`. (The ss leg could not be validated on the VPS
+itself — a TUN client on the ss server host captures the server's own egress —
+but the tunnel was already proven working from remote hosts.)
+
+**Fix:** TUN inbound now sets `"sniff": true`. `TestGeneratedConfig` asserts
+it. Windows build, lint, vet, tests green; docs updated.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

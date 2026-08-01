@@ -313,7 +313,8 @@ The manager generates a config like this (`generateConfig` in
       "address": ["10.0.0.1/30"],
       "mtu": 1500,
       "auto_route": true,
-      "strict_route": true }
+      "strict_route": false,
+      "sniff": true }
   ],
   "outbounds": [
     { "type": "shadowsocks", "tag": "proxy",
