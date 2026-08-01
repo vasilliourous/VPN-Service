@@ -657,6 +657,40 @@ QUIC retry loops. (This was also observed earlier the same day in
 
 ---
 
+### Follow-up 10 — Pre-flight guard: refuse a second sing-box on the same TUN (2026-08-01)
+
+**Symptom:** after the UoT fix, the client still misbehaved ("a variety of
+issues"). The log showed TWO engine startups in one session:
+
+```
+23:55:42 sing-box log level: debug          ← leftover sing-box.exe (orphaned
+23:55:45 sing-box log level: debug          ← fresh Connect spawn
+         inbound/tun[tun-in]: started at myvpn0   ← ×2 — two instances, one TUN
+```
+
+**Root cause:** orphaned `sing-box.exe` processes from earlier broken builds
+(and/or other VPN apps like Hiddify) survive on Windows. A fresh Connect then
+spawns a second engine; both instances share the `myvpn0` wintun adapter —
+packets are delivered to both, routes fight, and failures look random.
+
+**Fix (`v5/client/internal/manager/`):**
+- New `foreignSingBoxRunning()` (Windows: `tasklist /FI "IMAGENAME eq sing-box.exe"`;
+  Unix: `pgrep -x sing-box`) — true when an untracked sing-box process exists.
+- `Start()` now refuses with a clear message ("another sing-box process is
+  already running — close it (Task Manager) and retry") instead of stacking a
+  second engine. Only runs on user-initiated Connect (never in the health-loop
+  restart path, and never when our own process is tracked and alive).
+- Note: this also blocks Connect while Hiddify's sing-box core is running —
+  intentional (two TUN VPNs at once is invalid), the message says so.
+
+**One-time user cleanup (still required for machines with orphaned engines):**
+1. Task Manager → end ALL `sing-box.exe`.
+2. `netsh interface show interface` → if `myvpn0` exists:
+   `netsh interface delete interface myvpn0` (admin).
+3. Reboot (clears stale routes/WFP filters).
+
+---
+
 ## VPS TESTING — ISSUES FOUND & FIXED (2026-07-26)
 
 These were discovered during real deployment to a Voyager VPS (Ubuntu 22.04)

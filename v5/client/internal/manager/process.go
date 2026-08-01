@@ -239,6 +239,15 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("tunnel is already running")
 	}
 
+	// Refuse to stack a second engine on the same TUN: a leftover sing-box
+	// (orphaned from a previous session/crash, or another VPN app) plus a
+	// fresh spawn means TWO instances sharing myvpn0 — packets go to both,
+	// routes fight, and the user sees random failures (observed 2026-08-01:
+	// duplicate "started at myvpn0" in one log, "a variety of issues").
+	if foreignSingBoxRunning() {
+		return fmt.Errorf("another sing-box process is already running (leftover from a previous session or another app) — close it (Task Manager) and retry")
+	}
+
 	// Generate the sing-box configuration
 	configJSON, err := generateConfig(cfg)
 	if err != nil {
