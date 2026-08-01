@@ -604,14 +604,20 @@ func generateConfig(cfg Config) ([]byte, error) {
 			Level: logLevel,
 		},
 		DNS: DNSConfig{
-			// DNS goes THROUGH the tunnel. dns-tunnel MUST have an explicit
-			// detour: "proxy" — with an empty detour, sing-box dials the DNS
-			// transport through the ROUTER, which re-applies the route rules
-			// to its own connection and loops it back into the DNS handler
-			// ("DNS query loopback in transport[dns-tunnel]"). The direct
-			// detour on dns-direct has the same problem (auto_route captures
-			// direct outbound traffic) — kept only as an unused option.
+			// DNS goes THROUGH the tunnel (final = dns-tunnel, detour = proxy).
+			// Two mandatory safeguards against DNS loops (see FIXES.md):
+			//  1. The rule below sends ALL resolution initiated by sing-box's own
+			//     outbounds (e.g. resolving the Shadowsocks SERVER domain
+			//     networkingguides.duckdns.org) DIRECT — without it, that
+			//     resolution re-enters dns-tunnel and sing-dns reports
+			//     "DNS query loopback in transport[dns-tunnel]" for every
+			//     query (sing-box issue #2207).
+			//  2. dns-tunnel MUST have an explicit detour (empty detour dials
+			//     through the router and loops back into the DNS handler).
 			Final: "dns-tunnel",
+			Rules: []DNSRule{
+				{Outbound: []string{"any"}, Server: "dns-direct"},
+			},
 			Servers: []DNSServer{
 				{
 					Tag:     "dns-tunnel",
@@ -664,6 +670,21 @@ func generateConfig(cfg Config) ([]byte, error) {
 		},
 	}
 
+	// Exclude the VPN server itself from the tunnel: if auto_route ever
+	// captures sing-box's own Shadowsocks connection, this rule sends it
+	// DIRECT (out via the physical NIC) instead of looping it back into the
+	// proxy. Best-effort — resolution happens before the TUN exists.
+	if serverIPs, err := net.LookupIP(cfg.Server); err == nil {
+		for _, ip := range serverIPs {
+			if ip4 := ip.To4(); ip4 != nil {
+				config.Route.Rules = append([]RouteRule{
+					{Outbound: "direct", IPCIDR: []string{ip4.String() + "/32"}},
+				}, config.Route.Rules...)
+				break
+			}
+		}
+	}
+
 	// Add UDP over TCP for Strike or if UDP relay is enabled
 	if cfg.UDPRelay {
 		config.Outbounds[0].UDPOverTCP = &UDPOverTCPConfig{
@@ -697,9 +718,10 @@ type DNSConfig struct {
 }
 
 type DNSRule struct {
-	Rule   string `json:"rule"`
-	Action string `json:"action"`
-	Server string `json:"server,omitempty"`
+	Rule     string   `json:"rule,omitempty"`
+	Action   string   `json:"action,omitempty"`
+	Server   string   `json:"server,omitempty"`
+	Outbound []string `json:"outbound,omitempty"`
 }
 
 type DNSServer struct {
@@ -741,7 +763,8 @@ type RouteConfig struct {
 }
 
 type RouteRule struct {
-	Outbound string `json:"outbound"`
-	Protocol string `json:"protocol,omitempty"`
-	Network  string `json:"network,omitempty"`
+	Outbound string   `json:"outbound"`
+	Protocol string   `json:"protocol,omitempty"`
+	Network  string   `json:"network,omitempty"`
+	IPCIDR   []string `json:"ip_cidr,omitempty"`
 }

@@ -439,6 +439,31 @@ but the tunnel was already proven working from remote hosts.)
 **Fix:** TUN inbound now sets `"sniff": true`. `TestGeneratedConfig` asserts
 it. Windows build, lint, vet, tests green; docs updated.
 
+### Follow-up 5 — server-domain resolution loop (sing-box issue #2207) (2026-08-01)
+
+Even with sniff + detour, every query failed instantly with
+`DNS query loopback in transport[dns-tunnel]`. Root cause (confirmed via
+sing-box issue #2207, closed as fixed upstream but still present in v1.10):
+the Shadowsocks outbound's server is the **domain**
+`networkingguides.duckdns.org` — when the DNS transport dials the DoH via the
+proxy, the proxy must resolve that domain, and the resolution re-enters the
+DNS system → the transport's own context (tagged `dns-tunnel`) hits the loop
+detection in sing-dns.
+
+**Fix (the reporter-confirmed workaround):** a DNS rule sending ALL
+sing-box-initiated (outbound) resolution DIRECT:
+`{"outbound": ["any"], "server": "dns-direct"}`. Plus a route rule excluding
+the resolved VPN-server IP from the tunnel (`ip_cidr: <server>/32` → direct;
+resolved at config generation, before the TUN exists) so a captured ss
+connection egresses physically instead of looping.
+
+**VPS validation (root, real TUN, exact config):** `sniffed protocol: dns` →
+`match => dns-out` → exchange; DoH routed via the ss outbound; the server
+domain resolved DIRECT (`lookup succeed: 114.23.136.59`, NOERROR) — **zero
+loopback errors**. (The ss leg itself can't be validated on the VPS — the TUN
+on the ss-server host captures the server's own egress — but the tunnel is
+proven working from remote hosts.)
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

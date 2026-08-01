@@ -118,4 +118,10 @@ func TestGeneratedConfig(t *testing.T) {
 	if !strings.Contains(s, `"sniff": true`) {
 		t.Errorf("tun inbound must have sniff enabled (required for the protocol:dns rule):\n%s", s)
 	}
+	if !strings.Contains(s, `"server": "dns-direct"`) || !strings.Contains(s, `"any"`) {
+		t.Errorf("DNS rule outbound:any -> dns-direct must be present (prevents the server-domain resolution loop, sing-box #2207):\n%s", s)
+	}
+	if !strings.Contains(s, `"ip_cidr"`) {
+		t.Errorf("route rule excluding the VPN server IP (direct) must be present:\n%s", s)
+	}
 }
