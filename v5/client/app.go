@@ -12,8 +12,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"myvpn/internal/activation"
@@ -485,14 +487,16 @@ Version:     %s
 OS:          %s/%s
 Go:          %s
 
-Activated:   %v
-Connected:   %v
-Tier:        %s
-Engine:      %s
+	Activated:   %v
+	Connected:   %v
+	Tier:        %s
+	Engine:      %s
 
-Heartbeat OK:     %d
-Heartbeat Fail:   %d
-Grace Remaining:  %d days
+	Heartbeat OK:     %d
+	Heartbeat Fail:   %d
+	Grace Remaining:  %d days
+
+Server:       %s
 
 Reported: %s
 `,
@@ -506,10 +510,28 @@ Reported: %s
 		state.LastHeartbeatOK,
 		a.heartbeatFailures(),
 		a.graceDays(state.LastHeartbeatOK),
+		a.serverReachability(),
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
 	return report
+}
+
+// serverReachability quickly tests TCP connectivity to the configured VPN
+// server. Used to distinguish network blocks from tunnel-state problems:
+// "reachable" while the tunnel still times out ⇒ stale TUN/routes on the host.
+func (a *App) serverReachability() string {
+	state := a.store.GetData()
+	if state.ServerConfig == nil {
+		return "no server config"
+	}
+	addr := net.JoinHostPort(state.ServerConfig.Server, strconv.Itoa(state.ServerConfig.ServerPort))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return fmt.Sprintf("%s UNREACHABLE (%v)", addr, err)
+	}
+	_ = conn.Close()
+	return fmt.Sprintf("%s reachable", addr)
 }
 
 // ──────────────────────────────────────────

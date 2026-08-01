@@ -336,6 +336,42 @@ Both pass. Windows build, golangci-lint, vet all green.
 **Note for users of the previous build:** after closing the hung app, kill any
 leftover `sing-box.exe` in Task Manager before running the new build.
 
+---
+
+## WINDOWS RUNTIME — CONNECTS BUT NO TRAFFIC (dial i/o timeout) (2026-08-01)
+
+**Symptom:** with the fixed build, the UI reports Connected, but
+whatismyip.com still shows the real IP and sing-box logs repeated
+`inbound/tun[tun-in]: dial tcp 114.23.136.59:8445: i/o timeout` (5 s dial
+timeouts every ~60-130 s). The heartbeat (direct, not via TUN) still works.
+
+**Server verified healthy from an outside host:** all three ss ports open;
+strike password authenticates (HTTP 200 through the tunnel in ~60 ms).
+So the server is NOT the problem.
+
+**Most likely cause — stale host state, not config:** the same sing-box config
+reached the server in an earlier session (RST after connect = connection
+established). The sessions in between (old builds with the broken shutdown)
+**orphaned sing-box.exe processes and left the `myvpn0` TUN adapter with
+stale routes/WFP filters**; a fresh sing-box then routes its own dial into the
+dead TUN state → timeout. (The config already sets
+`route.auto_detect_interface: true`, which binds the outbound to the physical
+interface — so a clean host should not loop.)
+
+**Diagnostics added (`app.go`):** the report now includes
+`Server: <addr> reachable|UNREACHABLE (...)` — a 3 s TCP dial to the configured
+server from the app (before/without the tunnel). This distinguishes:
+- `UNREACHABLE` ⇒ the network blocks the ss port (e.g. different WiFi);
+- `reachable` while the tunnel still times out ⇒ stale TUN/routes on the host
+  (cleanup below).
+
+**User-side cleanup (one-time, after the old builds):**
+1. Close MyVPN; in Task Manager end ALL `sing-box.exe` processes.
+2. As admin: `netsh interface show interface` → find `myvpn0` →
+   `netsh interface delete interface myvpn0` (if present).
+3. Reboot (clears routes + WFP filters), then Connect again.
+4. Check Diagnostics: `Server: … reachable` + `Engine: running`.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the
