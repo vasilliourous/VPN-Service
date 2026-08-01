@@ -3,8 +3,10 @@
 package main
 
 import (
+	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // defaultInterface returns the physical interface holding the default IPv4
@@ -12,7 +14,10 @@ import (
 // auto_detect_interface usually suffices; the explicit bind is a Windows
 // fix (TUN capture), so "" is an acceptable fallback here.
 func defaultInterface() string {
-	out, err := exec.Command("ip", "route", "show", "default").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "ip", "route", "show", "default").Output()
 	if err != nil {
 		return ""
 	}
