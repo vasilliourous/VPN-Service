@@ -464,6 +464,25 @@ loopback errors**. (The ss leg itself can't be validated on the VPS — the TUN
 on the ss-server host captures the server's own egress — but the tunnel is
 proven working from remote hosts.)
 
+### Follow-up 6 — bind_interface: force the ss dial onto the physical NIC (2026-08-01)
+
+With the DNS pipeline fixed, every exchange still timed out at 10 s — the DoH
+through the tunnel never completes on the user's Windows machine, while the
+same path works from remote hosts in ~350 ms (verified: DoH query through the
+tunnel returns HTTP 200 + a valid DNS response) and Hiddify (no TUN) works on
+the same machine. Conclusion: with the TUN up, sing-box's OWN Shadowsocks
+dial is still being captured by auto_route on Windows — `auto_detect_interface`
+is not sufficient there.
+
+**Fix:** the proxy outbound now gets an explicit **`bind_interface`** — the
+physical NIC is detected at Connect time, BEFORE the TUN exists
+(`interface_windows.go`: hidden PowerShell `Get-NetRoute` for the 0.0.0.0/0
+alias; `interface_unix.go`: `ip route show default`). A socket bound to the
+physical interface cannot be captured by the TUN, so the ss connection always
+egresses directly. `app.go` Connect passes the detected interface into
+`manager.Config.BindInterface`; `generateConfig` emits
+`"bind_interface"` on the shadowsocks outbound.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

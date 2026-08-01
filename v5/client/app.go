@@ -319,6 +319,10 @@ func (a *App) Connect() OpResult {
 		TierName:   state.Tier,
 		UDPRelay:   state.UDPRelay,
 		HubURL:     a.hubURL,
+		// Bind the Shadowsocks dial to the physical NIC (detected BEFORE the
+		// TUN exists) so auto_route cannot capture sing-box's own server
+		// connection on Windows — the cause of dial timeouts with the TUN up.
+		BindInterface: defaultInterface(),
 	}
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)

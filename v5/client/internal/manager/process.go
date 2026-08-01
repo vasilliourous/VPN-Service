@@ -173,13 +173,14 @@ type Manager struct {
 
 // Config holds the parameters needed to start the tunnel.
 type Config struct {
-	Server     string
-	ServerPort int
-	Password   string
-	Method     string
-	TierName   string
-	UDPRelay   bool
-	HubURL     string
+	Server        string
+	ServerPort    int
+	Password      string
+	Method        string
+	TierName      string
+	UDPRelay      bool
+	HubURL        string
+	BindInterface string // physical NIC for the proxy dial (Windows TUN capture fix)
 }
 
 // Validate checks that the config is valid.
@@ -645,12 +646,13 @@ func generateConfig(cfg Config) ([]byte, error) {
 		},
 		Outbounds: []Outbound{
 			{
-				Type:       "shadowsocks",
-				Tag:        "proxy",
-				Server:     cfg.Server,
-				ServerPort: cfg.ServerPort,
-				Method:     cfg.Method,
-				Password:   cfg.Password,
+				Type:          "shadowsocks",
+				Tag:           "proxy",
+				Server:        cfg.Server,
+				ServerPort:    cfg.ServerPort,
+				Method:        cfg.Method,
+				Password:      cfg.Password,
+				BindInterface: cfg.BindInterface,
 			},
 			{
 				Type: "direct",
@@ -742,13 +744,14 @@ type Inbound struct {
 }
 
 type Outbound struct {
-	Type       string            `json:"type"`
-	Tag        string            `json:"tag,omitempty"`
-	Server     string            `json:"server,omitempty"`
-	ServerPort int               `json:"server_port,omitempty"`
-	Method     string            `json:"method,omitempty"`
-	Password   string            `json:"password,omitempty"`
-	UDPOverTCP *UDPOverTCPConfig `json:"udp_over_tcp,omitempty"`
+	Type          string            `json:"type"`
+	Tag           string            `json:"tag,omitempty"`
+	Server        string            `json:"server,omitempty"`
+	ServerPort    int               `json:"server_port,omitempty"`
+	Method        string            `json:"method,omitempty"`
+	Password      string            `json:"password,omitempty"`
+	BindInterface string            `json:"bind_interface,omitempty"`
+	UDPOverTCP    *UDPOverTCPConfig `json:"udp_over_tcp,omitempty"`
 }
 
 type UDPOverTCPConfig struct {
