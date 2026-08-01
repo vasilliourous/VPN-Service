@@ -604,16 +604,21 @@ func generateConfig(cfg Config) ([]byte, error) {
 			Level: logLevel,
 		},
 		DNS: DNSConfig{
-			Final: "dns-direct",
+			// DNS goes THROUGH the tunnel (final = dns-tunnel, which uses the
+			// default proxy outbound). It must NOT use the "direct" detour:
+			// direct outbound traffic is routed back into the TUN by
+			// auto_route, creating a DNS loop ("ping 1.1.1.1 works, but
+			// domains don't resolve"). dns-direct is kept only as an option.
+			Final: "dns-tunnel",
 			Servers: []DNSServer{
+				{
+					Tag:     "dns-tunnel",
+					Address: "https://1.1.1.1/dns-query",
+				},
 				{
 					Tag:     "dns-direct",
 					Address: "https://1.1.1.1/dns-query",
 					Detour:  "direct",
-				},
-				{
-					Tag:     "dns-tunnel",
-					Address: "https://1.1.1.1/dns-query",
 				},
 			},
 		},

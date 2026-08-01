@@ -389,6 +389,21 @@ tunnel still fails after the cleanup+reboot, set `MYVPN_DEBUG=1` before
 launching (switches sing-box to debug logging) and send the log — it shows the
 dial's interface binding and route decisions.
 
+### Follow-up 2 — DNS loop: final must be dns-tunnel (2026-08-01)
+
+After disabling strict_route the tunnel egressed (ping 1.1.1.1 worked) but
+**domains never resolved**. Root cause: `generateConfig` set
+`dns.final = "dns-direct"`, whose server had `detour: "direct"` — the direct
+outbound's DoH traffic is routed back into the TUN by auto_route → **DNS loop**
+("dial tcp: lookup …: i/o timeout" while the tunnel itself was fine). This
+also explains "the app has never worked": the proxy outbound was fine all
+along; DNS was always looping.
+
+**Fix:** `dns.final` is now `"dns-tunnel"` (DoH via the default proxy outbound
+→ through the tunnel); `dns-direct` is kept but unused. Verified: Windows
+build, lint, vet, manager tests green; docs (ARCHITECTURE.md, CLIENT-GUIDE.md)
+updated to match.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

@@ -301,10 +301,10 @@ The manager generates a config like this (`generateConfig` in
 {
   "log": { "level": "warn" },
   "dns": {
-    "final": "dns-direct",
+    "final": "dns-tunnel",
     "servers": [
-      { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
-      { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" }
+      { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" },
+      { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
     ]
   },
   "inbounds": [

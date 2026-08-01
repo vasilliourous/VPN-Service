@@ -86,3 +86,30 @@ func TestImmediateExit(t *testing.T) {
 		t.Fatalf("error %q does not surface sing-box stderr", err.Error())
 	}
 }
+
+// TestGeneratedConfig locks in the hard-won config decisions:
+//   - DNS must go through the tunnel (final = dns-tunnel) — a "direct" detour
+//     loops back into the TUN and kills DNS resolution;
+//   - strict_route must be OFF — its WFP filters block sing-box's own
+//     outbound on some Windows machines and kill all connectivity.
+func TestGeneratedConfig(t *testing.T) {
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+	data, err := generateConfig(cfg)
+	if err != nil {
+		t.Fatalf("generateConfig: %v", err)
+	}
+	s := string(data)
+
+	if !strings.Contains(s, `"final": "dns-tunnel"`) {
+		t.Errorf("dns.final must be dns-tunnel, got:\n%s", s)
+	}
+	if strings.Contains(s, `"strict_route": true`) {
+		t.Errorf("strict_route must not be enabled:\n%s", s)
+	}
+	if !strings.Contains(s, `"auto_route": true`) {
+		t.Errorf("auto_route must be enabled:\n%s", s)
+	}
+	if !strings.Contains(s, `"auto_detect_interface": true`) {
+		t.Errorf("auto_detect_interface must be enabled:\n%s", s)
+	}
+}

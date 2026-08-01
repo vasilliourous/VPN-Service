@@ -170,10 +170,10 @@ The generated config looks like this:
 ```json
 {
   "log": { "level": "warn" },
-  "dns": { "final": "dns-direct",
+  "dns": { "final": "dns-tunnel",
            "servers": [
-             { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
-             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" }
+             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query" },
+             { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
            ] },
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
                  "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": true }],
