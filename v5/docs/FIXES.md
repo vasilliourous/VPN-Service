@@ -372,6 +372,23 @@ server from the app (before/without the tunnel). This distinguishes:
 3. Reboot (clears routes + WFP filters), then Connect again.
 4. Check Diagnostics: `Server: … reachable` + `Engine: running`.
 
+### Follow-up — strict_route disabled (2026-08-01)
+
+New diagnostics (VPN ON) showed the app's OWN dial failing at
+`lookup networkingguides.duckdns.org: i/o timeout` — i.e. with the TUN up,
+**DNS and everything else through the tunnel dies**, while direct Shadowsocks
+(Hiddify, no TUN) works and the server is verified healthy. The prime suspect
+was `strict_route: true` in the generated sing-box config: on Windows it
+installs WFP filters that "strictly block all connections not from the TUN" —
+a misfiring filter also blocks sing-box's own outbound and DNS, which matches
+"connects but cuts out the internet" exactly.
+
+**Fix:** `generateConfig` now sets `strict_route: false` (omitted from JSON;
+`auto_route` + `auto_detect_interface` remain — still a full tunnel). If the
+tunnel still fails after the cleanup+reboot, set `MYVPN_DEBUG=1` before
+launching (switches sing-box to debug logging) and send the log — it shows the
+dial's interface binding and route decisions.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

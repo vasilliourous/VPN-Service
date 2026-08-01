@@ -588,6 +588,11 @@ func (m *Manager) State() string {
 }
 
 // generateConfig creates the sing-box JSON configuration.
+// NOTE: strict_route is DISABLED — on Windows it installs WFP filters that
+// "strictly block all connections not from the TUN", which on some machines
+// (incl. the school laptops this app targets) also blocks sing-box's own
+// outbound + DNS and kills all connectivity. auto_route alone still routes
+// all traffic through the TUN (see FIXES.md).
 func generateConfig(cfg Config) ([]byte, error) {
 	logLevel := "warn"
 	if os.Getenv("MYVPN_DEBUG") != "" {
@@ -620,7 +625,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 				Address:       []string{"10.0.0.1/30"},
 				MTU:           1500,
 				AutoRoute:     true,
-				StrictRoute:   true,
+				StrictRoute:   false,
 			},
 		},
 		Outbounds: []Outbound{
