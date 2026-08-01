@@ -172,8 +172,8 @@ The generated config looks like this:
   "log": { "level": "warn" },
   "dns": { "final": "dns-tunnel",
            "servers": [
-             { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query", "detour": "proxy" },
-             { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
+             { "type": "https", "tag": "dns-tunnel", "server": "1.1.1.1", "server_port": 443, "detour": "proxy" },
+             { "type": "https", "tag": "dns-direct", "server": "1.1.1.1", "server_port": 443, "detour": "direct" }
            ] },
   "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
                  "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": false,
@@ -183,9 +183,8 @@ The generated config looks like this:
       "server": "networkingguides.duckdns.org", "server_port": 8443,
       "method": "aes-256-gcm", "password": "..." },
     { "type": "direct", "tag": "direct" },
-    { "type": "dns", "tag": "dns-out" }
   ],
-  "route": { "rules": [{ "protocol": "dns", "outbound": "dns-out" }],
+  "route": { "rules": [{ "protocol": "dns", "action": { "type": "dns" } }],
              "auto_detect_interface": true, "final": "proxy" }
 }
 ```

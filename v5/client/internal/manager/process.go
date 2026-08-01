@@ -606,13 +606,13 @@ func generateConfig(cfg Config) ([]byte, error) {
 		},
 		DNS: DNSConfig{
 			// DNS goes THROUGH the tunnel (final = dns-tunnel, detour = proxy).
-			// Two mandatory safeguards against DNS loops (see FIXES.md):
-			//  1. The rule below sends ALL resolution initiated by sing-box's own
-			//     outbounds (e.g. resolving the Shadowsocks SERVER domain
+			// sing-box 1.12 DNS server format (type + server + port).
+			// Safeguards against DNS loops (see FIXES.md):
+			//  1. The rule below sends ALL resolution initiated by sing-box's
+			//     own outbounds (e.g. resolving the Shadowsocks SERVER domain
 			//     networkingguides.duckdns.org) DIRECT — without it, that
 			//     resolution re-enters dns-tunnel and sing-dns reports
-			//     "DNS query loopback in transport[dns-tunnel]" for every
-			//     query (sing-box issue #2207).
+			//     "DNS query loopback in transport[dns-tunnel]" (issue #2207).
 			//  2. dns-tunnel MUST have an explicit detour (empty detour dials
 			//     through the router and loops back into the DNS handler).
 			Final: "dns-tunnel",
@@ -621,14 +621,18 @@ func generateConfig(cfg Config) ([]byte, error) {
 			},
 			Servers: []DNSServer{
 				{
-					Tag:     "dns-tunnel",
-					Address: "https://1.1.1.1/dns-query",
-					Detour:  "proxy",
+					Type:       "https",
+					Tag:        "dns-tunnel",
+					Server:     "1.1.1.1",
+					ServerPort: 443,
+					Detour:     "proxy",
 				},
 				{
-					Tag:     "dns-direct",
-					Address: "https://1.1.1.1/dns-query",
-					Detour:  "direct",
+					Type:       "https",
+					Tag:        "dns-direct",
+					Server:     "1.1.1.1",
+					ServerPort: 443,
+					Detour:     "direct",
 				},
 			},
 		},
@@ -658,16 +662,13 @@ func generateConfig(cfg Config) ([]byte, error) {
 				Type: "direct",
 				Tag:  "direct",
 			},
-			{
-				Type: "dns",
-				Tag:  "dns-out",
-			},
 		},
 		Route: RouteConfig{
 			AutoDetectInterface: true,
 			Final:               "proxy",
 			Rules: []RouteRule{
-				{Protocol: "dns", Outbound: "dns-out"},
+				// DNS traffic is handled by the dns rule action (1.11+ format).
+				{Protocol: "dns", Action: &RuleAction{Type: "dns"}},
 			},
 		},
 	}
@@ -680,7 +681,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 		for _, ip := range serverIPs {
 			if ip4 := ip.To4(); ip4 != nil {
 				config.Route.Rules = append([]RouteRule{
-					{Outbound: "direct", IPCIDR: []string{ip4.String() + "/32"}},
+					{IPCIDR: []string{ip4.String() + "/32"}, Action: &RuleAction{Type: "route", Outbound: "direct"}},
 				}, config.Route.Rules...)
 				break
 			}
@@ -727,9 +728,11 @@ type DNSRule struct {
 }
 
 type DNSServer struct {
-	Tag     string `json:"tag"`
-	Address string `json:"address"`
-	Detour  string `json:"detour,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port,omitempty"`
+	Detour     string `json:"detour,omitempty"`
 }
 
 type Inbound struct {
@@ -766,8 +769,13 @@ type RouteConfig struct {
 }
 
 type RouteRule struct {
-	Outbound string   `json:"outbound"`
-	Protocol string   `json:"protocol,omitempty"`
-	Network  string   `json:"network,omitempty"`
-	IPCIDR   []string `json:"ip_cidr,omitempty"`
+	Protocol string      `json:"protocol,omitempty"`
+	Network  string      `json:"network,omitempty"`
+	IPCIDR   []string    `json:"ip_cidr,omitempty"`
+	Action   *RuleAction `json:"action,omitempty"`
+}
+
+type RuleAction struct {
+	Type     string `json:"type"`
+	Outbound string `json:"outbound,omitempty"`
 }

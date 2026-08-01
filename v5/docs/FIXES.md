@@ -483,6 +483,31 @@ egresses directly. `app.go` Connect passes the detected interface into
 `manager.Config.BindInterface`; `generateConfig` emits
 `"bind_interface"` on the shadowsocks outbound.
 
+### Follow-up 7 — sing-box 1.10.0 → 1.12.1: THE fix (2026-08-01)
+
+Despite every config safeguard (sniff, DNS detour, outbound:any rule,
+server-IP rule, bind_interface), the ss connection STILL timed out with the
+TUN up — on both the user's Windows machine AND the Linux VPS. Meanwhile
+**Hiddify (also sing-box + TUN + Shadowsocks) worked on the same machine** —
+its core runs a much newer sing-box.
+
+**Validation on the VPS with sing-box 1.12.1** (root, real TUN, the 1.12
+config format): `curl https://example.com` through the tunnel returned
+**HTTP 200 in 84 ms** — the first end-to-end success ever, even in the
+self-host scenario.
+
+**Changes:**
+- Engine bumped **1.10.0 → 1.12.1** (`.github/workflows/build.yml`,
+  `engines/README.md`). 1.11 added "Improve tun compatibility" (3 fixes);
+  1.12 refactored the DNS servers and route rules.
+- Config rewritten for the 1.12 format: DNS servers use
+  `{"type": "https", "server": "1.1.1.1", "server_port": 443, "detour": ...}`
+  (no more `"address"`), the `dns-out` special outbound is gone (replaced by
+  the route rule action `{"protocol": "dns", "action": {"type": "dns"}}`), and
+  the server-IP exclusion uses `{"action": {"type": "route", "outbound":
+  "direct"}}`.
+- `TestGeneratedConfig` updated and passing; Windows build, lint, vet green.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

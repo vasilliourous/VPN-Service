@@ -213,7 +213,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          SING_VERSION="1.10.0"
+          SING_VERSION="1.12.1"
           case "${{ runner.os }}" in
             Linux)
               curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-linux-amd64.tar.gz"

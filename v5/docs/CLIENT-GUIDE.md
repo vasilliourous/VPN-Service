@@ -303,8 +303,8 @@ The manager generates a config like this (`generateConfig` in
   "dns": {
     "final": "dns-tunnel",
     "servers": [
-      { "tag": "dns-tunnel", "address": "https://1.1.1.1/dns-query", "detour": "proxy" },
-      { "tag": "dns-direct", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
+      { "type": "https", "tag": "dns-tunnel", "server": "1.1.1.1", "server_port": 443, "detour": "proxy" },
+      { "type": "https", "tag": "dns-direct", "server": "1.1.1.1", "server_port": 443, "detour": "direct" }
     ]
   },
   "inbounds": [
@@ -323,10 +323,9 @@ The manager generates a config like this (`generateConfig` in
       "method": "aes-256-gcm",
       "password": "..." },
     { "type": "direct", "tag": "direct" },
-    { "type": "dns", "tag": "dns-out" }
   ],
   "route": {
-    "rules": [ { "protocol": "dns", "outbound": "dns-out" } ],
+    "rules": [ { "protocol": "dns", "action": { "type": "dns" } } ],
     "auto_detect_interface": true,
     "final": "proxy"
   }

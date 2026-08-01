@@ -132,7 +132,7 @@ set inline per job:
 | Value | Where |
 |-------|-------|
 | `VERSION` | Derived from the tag (`github.ref_name`), falling back to `"dev"`; passed via `-X main.version` |
-| `SING_BOX_VERSION` | Hardcoded as `1.10.0` in the "Download sing-box engine" step |
+| `SING_BOX_VERSION` | Hardcoded as `1.12.1` in the "Download sing-box engine" step |
 | `CGO_ENABLED` | `1` for Linux/macOS (Wails WebView), `0` for Windows (WebView2 COM, pure Go) |
 
 ---

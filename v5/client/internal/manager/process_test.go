@@ -93,7 +93,7 @@ func TestImmediateExit(t *testing.T) {
 //   - strict_route must be OFF — its WFP filters block sing-box's own
 //     outbound on some Windows machines and kill all connectivity.
 func TestGeneratedConfig(t *testing.T) {
-	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm", BindInterface: "eth0"}
 	data, err := generateConfig(cfg)
 	if err != nil {
 		t.Fatalf("generateConfig: %v", err)
@@ -120,6 +120,12 @@ func TestGeneratedConfig(t *testing.T) {
 	}
 	if !strings.Contains(s, `"server": "dns-direct"`) || !strings.Contains(s, `"any"`) {
 		t.Errorf("DNS rule outbound:any -> dns-direct must be present (prevents the server-domain resolution loop, sing-box #2207):\n%s", s)
+	}
+	if !strings.Contains(s, `"bind_interface": "eth0"`) {
+		t.Errorf("proxy outbound must carry bind_interface:\n%s", s)
+	}
+	if !strings.Contains(s, `"action"`) {
+		t.Errorf("route rules must use rule actions (sing-box 1.11+ format):\n%s", s)
 	}
 	if !strings.Contains(s, `"ip_cidr"`) {
 		t.Errorf("route rule excluding the VPN server IP (direct) must be present:\n%s", s)
