@@ -594,10 +594,18 @@ func (m *Manager) State() string {
 // outbound + DNS and kills all connectivity. auto_route alone still routes
 // all traffic through the TUN (see FIXES.md).
 func generateConfig(cfg Config) ([]byte, error) {
-	logLevel := "warn"
-	if os.Getenv("MYVPN_DEBUG") != "" {
-		logLevel = "debug"
+	// Debug is the DEFAULT level while the tunnel data path is under active
+	// investigation (2026-08-01): with it, myvpn.log shows sing-box's dial
+	// lines (target IP/port, error) which are required to diagnose
+	// "connects but no internet". Override with MYVPN_LOG_LEVEL=warn or
+	// MYVPN_DEBUG=0 for quieter logs in production builds.
+	logLevel := "debug"
+	if lvl := os.Getenv("MYVPN_LOG_LEVEL"); lvl != "" {
+		logLevel = lvl
+	} else if os.Getenv("MYVPN_DEBUG") == "0" {
+		logLevel = "warn"
 	}
+	log.Printf("sing-box log level: %s", logLevel)
 
 	config := SingBoxConfig{
 		Log: LogConfig{
