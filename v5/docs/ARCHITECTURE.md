@@ -53,8 +53,8 @@
 │  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
 │  │  Caddy   │  │PocketBase│  │  ssserver × 3        │  │
 │  │  TLS +   │  │ SQLite   │  │  Eco/Stealth/Strike   │  │
-│  │  rate    │  │ JS hooks │  │  BBR/Brutal/BBR       │  │
-│  │  limit   │  │          │  │  5/48/200 Mbps        │  │
+│  │  rate    │  │ JS hooks │  │  BBR/BBR/BBR          │  │
+│  │  limit   │  │          │  │  5/100/200 Mbps       │  │
 │  └──────────┘  └──────────┘  └──────────────────────┘  │
 └──────────────────────────────────────────────────────┘
 ```
@@ -434,7 +434,7 @@ admin rights. sing-box creates TUN interfaces directly.
 | **Only 2 binaries** (myvpn + sing-box) | Less breakage surface area. No helper, no tun2socks, no sslocal. |
 | **No TLS in the tunnel** | JA3 fingerprinting is the #1 detection method. Shadowsocks AEAD has no TLS fingerprint. |
 | **No UDP in tunnel** | N4L drops all UDP. TCP only (except Strike's UDP-over-TCP wrapper). |
-| **Server-enforced caps** | Client can't bypass its tier cap. tc and Brutal rate targets are on the VPS. |
+| **Server-enforced caps** | Client can't bypass its tier cap. tc caps (5/100/200 Mbps) are on the VPS. |
 | **Permanent device binding** | One code = one device forever. No deactivation. Admin can suspend (not destroy) binding. |
 | **Crash-safe updates** | Two-phase sentinel with auto-revert. No update signing keys needed. |
 | **Grace period is client-enforced** | Client tracks heartbeat timestamps. 7 days of silence → grace warning shown in UI. |

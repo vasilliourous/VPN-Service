@@ -2,8 +2,9 @@
 # Module 04: Traffic Shaping (tc)
 # Applies bandwidth caps using tc HTB qdisc:
 #   - Eco (port 8443): 5 Mbps
+#   - Stealth (port 8444): 100 Mbps
 #   - Strike (port 8445): 200 Mbps
-# Stealth has no tc cap — Brutal CC manages its own rate.
+# All tiers use BBR — the caps are enforced purely with tc.
 #
 # Uses a dedicated helper script for systemd oneshot services
 # to avoid shell escaping bugs in ExecStart.
@@ -129,17 +130,20 @@ write_tc_helper
 
 # ── Apply to live interface ──
 log "Applying tc rules to ${IFACE}..."
-# Apply Eco first, then Strike (order doesn't matter — different classids)
+# Apply all three tiers (order doesn't matter — different classids)
 apply_tc_now 8443 "1:10" "5mbit"
+apply_tc_now 8444 "1:20" "100mbit"
 apply_tc_now 8445 "1:30" "200mbit"
 
 # ── Create systemd services for reboot persistence ──
-create_tc_service "eco"    "1:10" "5mbit"   8443 "shadowsocks-eco.service"
-create_tc_service "strike" "1:30" "200mbit" 8445 "shadowsocks-strike.service"
+create_tc_service "eco"     "1:10" "5mbit"   8443 "shadowsocks-eco.service"
+create_tc_service "stealth" "1:20" "100mbit" 8444 "shadowsocks-stealth.service"
+create_tc_service "strike"  "1:30" "200mbit" 8445 "shadowsocks-strike.service"
 
 # ── Enable services ──
 systemctl daemon-reload
 systemctl enable tc-eco-cap.service 2>/dev/null || warn "Could not enable tc-eco-cap.service"
+systemctl enable tc-stealth-cap.service 2>/dev/null || warn "Could not enable tc-stealth-cap.service"
 systemctl enable tc-strike-cap.service 2>/dev/null || warn "Could not enable tc-strike-cap.service"
 
 # ── Verify ──
@@ -147,7 +151,7 @@ log "Verifying tc configuration..."
 tc -s class show dev "$IFACE" 2>/dev/null | head -20 || warn "No tc classes (normal for first boot without traffic)"
 
 # Verify specific filters
-for port in 8443 8445; do
+for port in 8443 8444 8445; do
     if tc filter show dev "$IFACE" parent 1: 2>/dev/null | grep -q "sport ${port}"; then
         log "✓ Filter for port ${port} is active"
     else

@@ -52,8 +52,8 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │  ┌────┴────┐  ┌──────────┐  ┌──────────┐          │
 │  │ Eco     │  │ Stealth  │  │ Strike   │          │
 │  │ :8443   │  │ :8444    │  │ :8445    │          │
-│  │ BBR     │  │ Brutal   │  │ BBR+UDP  │          │
-│  │ 5M tc   │  │ 48M rate │  │ 200M tc  │          │
+│  │ BBR     │  │ BBR      │  │ BBR+UDP  │          │
+│  │ 5M tc   │  │ 100M tc  │  │ 200M tc  │          │
 │  └─────────┘  └──────────┘  └──────────┘          │
 │                                                   │
 │  Backups → Backblaze B2 (hourly, 7-day retention)  │
@@ -72,7 +72,7 @@ give users admin rights).
 | Tier | Price | Port | Server CC | Bandwidth | UDP | Experience |
 |------|-------|:----:|:---------:|:---------:|:---:|------------|
 | **Eco** | $2/mo | 8443 | BBR (system) | 5 Mbps (tc capped) | ❌ | Text loads, video buffers. Exists to sell Stealth. |
-| **Stealth** | $4/mo | 8444 | **Brutal** (kernel module) | 48 Mbps (target rate) | ❌ | Fast streaming. Jitter makes gaming unplayable. |
+| **Stealth** | $4/mo | 8444 | BBR (system) | 100 Mbps (tc capped) | ❌ | Fast streaming. BBR keeps bufferbloat low. |
 | **Strike** | $8/mo | 8445 | BBR (system) | 200 Mbps (tc capped) | ✅ | Gaming (33-44ms latency). 4K streaming. |
 
 ---
@@ -119,10 +119,11 @@ All traffic goes through a single TCP connection per tier. The client runs **sin
 
 ### Tiers & Congestion Control
 
-Each tier uses a different congestion control algorithm:
+All three tiers use **BBR** (Bottleneck Bandwidth and Round-trip propagation time), Linux's default CC — fair, stable, and bufferbloat-friendly. (An earlier design used the `tcp-brutal` kernel module for Stealth, but its aggressive rate-filling caused bufferbloat and jitter on the school network, so it was removed — see `v5/docs/FIXES.md`.) Bandwidth is capped purely with `tc` HTB classes on the VPS:
 
-- **Eco & Strike**: Use **BBR** (Bottleneck Bandwidth and Round-trip propagation time), Linux's default CC. BBR is fair and stable.
-- **Stealth**: Uses **Brutal CC**, a kernel module that aggressively fills bandwidth regardless of packet loss. The `tcp-brutal` module registers "brutal" as a TCP congestion control algorithm. An LD_PRELOAD wrapper intercepts `accept()` calls on the Stealth ssserver and sets `TCP_CONGESTION=brutal` + target rate on each client connection.
+- **Eco**: 5 Mbps (class 1:10, port 8443)
+- **Stealth**: 100 Mbps (class 1:20, port 8444)
+- **Strike**: 200 Mbps (class 1:30, port 8445)
 
 ### Activation Flow
 
@@ -190,7 +191,7 @@ ssh root@your-vps
 DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
 ```
 
-This provisions: BBR, 3× Shadowsocks, Brutal CC, tc shaping, Caddy + TLS, PocketBase, B2 backups, UFW firewall. See `v5/docs/DEPLOY.md`.
+This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 200 Mbps), Caddy + TLS, PocketBase, B2 backups, UFW firewall. See `v5/docs/DEPLOY.md`.
 
 ### Step 2: Configure PocketBase
 
@@ -237,7 +238,7 @@ creates the TUN interface with the user's own admin rights (BYOD).
 ```bash
 ssh root@your-vps "
   systemctl is-active caddy pocketbase shadowsocks-eco shadowsocks-stealth shadowsocks-strike
-  lsmod | grep tcp_brutal
+  tc class show dev eth0 | grep -E '1:10|1:20|1:30'
   sysctl net.ipv4.tcp_congestion_control
   tc -s class show dev eth0 | head -10
 "
@@ -273,14 +274,13 @@ The server modules were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161
 | 00-env | ✅ | OS, arch, root, disk, memory all validated |
 | 01-bbr | ✅ | BBR active, TCP tuning params set |
 | 02-shadowsocks | ✅ | 3 instances installed and enabled |
-| 03-brutal | ✅ | Cloned from `apernet/tcp-brutal` (repo renamed from `tcp-brutal-ng`), compiled custom LD_PRELOAD wrapper from bundled C source |
-| 04-tc | ✅ | Eco 5Mbit, Strike 200Mbit classes active |
+| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active |
 | 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
 | 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
 | 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
 | 08-firewall | ✅ | UFW active, all ports open, SSH rate-limited |
 
-All 3 Shadowsocks services active (8443/8444/8445). Brutal CC kernel module loaded.
+All 3 Shadowsocks services active (8443/8444/8445). All tiers on BBR with tc caps (5/100/200 Mbps).
 Caddy + PocketBase serving API at `https://domain/_/`.
 
 See `v5/README.md` and `v5/CONTEXT.md` for the full current documentation.

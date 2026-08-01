@@ -174,7 +174,12 @@ def main():
             print(f"  tier {t}: MISSING {path} — skipping")
             continue
         cfg = json.load(open(path))
-        udp = cfg.get("mode") == "tcp_and_udp"
+        # udp_relay drives the CLIENT's sing-box "udp_over_tcp v2" option —
+        # but the server runs shadowsocks-libev (ssserver), which does NOT
+        # implement sing-box's UDP-over-TCP protocol and closes those
+        # connections (observed 2026-08-01: every UoT conn RST after ~300ms).
+        # Keep udp_relay=false so UDP flows via standard ss UDP instead.
+        udp = False
         config_str = json.dumps({
             "server": DOMAIN,
             "server_port": cfg["server_port"],

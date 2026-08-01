@@ -32,21 +32,13 @@ active
 active
 ```
 
-### Brutal CC
+### Congestion Control
+
+All three tiers use **BBR** (Linux kernel built-in) — no kernel modules to maintain.
 
 ```bash
-# Check module loaded
-ssh $VPS "lsmod | grep tcp_brutal || echo 'NOT LOADED'"
-
-# Check available congestion control algorithms
-ssh $VPS "sysctl net.ipv4.tcp_available_congestion_control"
-
-# Check target rate (default 48 Mbps)
-ssh $VPS "cat /sys/module/tcp_brutal/parameters/target_rate"
-
-# Brutal must be re-checked after every kernel update
-# DKMS should auto-rebuild, but verify:
-ssh $VPS "dkms status tcp-brutal"
+# Confirm BBR is the system default
+ssh $VPS "sysctl net.ipv4.tcp_congestion_control"
 ```
 
 ### Traffic Shaping
@@ -55,9 +47,9 @@ ssh $VPS "dkms status tcp-brutal"
 # Check tc classes exist
 ssh $VPS "tc -s class show dev \$(ip route show default | awk '\$5{print\$5;exit}')"
 
-# Eco class (1:10) should show traffic
-# Strike class (1:30) should show traffic
-# Stealth has no tc class (Brutal manages its own rate)
+# Eco class (1:10) should show traffic — 5 Mbps
+# Stealth class (1:20) should show traffic — 100 Mbps
+# Strike class (1:30) should show traffic — 200 Mbps
 ```
 
 ### Logs
@@ -165,7 +157,7 @@ ssh $VPS "caddy fmt --overwrite /etc/caddy/Caddyfile && systemctl reload caddy"
 ssh $VPS "systemctl restart pocketbase"
 
 # tc rules after reboot
-ssh $VPS "systemctl restart tc-eco-cap tc-strike-cap"
+ssh $VPS "systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap"
 ```
 
 ---
@@ -218,38 +210,65 @@ ssh $VPS "/usr/local/bin/myvpn-backup.sh"
 ### List Backups in B2
 
 ```bash
-b2 ls my-vpn-backup-bucket backups/
+# Current b2 CLI needs b2:// URIs (plain bucket names fail)
+b2 ls --recursive "b2://my-vpn-backup-bucket/backups/" | grep '\.db\.gz$'
 ```
 
 ### Restore from Specific Backup
 
+> **Prefer the one-command restore** (`v5/server/restore.sh`) — it provisions a
+> blank VPS, downloads the latest backup, verifies the SHA256, restores the DB,
+> aligns the admin password with the secrets file, re-enables the backup timer
+> and smoke-tests everything. The manual steps below are the equivalent for a
+> running VPS.
+
 ```bash
-# Download
-b2 download-file-by-name my-vpn-backup-bucket backups/data-20260724-143000.db /tmp/restore.db
+# Download (current CLI syntax)
+b2 file download "b2://my-vpn-backup-bucket/backups/data-20260724-143000.db.gz" /tmp/restore.db.gz
+b2 file download "b2://my-vpn-backup-bucket/backups/data-20260724-143000.db.gz.sha256" /tmp/restore.db.gz.sha256
 
 # Verify
-sha256sum /tmp/restore.db
+cat /tmp/restore.db.gz.sha256
+sha256sum /tmp/restore.db.gz
+gzip -d /tmp/restore.db.gz
 head -c 16 /tmp/restore.db | xxd  # Should show "SQLite format 3\000"
 
 # Restore
 ssh $VPS "systemctl stop pocketbase"
 scp /tmp/restore.db root@networkingguides.duckdns.org:/opt/pocketbase/pb_data/data.db
-ssh $VPS "chown pocketbase:pocketbase /opt/pocketbase/pb_data/data.db && systemctl start pocketbase"
+ssh $VPS "
+  rm -f /opt/pocketbase/pb_data/data.db-wal /opt/pocketbase/pb_data/data.db-shm  # stale WAL must go
+  chown pocketbase:pocketbase /opt/pocketbase/pb_data/data.db
+  systemctl start pocketbase
+  # IMPORTANT: pocketbase-backup.timer has Requires=pocketbase.service — stopping
+  # PocketBase above also stopped the timer (Requires propagates stops, not
+  # starts). Restart it explicitly:
+  systemctl restart pocketbase-backup.timer
+"
+
+# If the restored admin password doesn't match the secrets file (old DB era),
+# align it so documented credentials work:
+ssh $VPS "cd /opt/pocketbase && ./pocketbase admin update admin@networkingguides.duckdns.org '<PB_ADMIN_PASS>'"
 
 # Verify
 curl -s "$PB_API/api/health"
+# Hooks loaded? Expect 400 {"message":"Missing code"} — a generic 400 means hook load error
+curl -s -X POST "$PB_API/api/activate" -H 'Content-Type: application/json' -d '{}'
+# Backup timer back?
+ssh $VPS "systemctl is-active pocketbase-backup.timer"
 ```
 
 ---
 
 ## Updating the Server
 
-### Kernel Update (requires Brutal recheck)
+### Kernel Update (re-apply tc caps)
+
+The tc cap services are oneshot — after a kernel/reboot change, re-apply them:
 
 ```bash
-# After kernel update:
-ssh $VPS "dkms install tcp-brutal/1.0 && modprobe tcp_brutal"
-ssh $VPS "lsmod | grep tcp_brutal || echo 'WARNING: Brutal not loaded'"
+ssh $VPS "systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap"
+ssh $VPS "tc -s class show dev \$(ip route show default | awk '\$5{print\$5;exit}')"
 ```
 
 ### Updating PocketBase

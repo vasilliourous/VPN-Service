@@ -39,18 +39,13 @@ for svc in caddy pocketbase shadowsocks-eco shadowsocks-stealth shadowsocks-stri
     fi
 done
 
-# ── 2. Verify Brutal CC kernel module ──
-log "Step 2/9: Checking Brutal CC..."
-if lsmod 2>/dev/null | grep -q "^brutal"; then
-    pass "tcp_brutal kernel module loaded"
-    TARGET=$(cat /sys/module/tcp_brutal/parameters/target_rate 2>/dev/null || echo "unknown")
-    log "  Brutal target rate: ${TARGET} Mbps"
+# ── 2. Verify Stealth tc cap ──
+log "Step 2/9: Checking Stealth tc cap..."
+IFACE=$(ip -4 route show default | awk '{print $5}' | head -1)
+if [ -n "$IFACE" ] && tc class show dev "$IFACE" 2>/dev/null | grep -q "1:20"; then
+    pass "tc Stealth class (1:20) exists — 100 Mbps cap"
 else
-    if lsmod 2>/dev/null | grep -q "^tcp_brutal"; then
-        pass "tcp_brutal kernel module loaded (legacy name)"
-    else
-        warn "Brutal CC module not loaded (Stealth will use BBR fallback)"
-    fi
+    warn "tc Stealth class (1:20) not found — check: systemctl status tc-stealth-cap.service"
 fi
 
 # ── 3. Verify BBR is default CC ──
@@ -69,6 +64,7 @@ if [ -n "$IFACE" ]; then
     log "  Primary interface: ${IFACE}"
     TC_CLASSES=$(tc -s class show dev "$IFACE" 2>/dev/null | head -20)
     echo "$TC_CLASSES" | grep -q "1:10" && pass "tc Eco class (1:10) exists" || warn "tc Eco class not found"
+    echo "$TC_CLASSES" | grep -q "1:20" && pass "tc Stealth class (1:20) exists" || warn "tc Stealth class not found"
     echo "$TC_CLASSES" | grep -q "1:30" && pass "tc Strike class (1:30) exists" || warn "tc Strike class not found"
 else
     warn "Could not detect primary interface"

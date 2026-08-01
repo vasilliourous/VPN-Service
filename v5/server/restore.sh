@@ -117,8 +117,10 @@ b2 authorize-account "$B2_APPLICATION_KEY_ID" "$B2_APPLICATION_KEY" 2>&1 | tee -
 log "Step 3/4: Downloading backup..."
 
 if [ -z "$BACKUP_PATH" ]; then
-    log "No specific backup given. Finding latest in b2://${B2_BUCKET}/..."
-    BACKUP_PATH=$(b2 ls --long "$B2_BUCKET" backups/ 2>/dev/null | sort -k1,1 | tail -1 | awk '{print $4}')
+    log "No specific backup given. Finding latest in b2://${B2_BUCKET}/backups/..."
+    # NOTE: current b2 CLI requires b2:// URIs; plain bucket names fail with
+    # "Invalid B2 URI". Only .db.gz files are backups (.sha256 companions ignored).
+    BACKUP_PATH=$(b2 ls --recursive "b2://${B2_BUCKET}/backups/" 2>/dev/null | grep '\.db\.gz$' | sort | tail -1)
     if [ -z "$BACKUP_PATH" ]; then
         fail "No backups found in b2://${B2_BUCKET}/backups/. Check B2 credentials and bucket name."
     fi
@@ -131,12 +133,12 @@ RESTORE_FILE="${TMP_DIR}/restore.db"
 SHA256_FILE="${TMP_DIR}/restore.sha256"
 
 log "Downloading ${BACKUP_PATH}..."
-b2 download-file-by-name "$B2_BUCKET" "$BACKUP_PATH" "$RESTORE_FILE" 2>&1 | tee -a "$LOGFILE"
+b2 file download "b2://${B2_BUCKET}/${BACKUP_PATH}" "$RESTORE_FILE" 2>&1 | tee -a "$LOGFILE"
 
 # Try to download SHA256 if it exists
 SHA256_PATH="${BACKUP_PATH}.sha256"
-if b2 file-info "$B2_BUCKET" "$SHA256_PATH" &>/dev/null; then
-    b2 download-file-by-name "$B2_BUCKET" "$SHA256_PATH" "$SHA256_FILE" 2>&1 | tee -a "$LOGFILE"
+if b2 file info "b2://${B2_BUCKET}/${SHA256_PATH}" &>/dev/null; then
+    b2 file download "b2://${B2_BUCKET}/${SHA256_PATH}" "$SHA256_FILE" 2>&1 | tee -a "$LOGFILE"
     log "Verifying SHA256 checksum..."
     EXPECTED=$(cat "$SHA256_FILE" | awk '{print $1}')
     ACTUAL=$(sha256sum "$RESTORE_FILE" | awk '{print $1}')
@@ -168,11 +170,33 @@ if [ -f "${PB_DATA_DIR}/data.db" ]; then
 fi
 
 cp "$RESTORE_FILE" "${PB_DATA_DIR}/data.db"
+# Stale WAL/shm from the fresh-seeded DB would be replayed against the
+# restored file (corruption/lost data) — remove them.
+rm -f "${PB_DATA_DIR}/data.db-wal" "${PB_DATA_DIR}/data.db-shm"
 chown pocketbase:pocketbase "${PB_DATA_DIR}/data.db"
 chmod 600 "${PB_DATA_DIR}/data.db"
 
+# Align the restored admin password with the secrets file while PB is stopped.
+# The restored DB's admin may predate the current secrets (old auto-generated
+# password) — this guarantees the documented credentials work after restore.
+if [ -n "${PB_ADMIN_EMAIL:-}" ] && [ -n "${PB_ADMIN_PASS:-}" ]; then
+    if (cd /opt/pocketbase && ./pocketbase admin update "$PB_ADMIN_EMAIL" "$PB_ADMIN_PASS" >/dev/null 2>&1); then
+        log "✓ Admin password aligned with secrets (${PB_ADMIN_EMAIL})"
+    else
+        warn "Could not update admin password — set it manually in the admin UI if login fails"
+    fi
+fi
+
 systemctl start pocketbase
 sleep 2
+
+# The backup timer has Requires=pocketbase.service: stopping PocketBase above
+# STOPPED the timer too (Requires propagates stops, not starts). Bring it back.
+if systemctl restart pocketbase-backup.timer 2>/dev/null; then
+    systemctl is-active --quiet pocketbase-backup.timer && log "✓ Backup timer active (hourly)" || warn "Backup timer exists but inactive — run: systemctl enable --now pocketbase-backup.timer"
+else
+    warn "Backup timer restart failed — run: systemctl enable --now pocketbase-backup.timer"
+fi
 
 # Verify restore
 if systemctl is-active --quiet pocketbase; then
@@ -181,11 +205,19 @@ else
     fail "PocketBase failed to start after restore. Check journalctl -u pocketbase"
 fi
 
-# Quick sanity check: count records in codes collection
-CODES_COUNT=$(curl -s "http://127.0.0.1:8090/api/collections/codes/records?skipTotal=1" \
-    -H "Authorization: Bearer $(cat ${PB_DATA_DIR}/admin_token 2>/dev/null || echo '')" \
-    2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('items',[])))" 2>/dev/null || echo "unknown")
+# Quick sanity check: count records directly in the restored DB
+# (the API requires an admin token and the collections are admin-only).
+CODES_COUNT=$(sqlite3 "${PB_DATA_DIR}/data.db" "SELECT COUNT(*) FROM codes;" 2>/dev/null || echo "unknown")
 log "Restored codes collection has ${CODES_COUNT} records."
+
+# Verify the JS hooks actually loaded (a generic 400 means a hook load error).
+HOOK_RESP=$(curl -s -o /tmp/hook-resp.json -w "%{http_code}" -X POST "http://127.0.0.1:8090/api/activate" -H "Content-Type: application/json" -d '{}' 2>/dev/null || echo "000")
+if [ "$HOOK_RESP" = "400" ] && grep -q "Missing code" /tmp/hook-resp.json 2>/dev/null; then
+    log "✓ Activation hook loaded (expected 400 'Missing code')"
+else
+    warn "Activation hook check unexpected (HTTP ${HOOK_RESP}) — check: journalctl -u pocketbase"
+fi
+rm -f /tmp/hook-resp.json
 
 # Cleanup
 rm -rf "$TMP_DIR"

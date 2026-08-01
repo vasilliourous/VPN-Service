@@ -247,14 +247,40 @@ install_b2() {
 # ═══════════════════════════════════════════
 
 install_b2
+ensure_sqlite3
 save_creds
 write_backup_script
 write_timer
 
+# ── Ensure sqlite3 (safe DB copy in the backup script) ──
+ensure_sqlite3() {
+    if command -v sqlite3 &>/dev/null; then
+        log "sqlite3 already installed"
+        return 0
+    fi
+    log "Installing sqlite3 (used for safe .backup copies)..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sqlite3 2>/dev/null || \
+        warn "Could not install sqlite3 — backup script will use the direct-copy fallback"
+    if command -v sqlite3 &>/dev/null; then
+        log "✓ sqlite3 installed"
+    else
+        warn "sqlite3 still missing after install"
+    fi
+}
+
 # ── Enable timer ──
 systemctl daemon-reload
-systemctl enable pocketbase-backup.timer 2>/dev/null || true
-systemctl restart pocketbase-backup.timer 2>/dev/null || true
+if ! systemctl enable pocketbase-backup.timer 2>/dev/null; then
+    warn "Failed to enable pocketbase-backup.timer — run manually: systemctl enable pocketbase-backup.timer"
+fi
+if ! systemctl restart pocketbase-backup.timer 2>/dev/null; then
+    warn "Failed to start pocketbase-backup.timer — run manually: systemctl start pocketbase-backup.timer"
+fi
+if systemctl is-active --quiet pocketbase-backup.timer; then
+    log "✓ Backup timer active (hourly)"
+else
+    warn "Backup timer NOT active — check: journalctl -u pocketbase-backup.timer"
+fi
 
 # ── Show status ──
 log "Backup timer status:"

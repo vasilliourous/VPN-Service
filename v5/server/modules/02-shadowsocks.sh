@@ -2,7 +2,7 @@
 # Module 02: Shadowsocks Server — 3-tier instances
 # Installs ssserver and creates three systemd services:
 #   - Eco (port 8443, BBR, TCP only)
-#   - Stealth (port 8444, Brutal CC via LD_PRELOAD, TCP only)
+#   - Stealth (port 8444, BBR, TCP only)
 #   - Strike (port 8445, BBR, TCP+UDP)
 set -euo pipefail
 
@@ -156,24 +156,6 @@ SERVICE
     log "✓ Created ${service_file}"
 }
 
-# ── Create systemd drop-in for Brutal (sets LD_PRELOAD) ──
-write_brutal_dropin() {
-    local dropin_dir="/etc/systemd/system/shadowsocks-stealth.service.d"
-    local dropin_file="${dropin_dir}/brutal.conf"
-
-    if [ -f "$dropin_file" ]; then
-        log "Brutal drop-in already exists"
-        return 0
-    fi
-
-    mkdir -p "$dropin_dir"
-    cat > "$dropin_file" << 'DROPIN'
-[Service]
-Environment=LD_PRELOAD=/usr/local/lib/brutal-wrap.so
-DROPIN
-    log "✓ Created Brutal LD_PRELOAD drop-in for Stealth service"
-}
-
 # ═══════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════
@@ -187,10 +169,9 @@ mkdir -p /etc/shadowsocks
 write_config "eco" 8443 "ECO_PASS" "tcp_only"
 write_service "eco" "Eco — BBR, 5 Mbps tc cap"
 
-# ── Stealth (Brutal CC, TCP only) ──
+# ── Stealth (BBR, TCP only, 100 Mbps tc) ──
 write_config "stealth" 8444 "STEALTH_PASS" "tcp_only"
-write_brutal_dropin
-write_service "stealth" "Stealth — Brutal CC, 48 Mbps target"
+write_service "stealth" "Stealth — BBR, 100 Mbps tc cap"
 
 # ── Strike (BBR, TCP+UDP, 200 Mbps tc) ──
 write_config "strike" 8445 "STRIKE_PASS" "tcp_and_udp"
@@ -199,13 +180,13 @@ write_service "strike" "Strike — BBR, 200 Mbps tc cap, UDP"
 # ── Reload systemd ──
 systemctl daemon-reload
 
-# ── Enable services (don't start yet — Brutal LD_PRELOAD doesn't exist until module 03) ──
+# ── Enable services (started by setup.sh after all modules complete) ──
 systemctl enable shadowsocks-eco.service 2>/dev/null || true
 systemctl enable shadowsocks-stealth.service 2>/dev/null || true
 systemctl enable shadowsocks-strike.service 2>/dev/null || true
 log "   Services enabled (will start after all modules complete)"
 log "   Eco:     :8443 (TCP, BBR)"
-log "   Stealth: :8444 (TCP, Brutal CC via LD_PRELOAD)"
+log "   Stealth: :8444 (TCP, BBR)"
 log "   Strike:  :8445 (TCP+UDP, BBR)"
 log ""
 log "   Passwords saved to ${PASS_FILE} (chmod 600)"

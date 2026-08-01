@@ -1,6 +1,69 @@
 
 ---
 
+## DEPLOY/RESTORE — PLUG-N-PLAY HARDENING (2026-08-01)
+
+Validated a full blank-VPS deploy + B2 restore live (114.23.136.59). The deploy
+path was already one-command; the restore path had gaps, all fixed:
+
+| # | Area | Issue | Fix |
+|:-:|------|-------|-----|
+| R1 | `restore.sh` | Latest-backup detection used `b2 ls --long "$BUCKET" backups/` — plain bucket names fail on the current CLI ("Invalid B2 URI") | `b2 ls --recursive "b2://$BUCKET/backups/"` filtered to `.db.gz`, sorted |
+| R2 | `restore.sh` | Download/checksum used deprecated `b2 download-file-by-name` / `b2 file-info` (exit 1 + error output on success paths) | Current syntax: `b2 file download b2://…` / `b2 file info b2://…` |
+| R3 | `restore.sh` | Restored `data.db` over a fresh-seeded DB without removing `-wal`/`-shm` — stale WAL can be replayed against the restored file | `rm -f data.db-wal data.db-shm` before chown |
+| R4 | `restore.sh` | Restored DB's admin password may predate the secrets file (old auto-generated era) → login fails with documented creds | Auto-run `./pocketbase admin update "$PB_ADMIN_EMAIL" "$PB_ADMIN_PASS"` (while PB stopped) |
+| R5 | `restore.sh` | `pocketbase-backup.timer` has `Requires=pocketbase.service` — stopping PB (part of restore) **stops the timer too** (Requires propagates stops, not starts); it stayed inactive after restore | Explicit `systemctl restart pocketbase-backup.timer` + `is-active` verification after start |
+| R6 | `restore.sh` | Codes-count check used the API with a nonexistent token file → always 0/unknown (collections are admin-only) | Direct `sqlite3 … "SELECT COUNT(*) FROM codes"` |
+| R7 | `restore.sh` | No hook-load verification after restore | POST `/api/activate {}` must return 400 "Missing code" (generic 400 = hook load error) |
+| R8 | `07-backups.sh` | `sqlite3` not installed → backup script silently used the direct-copy fallback (inconsistent backups under write load) | Module now installs `sqlite3` so `.backup` (safe) is always used |
+| R9 | `07-backups.sh` | Timer enable/restart swallowed errors with `|| true` | Loud enable/restart + `is-active` verification with manual-fix instructions |
+
+**Docs updated:** `DEPLOY.md` (post-deploy checklist now includes backup timer +
+backup log + update.json + the Requires= gotcha; disaster-recovery section
+describes the full one-command flow), `OPS.md` (restore runbook rewritten with
+the verified manual steps + current b2 syntax + admin password alignment +
+timer restart), `v5/CONTEXT.md` (agent rules 7–9: timer gotcha, admin password
+alignment, b2 URI syntax).
+
+**Verdict:** a blank Ubuntu 22.04 VPS + repo + `age-key.txt` is fully plug-n-play:
+`setup.sh` for fresh deploy (auto-runs the smoke test), `restore.sh` for
+migration/disaster recovery — both validated live 2026-08-01.
+
+---
+
+## STEALTH TIER — TCP BRUTAL REMOVED, BACK TO BBR (2026-08-01)
+
+**Decision:** Stealth no longer uses the `tcp-brutal` kernel module + LD_PRELOAD
+wrapper. The aggressive rate-based CC filled buffers and caused bufferbloat/jitter
+on the school network when it throttled, and the Linux `tcp-brutal` module is not
+as robust or powerful as Hysteria 2's built-in Brutal CC. Stealth now runs plain
+**BBR** like the other tiers, with a **tc HTB cap of 100 Mbps** (class `1:20`,
+port 8444) replacing the old 48 Mbps Brutal target rate.
+
+**Changes:**
+- `v5/server/modules/03-brutal.sh` — **deleted** (kernel module build/load,
+  DKMS registration, `brutal-wrap.so` LD_PRELOAD wrapper, 48 Mbps target).
+- `v5/server/modules/02-shadowsocks.sh` — removed `write_brutal_dropin()`
+  (the `LD_PRELOAD=/usr/local/lib/brutal-wrap.so` drop-in for the Stealth
+  systemd service); Stealth service description is now "BBR, 100 Mbps tc cap".
+- `v5/server/modules/04-tc.sh` — Stealth now gets a tc class `1:20` @ `100mbit`
+  and a `tc-stealth-cap.service` oneshot (alongside Eco `1:10` and Strike `1:30`).
+- `v5/server/setup.sh` — `03-brutal.sh` removed from the module chain; summary
+  line updated to "Stealth port: 8444 (BBR, 100 Mbps tc)".
+- `v5/server/scripts/smoke-test.sh` — Brutal module check replaced with a
+  Stealth tc class (`1:20`) check; tc verification now covers 8443/8444/8445.
+- Docs updated: root `README.md`, `v5/CONTEXT.md`, `v5/docs/ARCHITECTURE.md`,
+  `v5/docs/DEPLOY.md`, `v5/docs/OPS.md` (tier tables, diagrams, deploy
+  checklist, ops checks, kernel-update guidance).
+- Historical references in `v3/`, `v4/`, `simplified/`, `originals/`,
+  `modular-vps/` and root `CONTEXT.md` are left untouched (reference-only).
+
+**Ops note:** no kernel modules are maintained anymore. After a kernel update,
+re-apply the caps with `systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap`.
+The old Brutal entries below this one are historical records of the earlier design.
+
+---
+
 ## CI LINT — ERRCHECK FIXES (Wails Migration)
 
 Found when the Wails CI pipeline first ran `golangci-lint` on the client module.

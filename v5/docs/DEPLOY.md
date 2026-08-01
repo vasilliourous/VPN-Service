@@ -109,12 +109,11 @@ The setup script does **everything** automatically:
 1. Validates environment (OS, arch, root, disk, memory, DNS)
 2. Enables BBR + TCP kernel tuning
 3. Installs 3 ssserver instances (eco:8443, stealth:8444, strike:8445)
-4. Builds and loads `tcp-brutal` kernel module + LD_PRELOAD wrapper
-5. Applies tc traffic shaping (Eco 5 Mbps, Strike 200 Mbps)
-6. Installs Caddy with rate limiting and Let's Encrypt TLS
-7. Installs PocketBase with JS hooks and SQLite WAL mode
-8. Configures hourly B2 backup systemd timer
-9. Sets up UFW firewall (SSH rate-limited, all needed ports open)
+4. Applies tc traffic shaping (Eco 5 Mbps, Stealth 100 Mbps, Strike 200 Mbps)
+5. Installs Caddy with rate limiting and Let's Encrypt TLS
+6. Installs PocketBase with JS hooks and SQLite WAL mode
+7. Configures hourly B2 backup systemd timer
+8. Sets up UFW firewall (SSH rate-limited, all needed ports open)
 
 ---
 
@@ -127,12 +126,24 @@ After deployment, verify:
 - [ ] `systemctl is-active shadowsocks-eco` → active
 - [ ] `systemctl is-active shadowsocks-stealth` → active
 - [ ] `systemctl is-active shadowsocks-strike` → active
-- [ ] `lsmod | grep tcp_brutal` → loaded
 - [ ] `sysctl net.ipv4.tcp_congestion_control` → bbr
-- [ ] `tc -s class show dev eth0` → classes for 8443 and 8445
+- [ ] `tc -s class show dev eth0` → classes 1:10 (Eco 5 Mbps), 1:20 (Stealth 100 Mbps), 1:30 (Strike 200 Mbps)
+- [ ] `systemctl is-active pocketbase-backup.timer` → active (hourly B2 backups; setup auto-runs the first backup)
+- [ ] `tail -5 /var/log/myvpn-backup.log` → last line "Backup completed (exit 0)"
+- [ ] `curl -sf https://networkingguides.duckdns.org/update.json` → JSON manifest
 - [ ] `curl -sf https://networkingguides.duckdns.org/api/health` → 200
 - [ ] `ufw status` → active with all rules
 - [ ] `openssl s_client -connect networkingguides.duckdns.org:443 -servername networkingguides.duckdns.org </dev/null 2>/dev/null | openssl x509 -noout -dates` → valid cert
+
+> **⚠️ Backup timer gotcha:** the timer has `Requires=pocketbase.service`, so
+> **stopping PocketBase also stops the timer** (systemd `Requires=` propagates
+> stops, not starts). After any `systemctl stop pocketbase`, bring it back with
+> `systemctl restart pocketbase-backup.timer` (or `enable --now` on a fresh
+> install). `restore.sh` does this automatically.
+
+> **Smoke test:** `setup.sh` runs `v5/server/scripts/smoke-test.sh` automatically
+> at the end (log: `/var/log/myvpn-smoke-test.log`). A fresh deploy should end
+> with "✅ All critical checks passed!".
 
 ### Create PocketBase Admin (First Run Only)
 
@@ -209,8 +220,16 @@ ssh root@new-vps 'bash -s' < v5/server/restore.sh
 ```
 
 This will:
-1. Provision the new VPS from scratch (runs full setup.sh)
-2. Download the latest backup from B2
-3. Verify SHA256 checksum
-4. Restore PocketBase database
-5. Verify collections integrity
+1. Provision the new VPS from scratch (runs full `setup.sh` — BBR, 3× Shadowsocks, tc caps 5/100/200 Mbps, Caddy + TLS, PocketBase, backups, UFW)
+2. Install the b2 CLI and authenticate with the secrets' B2 key
+3. Find the **latest** backup in `b2://<bucket>/backups/` (or use `BACKUP_PATH=...` to pick a specific one)
+4. Download + verify the SHA256 checksum (aborts on mismatch)
+5. Restore the PocketBase database (backs up the fresh-seed DB to `data.db.pre-restore`, removes stale `-wal`/`-shm`)
+6. **Align the admin password with the secrets file** (`pocketbase admin update`) so the documented credentials work
+7. Restart the backup timer (stopping PocketBase stops it via `Requires=`) and verify it is active
+8. Verify: codes count from the restored DB, JS hooks loaded (400 "Missing code"), health endpoints
+
+> **One-command recovery = plug-n-play.** A blank Ubuntu 22.04 VPS + this repo
+> + `age-key.txt` is all you need: `setup.sh` for a fresh deploy, `restore.sh`
+> for a full migration/disaster recovery. Both were validated live on
+> 2026-08-01 (see `v5/docs/FIXES.md`).

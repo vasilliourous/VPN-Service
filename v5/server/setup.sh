@@ -147,7 +147,6 @@ MODULES=(
     "${MODULES_DIR}/00-env.sh"
     "${MODULES_DIR}/01-bbr.sh"
     "${MODULES_DIR}/02-shadowsocks.sh"
-    "${MODULES_DIR}/03-brutal.sh"
     "${MODULES_DIR}/04-tc.sh"
     "${MODULES_DIR}/05-caddy.sh"
     "${MODULES_DIR}/06-pocketbase.sh"
@@ -168,7 +167,7 @@ for mod in "${MODULES[@]}"; do
     run_module "$mod"
 done
 
-# ── Start Shadowsocks services (all modules done, Brutal LD_PRELOAD exists) ──
+# ── Start Shadowsocks services (all modules done) ──
 log "Starting Shadowsocks services..."
 systemctl daemon-reload
 for svc in shadowsocks-eco shadowsocks-stealth shadowsocks-strike; do
@@ -276,7 +275,7 @@ log " Service Summary"
 log "═══════════════════════════════════════════"
 log "   Domain:        ${DOMAIN}"
 log "   Eco port:      8443 (BBR, 5 Mbps tc)"
-log "   Stealth port:  8444 (Brutal CC)"
+log "   Stealth port:  8444 (BBR, 100 Mbps tc)"
 log "   Strike port:   8445 (BBR+UDP, 200 Mbps tc)"
 log "   PocketBase:    https://${DOMAIN}/_/"
 log "   Admin API:     ${ADMIN_API_TOKEN_FILE}"

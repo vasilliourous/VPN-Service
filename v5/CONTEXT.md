@@ -23,7 +23,7 @@ The service has three tiers:
 | Tier | Price | Port | CC | Cap | Transport | Use case |
 |------|-------|:----:|:---:|:---:|:---------:|----------|
 | Eco | $2/mo | 8443 | BBR | 5 Mbps tc | TCP only | Text, browsing |
-| Stealth | $4/mo | 8444 | **Brutal** | 48 Mbps target | TCP only | Streaming |
+| Stealth | $4/mo | 8444 | BBR | 100 Mbps tc | TCP only | Streaming |
 | Strike | $8/mo | 8445 | BBR | 200 Mbps tc | TCP+UDP | Gaming |
 
 **Distribution model:** Middlemen hand out physical activation code cards for cash.
@@ -121,8 +121,7 @@ All modules tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
 | 00-env | ✅ | OS, arch, root, disk, memory all validated |
 | 01-bbr | ✅ | BBR active, TCP tuning params set |
 | 02-shadowsocks | ✅ | 3 instances installed and enabled |
-| 03-brutal | ✅ | Cloned from `apernet/tcp-brutal` (renamed from `tcp-brutal-ng`), compiled custom LD_PRELOAD |
-| 04-tc | ✅ | Eco 5Mbit, Strike 200Mbit classes active |
+| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active |
 | 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
 | 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
 | 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
@@ -243,8 +242,8 @@ v5/legacy/
 │  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐  │
 │  │  Caddy   │  │PocketBase│  │  ssserver × 3        │  │
 │  │  TLS +   │  │ SQLite   │  │  Eco/Stealth/Strike   │  │
-│  │  rate    │  │ JS hooks │  │  BBR/Brutal/BBR       │  │
-│  │  limit   │  │          │  │  5/48/200 Mbps        │  │
+│  │  rate    │  │ JS hooks │  │  BBR/BBR/BBR          │  │
+│  │  limit   │  │          │  │  5/100/200 Mbps       │  │
 │  └──────────┘  └──────────┘  └──────────────────────┘  │
 └──────────────────────────────────────────────────────┘
 ```
@@ -263,7 +262,7 @@ v5/legacy/
 | Proxy protocol | Shadowsocks (ssserver-rust) | v1.23.0 |
 | Reverse proxy | Caddy (custom rate_limit) | Latest |
 | Database | PocketBase | 0.22.21 |
-| TCP CC (Stealth) | TCP Brutal | Custom kernel module |
+| TCP CC (all tiers) | BBR | Kernel built-in |
 | Backups | Backblaze B2 | — |
 | Traffic shaping | tc (HTB qdisc) | — |
 | Firewall | UFW | — |
@@ -291,13 +290,24 @@ v5/legacy/
 4. **The JS hooks have been rewritten for PocketBase 0.22+.** If activation
    returns a generic 400 error after a fresh deploy, check `journalctl -u pocketbase`
    for hook load errors.
-5. **TCP Brutal must be re-checked after every kernel update.** DKMS should
-   auto-rebuild, but verify with `lsmod | grep tcp_brutal`.
+5. **All tiers use BBR — no kernel modules to maintain.** Bandwidth caps are tc-based
+   (Eco 5 / Stealth 100 / Strike 200 Mbps); after a kernel update, re-apply with
+   `systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap`.
 6. **The server domain is `networkingguides.duckdns.org`** pointing to `114.23.136.59`
-   (verified 2026-07-31; an older note said `.47` — the VPS IP changed).
+   (verified 2026-08-01; an older note said `.47` — the VPS IP changed).
    This is the VPS hostname — DNS is managed by the hosting provider.
+7. **Stopping PocketBase stops the backup timer.** `pocketbase-backup.timer` has
+   `Requires=pocketbase.service` — systemd `Requires=` propagates stops but not
+   starts, so after any `systemctl stop pocketbase` run
+   `systemctl restart pocketbase-backup.timer`. `restore.sh` does this automatically.
+8. **Restored DBs may have a stale admin password.** If the DB predates the current
+   secrets file, `pocketbase admin update <email> <pass>` (in `/opt/pocketbase`)
+   aligns it. `restore.sh` does this automatically when `PB_ADMIN_*` are set.
+9. **Use the current b2 CLI syntax.** Plain bucket names fail ("Invalid B2 URI");
+   use `b2://bucket/path` URIs (`b2 ls --recursive`, `b2 file download`, `b2 file info`).
+   `restore.sh` uses the current syntax.
 
-### Key credentials (live VPS as of 2026-07-26)
+### Key credentials (live VPS as of 2026-08-01)
 
 ```
 PocketBase admin:   admin@networkingguides.duckdns.org
