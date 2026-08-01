@@ -508,6 +508,22 @@ self-host scenario.
   "direct"}}`.
 - `TestGeneratedConfig` updated and passing; Windows build, lint, vet green.
 
+### Follow-up 8 — REMOVED bind_interface: align with Hiddify exactly (2026-08-01)
+
+The 1.12 config parsed and ran, but the ss dial STILL timed out with
+`bind_interface: "Wi-Fi"`. Evidence review: the ONLY session where the ss dial
+reached the server (23:35) had NO bind; Hiddify (works on the same machine)
+uses NO bind — only `auto_detect_interface`; and sing-box's Windows interface
+name resolution for `bind_interface` is unverified (an unresolvable name
+silently breaks every dial — the exact observed symptom).
+
+**Fix:** `bind_interface` is REMOVED from both outbounds. The direct outbound
+is kept non-empty via `"connect_timeout": "10s"` (1.12 rejects DNS detours to
+empty direct outbounds). The generated config now matches the Hiddify pattern:
+no binds, `auto_detect_interface`, `default_domain_resolver`, `hijack-dns`
+action, sniff, DoH through the tunnel. Verified: parses and runs on the VPS
+(process alive, TUN up, zero FATAL), tests pass, Windows build + lint green.
+
 ### Follow-up (2026-07-31) — macOS link failure: missing `UniformTypeIdentifiers` framework
 
 Linux/Windows builds then passed, but both macOS matrix jobs failed at the

@@ -311,26 +311,14 @@ func (a *App) Connect() OpResult {
 		return OpResult{Success: true, Message: "Already connected"}
 	}
 
-	// Bind the Shadowsocks dial to the physical NIC (detected BEFORE the
-	// TUN exists) so auto_route cannot capture sing-box's own server
-	// connection on Windows. defaultInterface has a 4s timeout and never
-	// blocks Connect (a hung PowerShell previously made the app appear to
-	// "fail entirely" with no logs).
-	bindIface := defaultInterface()
-	if bindIface != "" {
-		log.Printf("Connect: binding proxy dial to interface %q", bindIface)
-	} else {
-		log.Printf("Connect: no physical interface detected — relying on auto_detect_interface")
-	}
 	cfg := manager.Config{
-		Server:        state.ServerConfig.Server,
-		ServerPort:    state.ServerConfig.ServerPort,
-		Method:        state.ServerConfig.Method,
-		Password:      state.ServerConfig.Password,
-		TierName:      state.Tier,
-		UDPRelay:      state.UDPRelay,
-		HubURL:        a.hubURL,
-		BindInterface: bindIface,
+		Server:     state.ServerConfig.Server,
+		ServerPort: state.ServerConfig.ServerPort,
+		Method:     state.ServerConfig.Method,
+		Password:   state.ServerConfig.Password,
+		TierName:   state.Tier,
+		UDPRelay:   state.UDPRelay,
+		HubURL:     a.hubURL,
 	}
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
