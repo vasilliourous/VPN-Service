@@ -616,9 +616,6 @@ func generateConfig(cfg Config) ([]byte, error) {
 			//  2. dns-tunnel MUST have an explicit detour (empty detour dials
 			//     through the router and loops back into the DNS handler).
 			Final: "dns-tunnel",
-			Rules: []DNSRule{
-				{Outbound: []string{"any"}, Server: "dns-direct"},
-			},
 			Servers: []DNSServer{
 				{
 					Type:       "https",
@@ -661,14 +658,24 @@ func generateConfig(cfg Config) ([]byte, error) {
 			{
 				Type: "direct",
 				Tag:  "direct",
+				// bind_interface makes the direct outbound non-empty (1.12
+				// rejects detours to an empty direct outbound) AND ensures the
+				// server-IP exclusion egresses via the physical NIC.
+				BindInterface: cfg.BindInterface,
 			},
 		},
 		Route: RouteConfig{
 			AutoDetectInterface: true,
 			Final:               "proxy",
+			// The Shadowsocks server is a DOMAIN — this resolver sends ALL
+			// outbound-initiated resolution (e.g. the proxy dialing
+			// networkingguides.duckdns.org) DIRECT, preventing the DNS
+			// loopback (sing-box issue #2207; the 1.10-era outbound DNS rule
+			// is deprecated in 1.12).
+			DefaultDomainResolver: &DomainResolveOptions{Server: "dns-direct"},
 			Rules: []RouteRule{
-				// DNS traffic is handled by the dns rule action (1.11+ format).
-				{Protocol: "dns", Action: &RuleAction{Type: "dns"}},
+				// DNS traffic is handled by the hijack-dns rule action (1.11+).
+				{Protocol: "dns", Action: "hijack-dns"},
 			},
 		},
 	}
@@ -681,7 +688,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 		for _, ip := range serverIPs {
 			if ip4 := ip.To4(); ip4 != nil {
 				config.Route.Rules = append([]RouteRule{
-					{IPCIDR: []string{ip4.String() + "/32"}, Action: &RuleAction{Type: "route", Outbound: "direct"}},
+					{IPCIDR: []string{ip4.String() + "/32"}, Outbound: "direct"},
 				}, config.Route.Rules...)
 				break
 			}
@@ -763,19 +770,20 @@ type UDPOverTCPConfig struct {
 }
 
 type RouteConfig struct {
-	Rules               []RouteRule `json:"rules,omitempty"`
-	AutoDetectInterface bool        `json:"auto_detect_interface"`
-	Final               string      `json:"final"`
+	Rules                 []RouteRule           `json:"rules,omitempty"`
+	AutoDetectInterface   bool                  `json:"auto_detect_interface"`
+	Final                 string                `json:"final"`
+	DefaultDomainResolver *DomainResolveOptions `json:"default_domain_resolver,omitempty"`
+}
+
+type DomainResolveOptions struct {
+	Server string `json:"server"`
 }
 
 type RouteRule struct {
-	Protocol string      `json:"protocol,omitempty"`
-	Network  string      `json:"network,omitempty"`
-	IPCIDR   []string    `json:"ip_cidr,omitempty"`
-	Action   *RuleAction `json:"action,omitempty"`
-}
-
-type RuleAction struct {
-	Type     string `json:"type"`
-	Outbound string `json:"outbound,omitempty"`
+	Protocol string   `json:"protocol,omitempty"`
+	Network  string   `json:"network,omitempty"`
+	IPCIDR   []string `json:"ip_cidr,omitempty"`
+	Outbound string   `json:"outbound,omitempty"`
+	Action   string   `json:"action,omitempty"`
 }

@@ -118,14 +118,14 @@ func TestGeneratedConfig(t *testing.T) {
 	if !strings.Contains(s, `"sniff": true`) {
 		t.Errorf("tun inbound must have sniff enabled (required for the protocol:dns rule):\n%s", s)
 	}
-	if !strings.Contains(s, `"server": "dns-direct"`) || !strings.Contains(s, `"any"`) {
-		t.Errorf("DNS rule outbound:any -> dns-direct must be present (prevents the server-domain resolution loop, sing-box #2207):\n%s", s)
+	if !strings.Contains(s, `"server": "dns-direct"`) || !strings.Contains(s, `"default_domain_resolver"`) {
+		t.Errorf("route.default_domain_resolver -> dns-direct must be present (prevents the server-domain resolution loop, sing-box #2207):\n%s", s)
 	}
 	if !strings.Contains(s, `"bind_interface": "eth0"`) {
 		t.Errorf("proxy outbound must carry bind_interface:\n%s", s)
 	}
-	if !strings.Contains(s, `"action"`) {
-		t.Errorf("route rules must use rule actions (sing-box 1.11+ format):\n%s", s)
+	if !strings.Contains(s, `"hijack-dns"`) {
+		t.Errorf("route rules must use the hijack-dns action for DNS (sing-box 1.11+ format):\n%s", s)
 	}
 	if !strings.Contains(s, `"ip_cidr"`) {
 		t.Errorf("route rule excluding the VPN server IP (direct) must be present:\n%s", s)
