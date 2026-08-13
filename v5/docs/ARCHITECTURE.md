@@ -460,6 +460,7 @@ admin rights. sing-box creates TUN interfaces directly.
 | `OPS.md` | Day-to-day operations |
 | `CI-CD.md` | GitHub Actions workflow, build matrix, releases |
 | `IMPLEMENT.md` | Phased implementation plan (historical) |
+| `GAMING-UDP.md` | **Planned:** sing-box server + UDP-over-TCP change plan for gaming on hostile-UDP networks |
 | `WAILS-MIGRATION.md` | Fyne → Wails migration history & build notes |
 | `UI-AESTHETICS.md` | Visual design spec (colors, layout, icons) |
 | `FIXES.md` | Issues discovered & fixes applied (dated log) |

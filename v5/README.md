@@ -41,6 +41,7 @@ v5/
 │   ├── OPS.md             # Operations manual (day-to-day management)
 │   ├── API.md             # All API contracts (activation, heartbeat, admin)
 │   ├── UI-AESTHETICS.md   # Visual design spec (colors, layout, icons)
+│   ├── GAMING-UDP.md      # Planned: sing-box server + UDP-over-TCP for gaming
 │   └── FIXES.md           # Issues discovered & fixes applied
 │
 ├── server/                # Server deployment code (canonical — VPS modules + hooks)

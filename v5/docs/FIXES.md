@@ -1,6 +1,21 @@
 
 ---
 
+## GAMING UDP — CONSOLIDATED CHANGE PLAN (2026-08-14)
+
+The Strike-tier gaming-UDP failure chain (raw SS UDP → hostile school-network
+UDP policy; UoT removed because shadowsocks-rust RSTs SagerNet UoT) is
+consolidated into an implementation plan at `v5/docs/GAMING-UDP.md`.
+
+**Core change (P0, not yet implemented):** replace `shadowsocks-rust` with
+**sing-box server** on the VPS and enable `udp_over_tcp` on Strike both ends —
+UDP rides the existing TCP 8445 tunnel, bypassing the school's DPI-based UDP
+policy entirely. P1 validation experiments (VPS-direct byte-exact LiteNetLib
+probe, packet-rate ladder, server aliveness) are deferred until testing is
+possible. See the plan doc for the full file-change map and sequencing.
+
+---
+
 ## HISTORY ARCHIVE — CURATED ORIGINALS RESTORED (2026-08-14)
 
 After the culling rounds 1–2 deleted `originals/` wholesale, review flagged
