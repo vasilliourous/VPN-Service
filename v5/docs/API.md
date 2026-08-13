@@ -123,9 +123,7 @@ and refreshed tier config.
   "update_available": "1.1.0",
   "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
   "update_sha256": "abc123...",
-  "update_windows": "https://...myvpn.exe",
-  "update_macos_intel": "https://...myvpn-darwin-amd64",
-  "update_macos_arm": "https://...myvpn-darwin-arm64"
+  "update_windows": "https://...myvpn.exe"
 }
 ```
 
@@ -218,8 +216,6 @@ Static file served by Caddy. Contains the current update manifest for staged rol
   "version": "1.0.0",
   "rollout_percent": 0,
   "windows": null,
-  "macos_intel": null,
-  "macos_arm": null,
   "linux_amd64": null
 }
 ```

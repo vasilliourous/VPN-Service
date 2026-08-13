@@ -91,8 +91,6 @@ func NewInterface(cfg Config) (Interface, error) {
 	switch runtime.GOOS {
 	case "linux":
 		return &linuxTUN{cfg: cfg}, nil
-	case "darwin":
-		return &darwinTUN{cfg: cfg}, nil
 	case "windows":
 		return &windowsTUN{cfg: cfg}, nil
 	default:
@@ -108,8 +106,6 @@ func KillSwitch(enable bool, tunInterfaceName string) error {
 	switch runtime.GOOS {
 	case "linux":
 		return killSwitchLinux(enable, tunInterfaceName)
-	case "darwin":
-		return killSwitchDarwin(enable, tunInterfaceName)
 	case "windows":
 		return killSwitchWindows(enable, tunInterfaceName)
 	default:
@@ -142,30 +138,6 @@ func killSwitchLinux(enable bool, iface string) error {
 	return nil
 }
 
-func killSwitchDarwin(enable bool, iface string) error {
-	if enable {
-		// pf-based kill switch for macOS
-		rules := fmt.Sprintf(`
-block drop all
-pass on lo0
-pass on %s
-pass out proto udp from any to any port 53
-`, iface)
-		cmd := exec.Command("pfctl", "-E")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("cannot enable pf: %w", err)
-		}
-		cmd = exec.Command("bash", "-c", fmt.Sprintf("echo '%s' | pfctl -f -", rules))
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("cannot set pf rules: %w", err)
-		}
-	} else {
-		_ = exec.Command("pfctl", "-F", "all").Run()
-		_ = exec.Command("pfctl", "-d").Run()
-	}
-	return nil
-}
-
 func killSwitchWindows(enable bool, iface string) error {
 	if enable {
 		// Use Windows Filtering Platform via netsh
@@ -189,8 +161,6 @@ func SetDNS(servers []string) error {
 	switch runtime.GOOS {
 	case "linux":
 		return setDNSLinux(servers)
-	case "darwin":
-		return setDNSDarwin(servers)
 	case "windows":
 		return setDNSWindows(servers)
 	default:
@@ -206,18 +176,6 @@ func setDNSLinux(servers []string) error {
 	}
 	if err := exec.Command("bash", "-c", fmt.Sprintf("echo '%s' > /etc/resolv.conf", resolvContent)).Run(); err != nil {
 		return fmt.Errorf("cannot set DNS: %w", err)
-	}
-	return nil
-}
-
-func setDNSDarwin(servers []string) error {
-	for i, s := range servers {
-		if err := exec.Command("networksetup", "-setdnsservers", "Wi-Fi", s).Run(); err != nil {
-			// Try Ethernet if Wi-Fi fails
-			if i == 0 {
-				_ = exec.Command("networksetup", "-setdnsservers", "Ethernet", s).Run()
-			}
-		}
 	}
 	return nil
 }
@@ -276,37 +234,6 @@ func (t *linuxTUN) Stop() error {
 
 func (t *linuxTUN) IsUp() bool { return t.up }
 
-type darwinTUN struct {
-	cfg Config
-	up  bool
-}
-
-func (t *darwinTUN) Name() string { return t.cfg.Name }
-
-func (t *darwinTUN) Start() error {
-	cmds := [][]string{
-		{"ifconfig", t.cfg.Name, "inet", t.cfg.VirtualIP, t.cfg.VirtualIP, "up"},
-		{"route", "add", "-net", "0.0.0.0/1", "-interface", t.cfg.Name},
-		{"route", "add", "-net", "128.0.0.0/1", "-interface", t.cfg.Name},
-	}
-	for _, cmd := range cmds {
-		if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
-			_ = t.Stop()
-			return fmt.Errorf("TUN setup failed at %s: %w", cmd[0], err)
-		}
-	}
-	t.up = true
-	return nil
-}
-
-func (t *darwinTUN) Stop() error {
-	_ = exec.Command("ifconfig", t.cfg.Name, "down").Run()
-	t.up = false
-	return nil
-}
-
-func (t *darwinTUN) IsUp() bool { return t.up }
-
 type windowsTUN struct {
 	cfg Config
 	up  bool
@@ -328,5 +255,4 @@ func (t *windowsTUN) IsUp() bool { return t.up }
 
 // Ensure we implement the interface
 var _ Interface = (*linuxTUN)(nil)
-var _ Interface = (*darwinTUN)(nil)
 var _ Interface = (*windowsTUN)(nil)

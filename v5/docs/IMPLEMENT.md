@@ -31,9 +31,6 @@ sudo apt install libgl1-mesa-dev xorg-dev
 
 # Windows (cross-compile from Linux):
 sudo apt install mingw-w64
-
-# macOS: Xcode Command Line Tools
-xcode-select --install
 ```
 
 ### Project Scaffold
@@ -123,11 +120,10 @@ v5-client/
    - Charset: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no I/O/0/1)
    - Format: `MYVPN-XXXX-XXXX-XXXX-C` (18 chars with hyphens)
 
-2. **Device fingerprint** — `internal/activation/fingerprint.go` + platform files
+2. **Device fingerprint** — `internal/activation/fingerprint_linux.go` + `fingerprint_windows.go` (self-contained per platform)
    - `GenerateFingerprint() string` — SHA256 of MAC + disk serial + motherboard UUID
    - Platform sources:
      - Linux: `/sys/class/dmi/id/product_uuid`, `/sys/block/*/device/serial`, `/sys/class/net/*/address`
-     - macOS: IOKit calls for disk serial + platform UUID
      - Windows: `wmic csproduct get uuid`, `wmic diskdrive get serialnumber`
    - Fallback: random UUID (persisted in storage)
    - Result cached once per process lifetime
@@ -401,9 +397,7 @@ paths := []string{
 build              # Current platform
 build-linux        # Linux amd64 (CGO)
 build-windows      # Windows amd64 (needs MinGW CC)
-build-macos-intel  # macOS Intel (needs osxcross or Mac builder)
-build-macos-arm    # macOS Apple Silicon
-build-all          # All 4 targets
+build-all          # Linux + Windows
 clean              # Remove dist/
 ```
 
@@ -467,7 +461,7 @@ Jobs:
 [ ] Connection: kill switch blocks non-VPN traffic on disconnect
 [ ] Diagnostics: report includes all fields without PII
 [ ] Grace period: heartbeat fails 7 days → "tap to retry"
-[ ] Cross-platform: builds and runs on Windows, macOS, Linux
+[ ] Cross-platform: builds and runs on Windows and Linux
 ```
 
 ---

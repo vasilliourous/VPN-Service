@@ -58,13 +58,11 @@ const (
 // UpdateInfo describes an available update with platform-specific assets.
 // Matches the heartbeat response structure.
 type UpdateInfo struct {
-	Version               string
-	SHA256                string
-	DownloadURL           string
-	DownloadURLLinux      string
-	DownloadURLWindows    string
-	DownloadURLMacOSIntel string
-	DownloadURLMacOSARM   string
+	Version            string
+	SHA256             string
+	DownloadURL        string
+	DownloadURLLinux   string
+	DownloadURLWindows string
 }
 
 // PlatformDownloadURL returns the download URL for the current platform.
@@ -77,13 +75,6 @@ func (ui *UpdateInfo) PlatformDownloadURL() string {
 	case "windows":
 		if ui.DownloadURLWindows != "" {
 			return ui.DownloadURLWindows
-		}
-	case "darwin":
-		if runtime.GOARCH == "arm64" && ui.DownloadURLMacOSARM != "" {
-			return ui.DownloadURLMacOSARM
-		}
-		if ui.DownloadURLMacOSIntel != "" {
-			return ui.DownloadURLMacOSIntel
 		}
 	}
 	return ui.DownloadURL

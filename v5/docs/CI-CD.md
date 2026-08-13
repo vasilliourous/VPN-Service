@@ -11,19 +11,19 @@
 ```
 Push to main / PR → Lint & Vet (ubuntu-latest)
                         ↓
-               Build Matrix (4 platforms in parallel)
-              ┌───────┬───────┬───────┬───────┐
-              │ Linux │macOS  │macOS  │Windows│
-              │ amd64 │ amd64 │ arm64 │ amd64 │
-              └───┬───┴───┬───┴───┬───┴───┬───┘
-                  ↓       ↓       ↓       ↓
+               Build Matrix (2 platforms in parallel)
+              ┌───────┬─────────┐
+              │ Linux │ Windows │
+              │ amd64 │  amd64  │
+              └───┬───┴────┬────┘
+                  ↓       ↓
               ┌───────────────────────────────┐
               │       GitHub Release           │
               │  (tag pushes only: v*)         │
               └───────────────────────────────┘
 ```
 
-**File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; a stale copy under `v5/.github/` is inert and must not be edited)
+**File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; the old `v5/.github/` copy was deleted in the 2026-08 cleanup)
 
 > **⚠️ IMPORTANT — Frontend build ordering & Wails tags.** The client embeds the
 > Vue frontend via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go`
@@ -59,7 +59,7 @@ git push origin v2.0.0
 
 The pipeline will:
 1. Lint and vet all Go code
-2. Build for all 4 platform targets in parallel
+2. Build for all 2 platform targets in parallel
 3. Download the matching sing-box engine binary for each
 4. Bundle into platform ZIPs
 5. Create a GitHub Release with all artifacts + SHA256 checksums
@@ -68,13 +68,11 @@ The pipeline will:
 
 ## Build Artifacts
 
-Each release produces 4 platform bundles:
+Each release produces 2 platform bundles:
 
 | File | Platform | Contents |
 |------|----------|----------|
 | `myvpn-Linux-amd64.zip` | Linux x86_64 | `myvpn` + `sing-box` |
-| `myvpn-macOS-amd64.zip` | macOS Intel | `myvpn` + `sing-box` |
-| `myvpn-macOS-arm64.zip` | macOS Apple Silicon | `myvpn` + `sing-box` |
 | `myvpn-Windows-amd64.zip` | Windows x86_64 | `myvpn.exe` + `sing-box.exe` |
 
 The zips contain only the two binaries; the release job generates a separate
@@ -133,7 +131,7 @@ set inline per job:
 |-------|-------|
 | `VERSION` | Derived from the tag (`github.ref_name`), falling back to `"dev"`; passed via `-X main.version` |
 | `SING_BOX_VERSION` | Hardcoded as `1.12.1` in the "Download sing-box engine" step |
-| `CGO_ENABLED` | `1` for Linux/macOS (Wails WebView), `0` for Windows (WebView2 COM, pure Go) |
+| `CGO_ENABLED` | `1` for Linux (Wails WebView), `0` for Windows (WebView2 COM, pure Go) |
 
 ---
 
@@ -157,10 +155,9 @@ Then add the sing-box download URL for that platform in the "Download sing-box e
 
 ### Build fails with "CGO required"
 
-Wails requires CGO on Linux and macOS (webview embed). Windows builds with
+Wails requires CGO on Linux (webview embed). Windows builds with
 `CGO_ENABLED=0` (pure Go, WebView2 COM) — no MinGW needed in CI. Ensure:
 - Linux: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev` (Ubuntu 24.04+; older Ubuntu 22.04 uses `libwebkit2gtk-4.0-dev`)
-- macOS: Xcode Command Line Tools
 - Windows: no extra toolchain (CI); local `wails build` for Windows from Linux may need MinGW-w64
 
 ### Lint fails on unused imports

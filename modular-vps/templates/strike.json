@@ -1,9 +1,0 @@
-{
-  "server": "0.0.0.0",
-  "server_port": 8445,
-  "password": "${STRIKE_PASS}",
-  "method": "aes-256-gcm",
-  "mode": "tcp_and_udp",
-  "fast_open": true,
-  "no_delay": true
-}

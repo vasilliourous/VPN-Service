@@ -100,8 +100,6 @@ restrictive API rules, the hook will work.
 | `update_url` | text | ❌ | ❌ | Generic download URL |
 | `update_sha256` | text | ❌ | ❌ | SHA256 of update binary |
 | `download_windows` | text | ❌ | ❌ | Windows-specific URL |
-| `download_macos_intel` | text | ❌ | ❌ | macOS Intel URL |
-| `download_macos_arm` | text | ❌ | ❌ | macOS ARM URL |
 
 **API rules:**
 ```
@@ -191,7 +189,7 @@ The `ADMIN_API_TOKEN` is used by the admin unbind endpoint and the code generato
 ssh root@networkingguides.duckdns.org
 
 # Add the token to environment
-echo 'ADMIN_API_TOKEN=CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=' >> /etc/environment
+echo 'ADMIN_API_TOKEN=YOUR_ADMIN_TOKEN' >> /etc/environment
 
 # Restart PocketBase to pick it up
 systemctl restart pocketbase
@@ -199,7 +197,7 @@ systemctl restart pocketbase
 
 **Your ADMIN_API_TOKEN (keep this secret):**
 ```
-CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=
+YOUR_ADMIN_TOKEN
 ```
 
 ---
@@ -225,19 +223,19 @@ When you're ready to roll out an update, change this value (5 → 25 → 100).
 
 ```bash
 # From your local machine
-./v5/scripts/generate_codes.sh \
+./scripts/generate_codes.sh \
   https://networkingguides.duckdns.org \
-  CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4= \
+  YOUR_ADMIN_TOKEN \
   eco 50
 
-./v5/scripts/generate_codes.sh \
+./scripts/generate_codes.sh \
   https://networkingguides.duckdns.org \
-  CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4= \
+  YOUR_ADMIN_TOKEN \
   stealth 30
 
-./v5/scripts/generate_codes.sh \
+./scripts/generate_codes.sh \
   https://networkingguides.duckdns.org \
-  CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4= \
+  YOUR_ADMIN_TOKEN \
   strike 20
 ```
 

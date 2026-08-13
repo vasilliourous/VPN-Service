@@ -8,7 +8,6 @@
 // File location by platform (appName = "myvpn"):
 //
 //	Linux:   ~/.config/myvpn/storage.json
-//	macOS:   ~/Library/Application Support/myvpn/storage.json
 //	Windows: %APPDATA%\myvpn\storage.json
 //
 // Hardening: atomic writes with temp file + rename, backup rotation (keep last 3),

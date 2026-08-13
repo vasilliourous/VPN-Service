@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux
 
 package updater
 
@@ -10,13 +10,13 @@ import (
 )
 
 func init() {
-	swapFile = swapUnix
-	forkExec = forkUnix
+	swapFile = swapLinux
+	forkExec = forkLinux
 }
 
-// swapUnix performs an atomic rename on Unix systems.
-func swapUnix(newPath, currentPath string) error {
-	// On Unix, we can atomically rename the new binary over the current one.
+// swapLinux performs an atomic rename on Linux.
+func swapLinux(newPath, currentPath string) error {
+	// On Linux, we can atomically rename the new binary over the current one.
 	// The old binary is still backed up in .myvpn-backups/
 	if err := os.Rename(newPath, currentPath); err != nil {
 		return fmt.Errorf("rename failed: %w", err)
@@ -30,8 +30,8 @@ func swapUnix(newPath, currentPath string) error {
 	return nil
 }
 
-// forkUnix starts the new binary on Unix, detaching from the parent.
-func forkUnix(binaryPath string) error {
+// forkLinux starts the new binary on Linux, detaching from the parent.
+func forkLinux(binaryPath string) error {
 	cmd := exec.Command(binaryPath, os.Args[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

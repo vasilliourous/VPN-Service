@@ -162,17 +162,17 @@ After deployment, verify:
 ssh root@your-vps "cat /root/.admin_api_token"
 
 # Generate codes for each tier
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") eco 50
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") stealth 30
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") strike 20
+./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") eco 50
+./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") stealth 30
+./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") strike 20
 ```
 
 ### Print Code Cards
 
 ```bash
-./v5/scripts/print_codes.sh eco-codes.txt eco-cards.pdf
-./v5/scripts/print_codes.sh stealth-codes.txt stealth-cards.pdf
-./v5/scripts/print_codes.sh strike-codes.txt strike-cards.pdf
+./scripts/print_codes.sh eco-codes.txt eco-cards.pdf
+./scripts/print_codes.sh stealth-codes.txt stealth-cards.pdf
+./scripts/print_codes.sh strike-codes.txt strike-cards.pdf
 ```
 
 ---

@@ -23,14 +23,12 @@ v5/
 │   │   ├── heartbeat/     # Periodic health check with exponential backoff & jitter
 │   │   ├── manager/       # Sing-box process lifecycle with health monitoring
 │   │   ├── storage/       # Thread-safe JSON persistence with backup rotation
-│   │   ├── tunnel/        # TUN interface and kill switch (Linux/macOS/Windows)
+│   │   ├── tunnel/        # TUN interface and kill switch (Linux/Windows)
 │   │   └── updater/       # Two-phase crash-safe update system
 │   ├── frontend/          # Vue 3 + Vite + TypeScript UI (embedded into the binary)
 │   ├── engines/           # Sing-box engine binaries placeholder
 │   ├── go.mod
 │   └── Makefile           # Build system
-│
-├── legacy/                # Old Fyne GUI + helper binary (reference only, NOT in module)
 │
 ├── docs/
 │   ├── BACKEND-API.md     # Complete API reference for all internal/ packages
@@ -44,7 +42,7 @@ v5/
 │   ├── UI-AESTHETICS.md   # Visual design spec (colors, layout, icons)
 │   └── FIXES.md           # Issues discovered & fixes applied
 │
-├── server/                # Server deployment code (from modular-vps, hardened)
+├── server/                # Server deployment code (canonical — VPS modules + hooks)
 │   ├── modules/           # 8 idempotent setup modules (00-env → 08-firewall)
 │   ├── pb_hooks/          # PocketBase JS hooks (activation, heartbeat, admin)
 │   ├── templates/         # Config templates (Caddyfile, ssserver JSONs, systemd)
@@ -63,12 +61,12 @@ v5/
 | Version | Location | Status | Notes |
 |---------|----------|:------:|-------|
 | **V1** | *(historical)* | ❌ Lost | Two-phase update safety invented here |
-| **V2** | `originals/` | 📚 Reference | Business plans, threat models, competitive intel |
-| **V3** | `v3/` | 📚 Reference | sslocal + tun2socks architecture (tun2socks abandonware) |
+| **V2** | *(removed 2026-08)* | 📚 Git history | Business plans, threat models, competitive intel |
+| **V3** | *(removed 2026-08)* | 📚 Git history | sslocal + tun2socks architecture (tun2socks abandonware) |
 | **V4** | `v4/` | 📚 Reference | Go + Fyne client source code (predecessor to v5/client/) |
 | **V5** | `v5/` | 🏆 **Definitive** | Hardened client + hardened server + comprehensive docs |
-| **modular-vps/** | `modular-vps/` | ✅ Tested | VPS modules tested on Voyager VPS (source for v5/server/) |
-| **simplified/** | `simplified/` | 📚 Reference | Hysteria 2 / QUIC-based alternative (blocked by N4L UDP block) |
+| **modular-vps/** | *(removed 2026-08)* | 📚 Git history | VPS modules tested on Voyager VPS (source for v5/server/) |
+| **simplified/** | *(removed 2026-08)* | 📚 Git history | Hysteria 2 / QUIC-based alternative (blocked by N4L UDP block) |
 
 The **client source code** now lives in `v5/client/` — ported from v4 with
 significant hardening improvements (see below). The older `v4/` directory
@@ -112,8 +110,8 @@ DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
 # 2. Create PocketBase admin account at https://networkingguides.duckdns.org/_/
 #    Then create collections: codes, tier_configs, activation_attempts, update_config
 
-# 3. Generate activation codes
-./v5/scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
+# 3. Generate activation codes (root scripts/ is canonical)
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
 
 # 4. Build client
 cd v5/client && make build
@@ -159,10 +157,8 @@ The client is built and released via **GitHub Actions**.
 
 ### Build Artifacts
 
-Each release produces 4 platform bundles:
+Each release produces 2 platform bundles:
 - `myvpn-Linux-amd64.zip` — Linux x86_64
-- `myvpn-macOS-amd64.zip` — macOS Intel
-- `myvpn-macOS-arm64.zip` — macOS Apple Silicon
 - `myvpn-Windows-amd64.zip` — Windows x86_64
 
 Each bundle contains:

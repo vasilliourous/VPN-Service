@@ -163,8 +163,7 @@ v5/client/
 | 4.3 | Grace period: countdown display + warning when ≤3 days remain |
 | 4.4 | Error handling: toast notifications for heartbeat failures, connection errors |
 | 4.5 | Windows: no terminal window, proper taskbar icon |
-| 4.6 | macOS: menu bar integration, template icon |
-| 4.7 | Linux: `.desktop` file, system tray indicator |
+| 4.6 | Linux: `.desktop` file, system tray indicator |
 
 ---
 
@@ -269,11 +268,10 @@ frontend as embedded assets. Ship with `sing-box` alongside it.
 cd v5/client
 GOOS=linux GOARCH=amd64 wails build -tags frontend -o dist/myvpn-linux
 GOOS=windows GOARCH=amd64 wails build -tags frontend -o dist/myvpn.exe
-GOOS=darwin GOARCH=arm64 wails build -tags frontend -o dist/myvpn-darwin-arm64
 ```
 
 Wails handles the cross-compilation. Ensure the target platform's webview is
-available (WebView2 on Windows, WebKit on macOS/Linux).
+available (WebView2 on Windows, WebKit on Linux).
 
 ### Build Tags (embed vs stub)
 

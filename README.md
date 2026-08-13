@@ -5,9 +5,10 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 
 > **The authoritative version of everything below is `v5/`** — hardened client
 > (`v5/client/`, Go + Wails + Vue 3), server deployment (`v5/server/`), and docs
-> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`, `modular-vps/`) are
-> historical reference only. Directories removed in the 2026-08 cleanup
-> (`v3/`, `simplified/`, `originals/`, `v5/legacy/`) are recoverable from git history.
+> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`) are historical
+> reference only. Directories removed in the 2026-08 cleanup
+> (`v3/`, `simplified/`, `originals/`, `v5/legacy/`, `modular-vps/`, root
+> `CONTEXT.md`, `v5/scripts/`) are recoverable from git history.
 
 ---
 
@@ -93,16 +94,14 @@ VPN-Service/
 │   │   └── Makefile          ← dev / build / build-all targets
 │   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
 │   ├── docs/                 ← Architecture, deploy, ops, API, fixes
-│   ├── scripts/              ← Code generator + card printer
 │   ├── README.md             ← V5 overview
 │   └── CONTEXT.md            ← Full agent/developer context
-├── modular-vps/              ← Original server modules (source for v5/server/)
 ├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)
 ├── scripts/                  ← Operational tooling
 │   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
 │   └── print_codes.sh        ── Printable PDF code cards
 └── .github/workflows/        ← CI/CD
-    └── build.yml             ── Build + release for all platforms (Wails)
+    └── build.yml             ── Build + release for Linux + Windows (Wails)
 ```
 
 ---
@@ -212,11 +211,11 @@ This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 
 ```bash
 cd v5/client
 make build          # current platform only
-make build-all      # Linux + Windows + macOS (Intel/ARM)
+make build-all      # Linux + Windows
 ```
 
 Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds, bundles, and releases
-all 4 platform zips automatically (`myvpn` + `sing-box` per platform).
+both platform zips automatically (`myvpn` + `sing-box` per platform).
 
 ### Step 5: Install & Test
 

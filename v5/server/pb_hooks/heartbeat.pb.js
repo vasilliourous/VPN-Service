@@ -34,8 +34,6 @@ routerAdd("POST", "/api/heartbeat", function(e) {
                         response.update_sha256 = u.get("update_sha256");
                         if (u.get("download_linux")) response.update_linux = u.get("download_linux");
                         if (u.get("download_windows")) response.update_windows = u.get("download_windows");
-                        if (u.get("download_macos_intel")) response.update_macos_intel = u.get("download_macos_intel");
-                        if (u.get("download_macos_arm")) response.update_macos_arm = u.get("download_macos_arm");
                     }
                 }
             }

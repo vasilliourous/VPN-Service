@@ -112,7 +112,7 @@ curl -X POST "$PB_API/api/admin/unbind-code" \
 
 ```bash
 # From your local machine
-./v5/scripts/generate_codes.sh "$PB_API" "$ADMIN_TOKEN" eco 10
+./scripts/generate_codes.sh "$PB_API" "$ADMIN_TOKEN" eco 10
 ```
 
 ---
@@ -175,9 +175,7 @@ In PocketBase admin UI → `update_config` collection → create record:
   "active": true,
   "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
   "update_sha256": "sha256-of-the-binary",
-  "download_windows": "https://...myvpn-windows-amd64.exe",
-  "download_macos_intel": "https://...myvpn-darwin-amd64",
-  "download_macos_arm": "https://...myvpn-darwin-arm64"
+  "download_windows": "https://...myvpn-windows-amd64.exe"
 }
 ```
 

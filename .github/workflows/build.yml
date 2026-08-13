@@ -120,20 +120,6 @@ jobs:
             ext: ""
             cgo: "1"   # Wails needs CGO for WebKitGTK
             tags: "frontend desktop production webkit2_41"  # ubuntu-latest ships WebKitGTK 4.1
-          - label: macOS-amd64
-            os: macos-latest
-            goos: darwin
-            goarch: amd64
-            ext: ""
-            cgo: "1"   # Wails needs CGO for WKWebView
-            tags: "frontend desktop production"
-          - label: macOS-arm64
-            os: macos-latest
-            goos: darwin
-            goarch: arm64
-            ext: ""
-            cgo: "1"   # Wails needs CGO for WKWebView
-            tags: "frontend desktop production"
           - label: Windows-amd64
             os: windows-latest
             goos: windows
@@ -220,11 +206,6 @@ jobs:
               tar -xzf "sing-box-${SING_VERSION}-linux-amd64.tar.gz"
               cp "sing-box-${SING_VERSION}-linux-amd64/sing-box" .
               ;;
-            macOS)
-              curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}.tar.gz"
-              tar -xzf "sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}.tar.gz"
-              cp "sing-box-${SING_VERSION}-darwin-${{ matrix.goarch }}/sing-box" .
-              ;;
             Windows)
               curl -sLO "https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/sing-box-${SING_VERSION}-windows-amd64.zip"
               unzip -qo "sing-box-${SING_VERSION}-windows-amd64.zip"
@@ -283,8 +264,6 @@ jobs:
             | Platform | File |
             |----------|------|
             | Windows | `myvpn-Windows-amd64.zip` |
-            | macOS Intel | `myvpn-macOS-amd64.zip` |
-            | macOS ARM | `myvpn-macOS-arm64.zip` |
             | Linux | `myvpn-Linux-amd64.zip` |
 
             ### What's Included

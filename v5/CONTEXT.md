@@ -40,13 +40,10 @@ VPN-Service/
 │   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.0.0)
 │   ├── server/         ← VPS deployment modules + PocketBase hooks
 │   ├── docs/           ← Architecture, deploy, ops, API, fixes
-│   ├── scripts/        ← Code generator + card printer
 │   ├── README.md       ← V5 overview
 │   └── CONTEXT.md      ← THIS FILE
 ├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
-├── modular-vps/        ← Original server modules (source for v5/server/)
-├── scripts/            ← Code generator + PDF card printer (copied to v5/scripts/)
-├── CONTEXT.md          ← ROOT context (older, superseded by v5/CONTEXT.md)
+├── scripts/            ← Code generator + PDF card printer (canonical location)
 └── README.md, .github/...
 ```
 
@@ -58,14 +55,22 @@ VPN-Service/
 | `v5/client/` | Hardened Go + Wails/Vue 3 client source code | **Client developers** |
 | `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
 | `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
-| `v5/scripts/` | Code generator + card printer | Middleman managers |
 | `v4/` | Predecessor client code | Reference only — use v5/client/ |
+| `scripts/` (root) | Luhn-mod-N code generator + PDF card printer | Middleman managers |
+
+> **2026-08 culling (round 2):** `modular-vps/`, root `CONTEXT.md`, and
+> `v5/scripts/` were deleted as stale duplicates — `v5/server/` is the one and
+> only server deployment directory (it absorbed `hiddify.pb.js`), root
+> `scripts/` is the one and only code-generator location, and `v5/CONTEXT.md`
+> is the one and only context document. macOS support was dropped from the
+> client (unsigned builds are unusable there); darwin code and CI targets were
+> removed. All deleted files remain recoverable from git history.
 
 ---
 
 ## 3. V5 — What Makes It Different
 
-V5 exists because earlier versions (V1–V4, modular-vps, simplified) were spread
+V5 exists because earlier versions (V1–V4) were spread
 across the repo with overlapping docs, untested assumptions, and no central reference.
 V5 consolidates everything into one place: **both client and server code**, hardened
 from real-world testing, with comprehensive documentation.
@@ -158,17 +163,15 @@ v5/client/
 │   ├── storage/storage.go      # Persistent JSON state (thread-safe, atomic writes, backups)
 │   ├── activation/
 │   │   ├── activation.go       # Activation client with retry + context + ValidateCodeFormat
-│   │   ├── fingerprint.go      # SHA256 hardware fingerprint (cross-platform)
-│   │   ├── fingerprint_linux.go
-│   │   ├── fingerprint_darwin.go
-│   │   ├── fingerprint_windows.go
+│   │   ├── fingerprint_linux.go   # Self-contained fingerprint (shared logic + Linux collector)
+│   │   ├── fingerprint_windows.go # Self-contained fingerprint (shared logic + Windows collector)
 │   │   └── luhn.go             # Luhn-mod-N checksum validation
 │   ├── heartbeat/heartbeat.go  # Periodic server health check with jitter
 │   ├── manager/process.go      # Sing-box lifecycle + config generation
 │   ├── updater/
 │   │   ├── updater.go          # Two-phase update with crash safety
 │   │   ├── recover.go          # Crash detection and auto-revert
-│   │   ├── update_unix.go      # Unix binary swap + fork
+│   │   ├── update_linux.go     # Linux binary swap + fork
 │   │   └── update_windows.go   # Windows binary swap + fork
 │   └── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
 ├── frontend/                    # Vue 3 + TypeScript + Vite UI
@@ -193,7 +196,7 @@ client in `v4/`; removed files recoverable from git history)
 | Client version | 2.0.0 |
 | Engine | sing-box 1.10.0 |
 | Min Go version | 1.22 |
-| Platforms | Linux, macOS (Intel+ARM), Windows |
+| Platforms | Linux, Windows |
 | Dependencies | Wails v2 + Vue 3 (Fyne removed) |
 
 ---

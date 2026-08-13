@@ -17,7 +17,6 @@
 - **WebView build deps (CGO):**
   - Linux: `sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev` (Ubuntu 22.04)
     or `libwebkit2gtk-4.1-dev` (Ubuntu 24.04+)
-  - macOS: Xcode Command Line Tools
   - Windows: WebView2 (included in Windows 10+); CI builds Windows with
     `CGO_ENABLED=0` (pure Go, WebView2 COM)
 - **sing-box binary** in `v5/client/engines/` or alongside the built app
@@ -66,9 +65,7 @@ make dev             # Builds frontend, then wails dev (Vite dev server)
 ```bash
 make build-linux        # Linux amd64
 make build-windows      # Windows amd64 (CGO_ENABLED=0 in CI)
-make build-macos-intel  # macOS Intel
-make build-macos-arm    # macOS Apple Silicon
-make build-all          # All four targets
+make build-all          # Both targets
 ```
 
 ### CI/CD
@@ -76,7 +73,7 @@ make build-all          # All four targets
 The `.github/workflows/build.yml` workflow (repo root):
 1. Lints and vets all Go code
 2. Builds the Vue frontend, then the client with `-tags frontend`
-3. Builds for Linux, macOS (Intel + ARM), Windows in parallel
+3. Builds for Linux and Windows in parallel
 4. Downloads the matching sing-box binary (1.10.0) for each platform
 5. Bundles 2 binaries (`myvpn` + `sing-box`) into platform ZIPs
 6. Creates a GitHub Release with a `checksums.sha256` file
@@ -98,10 +95,8 @@ v5/client/
 │   ├── storage/storage.go      # Persistent JSON state (thread-safe, atomic writes)
 │   ├── activation/
 │   │   ├── activation.go        # Activation client, server communication
-│   │   ├── fingerprint.go       # SHA256 hardware fingerprint (cross-platform)
-│   │   ├── fingerprint_linux.go # Linux source collection (sysfs)
-│   │   ├── fingerprint_darwin.go# macOS source collection (networksetup/ioreg)
-│   │   ├── fingerprint_windows.go# Windows source collection (PowerShell/WMI)
+│   │   ├── fingerprint_linux.go # Self-contained fingerprint (shared logic + Linux collector)
+│   │   ├── fingerprint_windows.go# Self-contained fingerprint (shared logic + Windows collector)
 │   │   └── luhn.go             # Luhn-mod-N checksum validation
 │   ├── heartbeat/heartbeat.go  # Periodic hub communication (5min→2h backoff)
 │   ├── manager/process.go      # sing-box config generation + process lifecycle
@@ -109,7 +104,7 @@ v5/client/
 │   └── updater/
 │       ├── updater.go          # Two-phase sentinel update system
 │       ├── recover.go          # Crash detection and auto-revert
-│       ├── update_unix.go      # Unix binary swap + fork
+│       ├── update_linux.go      # Linux binary swap + fork
 │       └── update_windows.go   # Windows binary swap + fork (.old trick)
 ├── frontend/              # Vue 3 + Vite + TypeScript UI (embedded into binary)
 │   └── src/
@@ -260,8 +255,7 @@ Content-Type: application/json
 ## 6. Storage Format
 
 **File:** `os.UserConfigDir()/myvpn/storage.json`
-(`~/.config/myvpn/storage.json` on Linux, `~/Library/Application Support/myvpn/`
-on macOS, `%APPDATA%\myvpn\` on Windows).
+(`~/.config/myvpn/storage.json` on Linux, `%APPDATA%\myvpn\` on Windows).
 
 ```json
 {
@@ -349,13 +343,6 @@ never emitted for any tier.
 - **WebView deps:** `libgtk-3-dev` + `libwebkit2gtk-4.0-dev` (22.04) or `4.1` (24.04+)
 - **Build tag:** add `webkit2_41` when building against WebKitGTK 4.1 (Ubuntu 24.04+):
   `go build -tags "frontend desktop production webkit2_41" .`
-
-### macOS
-- **TUN:** sing-box creates `myvpn0` directly
-- **Fingerprint:** `networksetup -getmacaddress en0/en1`, `ioreg IOPlatformSerialNumber`,
-  `ioreg IOPlatformUUID`
-- **WebView:** Xcode Command Line Tools (clang)
-- **Notarization:** Requires an Apple Developer account for distribution
 
 ### Windows
 - **TUN:** sing-box creates the TUN interface (Wintun driver) directly

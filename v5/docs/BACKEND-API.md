@@ -63,7 +63,6 @@ type ServerConfig struct {
 // appName is used as the subdirectory name (e.g. "myvpn").
 // File locations:
 //   Linux:   ~/.config/<appName>/storage.json
-//   macOS:   ~/Library/Application Support/<appName>/storage.json
 //   Windows: %APPDATA%\<appName>\storage.json
 func New(appName string) (*Store, error)
 ```
@@ -132,7 +131,7 @@ func SanitizePath(name string) string
 
 ## 2. Package: `activation`
 
-**Files:** `internal/activation/activation.go`, `luhn.go`, `fingerprint.go`, `fingerprint_{darwin,linux,windows}.go`
+**Files:** `internal/activation/activation.go`, `luhn.go`, `fingerprint_linux.go`, `fingerprint_windows.go`
 **Import:** `"myvpn/internal/activation"`
 **Purpose:** Code validation (Luhn-mod-N), device fingerprinting, server activation API.
 
@@ -237,9 +236,8 @@ func ValidateFingerprint(fp string) bool
 
 | File | Build Tag | Source |
 |------|-----------|--------|
-| `fingerprint_darwin.go` | `darwin` | MAC via `networksetup` on `en0/en1`; disk serial via `ioreg IOPlatformSerialNumber`; motherboard via `ioreg IOPlatformUUID` |
-| `fingerprint_linux.go` | `linux` | MAC via `/sys/class/net/*/address`, disk via `/sys/block/*/device/serial`, motherboard via `/sys/class/dmi/id/product_uuid` |
-| `fingerprint_windows.go` | `windows` | MAC via PowerShell `Get-NetAdapter`, disk via WMI `Win32_DiskDrive`, motherboard via WMI `Win32_ComputerSystemProduct` |
+| `fingerprint_linux.go` | `linux` | Self-contained: shared logic (hashSources/UUID/validate) + MAC via `/sys/class/net/*/address`, disk via `/sys/block/*/device/serial`, motherboard via `/sys/class/dmi/id/product_uuid` |
+| `fingerprint_windows.go` | `windows` | Self-contained: shared logic (hashSources/UUID/validate) + MAC via PowerShell `Get-NetAdapter`, disk via WMI `Win32_DiskDrive`, motherboard via WMI `Win32_ComputerSystemProduct` |
 
 ---
 
@@ -374,10 +372,8 @@ type Response struct {
     UpdateAvailable string `json:"update_available,omitempty"`
     UpdateURL      string `json:"update_url,omitempty"`
     UpdateSHA256   string `json:"update_sha256,omitempty"`
-    UpdateLinux    string `json:"update_linux,omitempty"`
-    UpdateWindows  string `json:"update_windows,omitempty"`
-    UpdateMacOSIntel string `json:"update_macos_intel,omitempty"`
-    UpdateMacOSARM string `json:"update_macos_arm,omitempty"`
+    UpdateLinux   string `json:"update_linux,omitempty"`
+    UpdateWindows string `json:"update_windows,omitempty"`
 }
 
 type Result struct {
@@ -485,12 +481,10 @@ const MinDownloadSize  = 1024 * 1024        // 1MB
 ```go
 type UpdateInfo struct {
     Version                string
-    SHA256                 string
-    DownloadURL            string  // generic/fallback
-    DownloadURLLinux       string
-    DownloadURLWindows     string
-    DownloadURLMacOSIntel  string
-    DownloadURLMacOSARM    string
+    SHA256              string
+    DownloadURL         string  // generic/fallback
+    DownloadURLLinux    string
+    DownloadURLWindows  string
 }
 
 // PlatformDownloadURL returns the right URL for the current OS/arch.
@@ -563,7 +557,7 @@ func DiagnoseRecovery(appDir string) *RecoveryState
 
 | File | Build Tag | Swap Strategy |
 |------|-----------|---------------|
-| `update_unix.go` | `!windows` | `os.Rename` (atomic), `exec.Command` with `Setpgid` |
+| `update_linux.go` | `linux` | `os.Rename` (atomic), `exec.Command` with `Setpgid` |
 | `update_windows.go` | `windows` | Rename to `.old`, move new in place, cleanup `.old`; `CREATE_NEW_PROCESS_GROUP` |
 
 ### Update Flow
@@ -623,16 +617,15 @@ type Interface interface {
 func DefaultConfig() Config
 
 // NewInterface creates a TUN interface for the current platform.
-// Returns linuxTUN, darwinTUN, or windowsTUN (all implement Interface).
+// Returns linuxTUN or windowsTUN (all implement Interface).
 func NewInterface(cfg Config) (Interface, error)
 
 // SetDNS configures the system DNS servers through the tunnel
-// (resolv.conf on Linux, networksetup on macOS, netsh on Windows).
+// (resolv.conf on Linux, netsh on Windows).
 func SetDNS(servers []string) error
 
 // KillSwitch enables or disables the kill switch.
 // On Linux: iptables rules to block non-TUN traffic.
-// On macOS: pfctl rules.
 // On Windows: netsh advfirewall block rule.
 func KillSwitch(enable bool, tunInterfaceName string) error
 ```
@@ -642,7 +635,6 @@ func KillSwitch(enable bool, tunInterfaceName string) error
 | Platform | Type | TUN Creation | Routes |
 |----------|------|-------------|--------|
 | Linux | `linuxTUN` | `ip tuntap add` + `ip addr add <vip>/24` + `ip link set mtu` + `ip link set up` | `ip route add 0.0.0.0/1 dev myvpn0`, `ip route add 128.0.0.0/1 dev myvpn0` |
-| macOS | `darwinTUN` | `ifconfig myvpn0 inet 10.0.0.2 10.0.0.2 up` | `route add -net 0.0.0.0/1 -interface myvpn0`, `route add -net 128.0.0.0/1 -interface myvpn0` |
 | Windows | `windowsTUN` | Requires myvpn-helper service | Not directly implemented |
 
 > **Note:** In normal operation, TUN is managed by sing-box (via the manager package).
@@ -692,12 +684,11 @@ These files use build tags and must be included in any build:
 
 | Package | File | Tag | Purpose |
 |---------|------|-----|---------|
-| `activation` | `fingerprint_darwin.go` | `darwin` | MAC + motherboard collection |
-| `activation` | `fingerprint_linux.go` | `linux` | MAC + disk + motherboard collection |
-| `activation` | `fingerprint_windows.go` | `windows` | MAC + disk + motherboard collection |
+| `activation` | `fingerprint_linux.go` | `linux` | Self-contained fingerprint (shared logic + Linux collector) |
+| `activation` | `fingerprint_windows.go` | `windows` | Self-contained fingerprint (shared logic + Windows collector) |
 | `manager` | `process_unix.go` | `!windows` | `Setpgid: true` for process detachment |
 | `manager` | `process_windows.go` | `windows` | `CREATE_NEW_PROCESS_GROUP` |
-| `updater` | `update_unix.go` | `!windows` | Atomic rename + fork with `Setpgid` |
+| `updater` | `update_linux.go` | `linux` | Atomic rename + fork with `Setpgid` |
 | `updater` | `update_windows.go` | `windows` | `.old` rename trick + fork with `CREATE_NEW_PROCESS_GROUP` |
 
 > **Note:** The old Fyne GUI (`internal/gui/`) and the separate TUN helper binary

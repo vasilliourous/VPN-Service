@@ -121,7 +121,7 @@ Persistent state management. Single JSON file, thread-safe, atomic writes.
 }
 ```
 
-**File location:** `os.UserConfigDir()/myvpn/storage.json` — `~/.config/myvpn/storage.json` (Linux), `~/Library/Application Support/myvpn/storage.json` (macOS), `%APPDATA%\myvpn\storage.json` (Windows).
+**File location:** `os.UserConfigDir()/myvpn/storage.json` — `~/.config/myvpn/storage.json` (Linux), `%APPDATA%\myvpn\storage.json` (Windows).
 
 **Atomic write strategy:** Write to `.tmp` file, then `rename()` over target. This prevents corruption from crashes during write.
 
@@ -148,7 +148,7 @@ User enters code → strip formatting → Luhn-mod-N check
 
 **Hardware fingerprinting:**
 - SHA256 of MAC address + disk serial + motherboard UUID
-- Platform-specific collection (Linux: sysfs, macOS: networksetup/ioreg, Windows: PowerShell/WMI)
+- Platform-specific collection (Linux: sysfs, Windows: PowerShell/WMI)
 - Fallback chain: full hardware → MAC+hostname → random UUID (persisted)
 - Fingerprint is STABLE once generated (cached in memory, persisted in storage)
 
@@ -418,13 +418,13 @@ Update:
 
 ## 6. Platform Support
 
-| Component | Linux | macOS | Windows |
-|-----------|:-----:|:-----:|:-------:|
-| Wails + Vue 3 GUI | ✅ | ✅ | ✅ |
-| Hardware fingerprint | ✅ sysfs | ✅ networksetup / ioreg | ✅ PowerShell / WMI |
-| sing-box TUN | ✅ direct | ✅ direct | ✅ direct |
-| Binary swap | ✅ rename | ✅ rename | ✅ .old trick |
-| sing-box binary | linux-amd64 | darwin-amd64 / arm64 | windows-amd64 |
+| Component | Linux | Windows |
+|-----------|:-----:|:-------:|
+| Wails + Vue 3 GUI | ✅ | ✅ |
+| Hardware fingerprint | ✅ sysfs | ✅ PowerShell / WMI |
+| sing-box TUN | ✅ direct | ✅ direct |
+| Binary swap | ✅ rename | ✅ .old trick |
+| sing-box binary | linux-amd64 | windows-amd64 |
 
 **No privileged helper service needed** — BYOD environment means the user has
 admin rights. sing-box creates TUN interfaces directly.

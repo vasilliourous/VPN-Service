@@ -62,10 +62,8 @@ type Response struct {
 	UpdateAvailable  string `json:"update_available,omitempty"`
 	UpdateURL        string `json:"update_url,omitempty"`
 	UpdateSHA256     string `json:"update_sha256,omitempty"`
-	UpdateLinux      string `json:"update_linux,omitempty"`
-	UpdateWindows    string `json:"update_windows,omitempty"`
-	UpdateMacOSIntel string `json:"update_macos_intel,omitempty"`
-	UpdateMacOSARM   string `json:"update_macos_arm,omitempty"`
+	UpdateLinux   string `json:"update_linux,omitempty"`
+	UpdateWindows string `json:"update_windows,omitempty"`
 
 	// Config refresh
 	ServerConfig *ServerConfig `json:"server_config,omitempty"`

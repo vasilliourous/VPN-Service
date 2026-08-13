@@ -1,6 +1,28 @@
 
 ---
 
+## REPO CULLING ROUND 2 — STREAMLINED LAYOUT (2026-08-13)
+
+Continuation of the 2026-08 cleanup (round 1 removed `v3/`, `simplified/`,
+`originals/`, `v5/legacy/`). Round 2 consolidates duplicates and drops dead
+platform support. All removed files are recoverable from git history.
+
+| # | Change | Rationale |
+|:-:|--------|-----------|
+| C1 | `modular-vps/` deleted | Stale duplicate of `v5/server/` (untouched by commits since 2026-07-27). `v5/server/` is the one and only server deployment directory. Its `hiddify.pb.js` hook was moved into `v5/server/pb_hooks/`. |
+| C2 | Root `CONTEXT.md` deleted | Superseded by `v5/CONTEXT.md` — one context document. |
+| C3 | `v5/scripts/` deleted | Duplicate of root `scripts/` (which holds the newer hardened `generate_codes.sh`). Root `scripts/` is canonical; all docs updated to `./scripts/…`. |
+| C4 | macOS (darwin) support dropped from client | Unsigned builds are unusable on macOS (no Apple signing/notarization). Removed `darwin_link.go`, `darwinTUN`/`killSwitchDarwin`/`setDNSDarwin` from `tunnel.go`, darwin case in `process.go`, macOS URLs in `updater.go`/`heartbeat.go`, and darwin targets from `.github/workflows/build.yml` + Makefile. Client now builds Linux + Windows only. |
+| C5 | Fingerprint files made self-contained | `fingerprint.go` (shared) + `fingerprint_darwin.go` deleted; shared logic (hashSources, UUID fallback, ValidateFingerprint, caching) folded into `fingerprint_linux.go` and `fingerprint_windows.go`. `update_unix.go` → `update_linux.go` (linux-only, macOS gone). |
+| C6 | `POCKETBASE-SETUP.md` leaked admin token | Five hardcoded `ADMIN_API_TOKEN` values replaced with `YOUR_ADMIN_TOKEN` placeholder. |
+
+**Docs updated:** root `README.md`, `v5/README.md`, `v5/CONTEXT.md`,
+`v5/docs/ARCHITECTURE.md`, `BACKEND-API.md`, `CLIENT-GUIDE.md`, `CI-CD.md`,
+`API.md`, `OPS.md`, `DEPLOY.md`, `POCKETBASE-SETUP.md`, `IMPLEMENT.md`,
+`WAILS-MIGRATION.md`, `.github/workflows/build.yml`, `v5/client/Makefile`.
+
+---
+
 ## DEPLOY/RESTORE — PLUG-N-PLAY HARDENING (2026-08-01)
 
 Validated a full blank-VPS deploy + B2 restore live (114.23.136.59). The deploy
