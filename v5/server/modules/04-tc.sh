@@ -60,9 +60,12 @@ if ! tc class add dev "$IFACE" parent 1: classid "$CLASSID" htb rate "$RATE" cei
 fi
 
 # Add or replace the filter
+# Idempotency: this parent holds ONLY the tier-port filters, so flush it
+# first — `tc filter add` with an identical u32 spec silently creates
+# DUPLICATES (observed on the 2026-08-14 deploy: 4 copies of each filter),
+# and a spec-matching `tc filter del` is unreliable across versions.
+tc filter del dev "$IFACE" parent 1: 2>/dev/null || true
 tc filter add dev "$IFACE" protocol ip parent 1: prio 10 u32 \
-    match ip sport "$PORT" 0xffff flowid "$CLASSID" 2>/dev/null || \
-tc filter change dev "$IFACE" protocol ip parent 1: prio 10 u32 \
     match ip sport "$PORT" 0xffff flowid "$CLASSID" 2>/dev/null || true
 
 echo "[tc-apply] Port $PORT → $CLASSID @ $RATE on $IFACE"
