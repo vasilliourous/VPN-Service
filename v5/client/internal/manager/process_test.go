@@ -131,3 +131,62 @@ func TestGeneratedConfig(t *testing.T) {
 		t.Errorf("route rule excluding the VPN server IP (direct) must be present:\n%s", s)
 	}
 }
+
+// TestGeneratedConfigUOT verifies the UDP-over-TCP branch:
+//   - raw-UDP tiers (no advertised uot_port) must produce config byte-identical
+//     in behaviour to before — no udp_over_tcp, no proxy-uot outbound;
+//   - Strike with an advertised uot_port gets a dedicated UoT outbound
+//     (udp_over_tcp: true) + a network:udp route rule, while TCP stays on the
+//     standard port/outbound.
+func TestGeneratedConfigUOT(t *testing.T) {
+	base := Config{Server: "example.com", ServerPort: 8445, Password: "x", Method: "aes-256-gcm"}
+
+	// 1. No UDP tier: nothing changes.
+	raw, err := generateConfig(base)
+	if err != nil {
+		t.Fatalf("generateConfig: %v", err)
+	}
+	rawS := string(raw)
+	if strings.Contains(rawS, `"udp_over_tcp"`) || strings.Contains(rawS, "proxy-uot") {
+		t.Errorf("non-UDP tier must NOT emit UoT config:\n%s", rawS)
+	}
+
+	// 2. UDP tier but NO advertised uot_port: still raw UDP (server can't UoT).
+	udpOnly := base
+	udpOnly.UDPRelay = true
+	raw2, err := generateConfig(udpOnly)
+	if err != nil {
+		t.Fatalf("generateConfig: %v", err)
+	}
+	if strings.Contains(string(raw2), `"udp_over_tcp"`) || strings.Contains(string(raw2), "proxy-uot") {
+		t.Errorf("UDPRelay without advertised uot_port must NOT emit UoT config (shadowsocks-rust RSTs it):\n%s", raw2)
+	}
+
+	// 3. UDP tier + advertised uot_port: UoT outbound + UDP route rule.
+	uot := base
+	uot.UDPRelay = true
+	uot.ServerPortUOT = 8446
+	uotS, err := generateConfig(uot)
+	if err != nil {
+		t.Fatalf("generateConfig: %v", err)
+	}
+	s := string(uotS)
+	if !strings.Contains(s, `"tag": "proxy-uot"`) {
+		t.Errorf("UoT tier must add a proxy-uot outbound:\n%s", s)
+	}
+	if !strings.Contains(s, `"udp_over_tcp": true`) {
+		t.Errorf("proxy-uot outbound must set udp_over_tcp: true:\n%s", s)
+	}
+	if !strings.Contains(s, `"server_port": 8446`) {
+		t.Errorf("proxy-uot must point at the advertised uot_port (8446):\n%s", s)
+	}
+	if !strings.Contains(s, `"network": "udp"`) || !strings.Contains(s, `"outbound": "proxy-uot"`) {
+		t.Errorf("a network:udp route rule must pin UDP to proxy-uot:\n%s", s)
+	}
+	if !strings.Contains(s, `"tag": "proxy"`) || !strings.Contains(s, `"server_port": 8445`) {
+		t.Errorf("the TCP proxy outbound must stay on the standard port (8445):\n%s", s)
+	}
+	if !strings.Contains(s, `"final": "proxy"`) {
+		t.Errorf("route final must remain proxy (TCP unchanged):\n%s", s)
+	}
+}

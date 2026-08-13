@@ -179,12 +179,17 @@ type Config struct {
 	Password   string
 	Method     string
 	TierName   string
-	// UDPRelay is INFORMATIONAL only (tier supports UDP): it must NOT enable
-	// UDP-over-TCP. sing-box's udp_over_tcp is a proprietary SagerNet protocol
-	// that shadowsocks-rust rejects (RST — see generateConfig note and
-	// docs/FIXES.md Follow-up 9). UDP flows raw (standard ss UDP).
+	// UDPRelay is true when the tier supports UDP (Strike). It does NOT by
+	// itself enable UDP-over-TCP: UoT is only used when ServerPortUOT > 0
+	// (server advertises a UoT-capable sing-box endpoint). Otherwise UDP
+	// flows raw (standard ss UDP) — see generateConfig note and
+	// docs/FIXES.md Follow-up 9.
 	UDPRelay bool
-	HubURL   string
+	// ServerPortUOT is the optional UDP-over-TCP endpoint (sing-box server).
+	// When > 0 and UDPRelay is true, UDP is routed to a dedicated UoT
+	// outbound on this port; TCP stays on ServerPort.
+	ServerPortUOT int
+	HubURL        string
 }
 
 // Validate checks that the config is valid.
@@ -715,17 +720,36 @@ func generateConfig(cfg Config) ([]byte, error) {
 		}
 	}
 
-	// NOTE: UDP-over-TCP (udp_over_tcp) is deliberately NOT configured.
-	// sing-box's UDP-over-TCP is a proprietary SagerNet protocol (magic
-	// domains sp.udp-over-tcp.arpa / sp.v2.udp-over-tcp.arpa), NOT the
-	// Shadowsocks standard — the deployed server (shadowsocks-rust) does not
-	// implement it and RSTs every such connection (observed 2026-08-01:
-	// "An existing connection was forcibly closed by the remote host" ~300ms
-	// after each UoT dial; browsers then spin in QUIC retry loops → "connects
-	// but nothing loads"). UDP therefore goes RAW (standard ss UDP; Strike
-	// server mode tcp_and_udp) and works wherever the network allows UDP; on
-	// UDP-blocking networks (N4L school WiFi) clients fall back to TCP.
-	// Revisit only if a sing-box SERVER is deployed for the tier.
+	// UDP-over-TCP (UoT) — used ONLY when the server advertises a UoT
+	// endpoint (ServerPortUOT > 0, sing-box server). sing-box's UoT is a
+	// proprietary SagerNet protocol (magic domains sp.udp-over-tcp.arpa /
+	// sp.v2.udp-over-tcp.arpa), NOT the Shadowsocks standard — the default
+	// server (shadowsocks-rust) does not implement it and RSTs every such
+	// connection (observed 2026-08-01: "forcibly closed" ~300ms after each
+	// UoT dial). So unless the tier advertises uot_port, UDP stays RAW
+	// (standard ss UDP; Strike server mode tcp_and_udp) and works wherever
+	// the network allows UDP; on UDP-blocking networks (N4L school WiFi)
+	// clients fall back to TCP.
+	//
+	// When UoT IS advertised: UDP is pinned to a dedicated UoT outbound on
+	// the sing-box server port, while TCP stays on the standard port — the
+	// school firewall only sees TCP, and game UDP rides inside it.
+	uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0
+	if uotEnabled {
+		config.Outbounds = append(config.Outbounds, Outbound{
+			Type:       "shadowsocks",
+			Tag:        "proxy-uot",
+			Server:     cfg.Server,
+			ServerPort: cfg.ServerPortUOT,
+			Method:     cfg.Method,
+			Password:   cfg.Password,
+			UDPOverTCP: true,
+		})
+		// Route UDP flows to the UoT outbound; TCP continues via "proxy".
+		config.Route.Rules = append([]RouteRule{
+			{Network: "udp", Outbound: "proxy-uot"},
+		}, config.Route.Rules...)
+	}
 
 	return json.MarshalIndent(config, "", "  ")
 }
@@ -785,6 +809,10 @@ type Outbound struct {
 	Method         string `json:"method,omitempty"`
 	Password       string `json:"password,omitempty"`
 	ConnectTimeout string `json:"connect_timeout,omitempty"`
+	// UDPOverTCP enables SagerNet UDP-over-TCP on this outbound (only valid
+	// for shadowsocks outbounds; requires a server that implements UoT, e.g.
+	// sing-box server).
+	UDPOverTCP bool `json:"udp_over_tcp,omitempty"`
 }
 
 type RouteConfig struct {

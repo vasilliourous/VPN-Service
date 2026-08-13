@@ -174,18 +174,24 @@ def main():
             print(f"  tier {t}: MISSING {path} — skipping")
             continue
         cfg = json.load(open(path))
-        # udp_relay drives the CLIENT's sing-box "udp_over_tcp v2" option —
-        # but the server runs shadowsocks-libev (ssserver), which does NOT
-        # implement sing-box's UDP-over-TCP protocol and closes those
-        # connections (observed 2026-08-01: every UoT conn RST after ~300ms).
-        # Keep udp_relay=false so UDP flows via standard ss UDP instead.
-        udp = False
-        config_str = json.dumps({
+        # UDP-over-TCP (UoT) is ONLY advertised when the sing-box UoT endpoint
+        # is deployed (02-shadowsocks.sh ENABLE_UOT=1). Otherwise udp_relay
+        # stays false and UDP flows via standard ss UDP — the default server
+        # (shadowsocks-rust) does not implement sing-box's proprietary
+        # UDP-over-TCP and RSTs it (observed 2026-08-01: every UoT conn RST
+        # after ~300ms).
+        uot_enabled = os.environ.get("ENABLE_UOT") == "1"
+        uot_port = int(os.environ.get("UOT_PORT", "8446"))
+        udp = uot_enabled and t == "strike"
+        cfg_dict = {
             "server": DOMAIN,
             "server_port": cfg["server_port"],
             "password": cfg["password"],
             "method": cfg["method"],
-        })
+        }
+        if udp:
+            cfg_dict["uot_port"] = uot_port
+        config_str = json.dumps(cfg_dict)
         recs = curl("GET",
                     f"/api/collections/tier_configs/records?filter=(tier='{t}')&perPage=100",
                     token=token).get("items", [])

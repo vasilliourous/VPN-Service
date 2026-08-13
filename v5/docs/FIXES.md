@@ -1,6 +1,32 @@
 
 ---
 
+## GAMING UDP — P0 CODE LANDED (UNTESTED) (2026-08-14)
+
+The P0 transport change from `v5/docs/GAMING-UDP.md` is implemented but
+**untested** (no test environment). What landed:
+
+- `v5/server/modules/02-shadowsocks.sh`: gated `ENABLE_UOT=1` section —
+  installs sing-box server (v1.12.1) with a Strike-creds shadowsocks inbound
+  on `UOT_PORT` (default 8446), `udp_over_tcp: true`, systemd unit
+  `sing-box-uot.service`. Additive; 8443/8444/8445 and TCP path untouched.
+- `v5/server/scripts/seed-live.py` + `seed-pb.py`: with `ENABLE_UOT=1`,
+  strike tier_configs gains `"uot_port"` + `udp_relay=true`; otherwise
+  identical to before (raw UDP).
+- Client (`process.go`, `app.go`, `heartbeat.go`, `activation.go`,
+  `storage.go`): when the tier advertises `uot_port` (UDPRelay &&
+  ServerPortUOT > 0), the generated config adds a `proxy-uot` outbound
+  (`udp_over_tcp: true`) and a `network: udp` route rule; TCP stays on the
+  standard outbound. No advertised port → config byte-identical to before.
+- Verified: `go build`/`go vet` green on linux + windows cross-compile.
+  Shell modules NOT executed (no VPS).
+
+**Deploy (when testing resumes):** `ENABLE_UOT=1` on setup.sh re-run +
+`ENABLE_UOT=1` on seed-live.py. Disable: stop unit + drop uot_port from
+tier_configs. Full validation checklist in `v5/docs/GAMING-UDP.md` §P1.
+
+---
+
 ## GAMING UDP — CONSOLIDATED CHANGE PLAN (2026-08-14)
 
 The Strike-tier gaming-UDP failure chain (raw SS UDP → hostile school-network

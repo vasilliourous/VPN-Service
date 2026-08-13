@@ -72,10 +72,14 @@ type Response struct {
 
 // ServerConfig holds Shadowsocks connection parameters.
 type ServerConfig struct {
-	Server     string `json:"server"`
-	ServerPort int    `json:"server_port"`
-	Password   string `json:"password"`
-	Method     string `json:"method"`
+	Server        string `json:"server"`
+	ServerPort    int    `json:"server_port"`
+	Password      string `json:"password"`
+	Method        string `json:"method"`
+	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
+	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
+	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
+	ServerPortUOT int `json:"server_port_uot,omitempty"`
 }
 
 // Validate checks that the heartbeat response is well-formed.

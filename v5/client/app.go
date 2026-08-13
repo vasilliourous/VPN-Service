@@ -265,10 +265,11 @@ func (a *App) Activate(code string) ActivateResult {
 	var storageCfg *storage.ServerConfig
 	if resp.ServerCfg != nil {
 		storageCfg = &storage.ServerConfig{
-			Server:     resp.ServerCfg.Server,
-			ServerPort: resp.ServerCfg.ServerPort,
-			Password:   resp.ServerCfg.Password,
-			Method:     resp.ServerCfg.Method,
+			Server:        resp.ServerCfg.Server,
+			ServerPort:    resp.ServerCfg.ServerPort,
+			Password:      resp.ServerCfg.Password,
+			Method:        resp.ServerCfg.Method,
+			ServerPortUOT: resp.ServerCfg.ServerPortUOT,
 		}
 	}
 
@@ -312,13 +313,14 @@ func (a *App) Connect() OpResult {
 	}
 
 	cfg := manager.Config{
-		Server:     state.ServerConfig.Server,
-		ServerPort: state.ServerConfig.ServerPort,
-		Method:     state.ServerConfig.Method,
-		Password:   state.ServerConfig.Password,
-		TierName:   state.Tier,
-		UDPRelay:   state.UDPRelay,
-		HubURL:     a.hubURL,
+		Server:        state.ServerConfig.Server,
+		ServerPort:    state.ServerConfig.ServerPort,
+		Method:        state.ServerConfig.Method,
+		Password:      state.ServerConfig.Password,
+		TierName:      state.Tier,
+		UDPRelay:      state.UDPRelay,
+		ServerPortUOT: state.ServerConfig.ServerPortUOT,
+		HubURL:        a.hubURL,
 	}
 
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
@@ -413,15 +415,17 @@ func (a *App) startHeartbeatLoop(code string) {
 						tier = state.Tier
 					}
 					cfg := &storage.ServerConfig{
-						Server:     result.Resp.ServerConfig.Server,
-						ServerPort: result.Resp.ServerConfig.ServerPort,
-						Password:   result.Resp.ServerConfig.Password,
-						Method:     result.Resp.ServerConfig.Method,
+						Server:        result.Resp.ServerConfig.Server,
+						ServerPort:    result.Resp.ServerConfig.ServerPort,
+						Password:      result.Resp.ServerConfig.Password,
+						Method:        result.Resp.ServerConfig.Method,
+						ServerPortUOT: result.Resp.ServerConfig.ServerPortUOT,
 					}
 					// Only rewrite storage when something actually changed.
 					cur := state.ServerConfig
 					if cur == nil || cur.Server != cfg.Server || cur.ServerPort != cfg.ServerPort ||
 						cur.Password != cfg.Password || cur.Method != cfg.Method ||
+						cur.ServerPortUOT != cfg.ServerPortUOT ||
 						state.UDPRelay != result.Resp.UDPRelay {
 						if err := a.store.SetActivation(state.Code, tier, state.DeviceFingerprint, cfg, result.Resp.UDPRelay); err != nil {
 							wailsruntime.LogWarning(a.ctx, "Cannot apply server config refresh: "+err.Error())

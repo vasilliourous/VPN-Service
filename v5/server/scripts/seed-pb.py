@@ -151,10 +151,11 @@ resp = api("POST", "/api/collections/update_config/records", {
 log(f"  update_config: {'seeded' if resp.get('id') else resp.get('message', '')}")
 
     # ── Step 4: Seed tier configs ──
-    # udp_relay MUST stay false: it historically enabled the client's sing-box
-    # "udp_over_tcp v2" option, but that protocol is proprietary to sing-box —
-    # shadowsocks-rust closes those connections (RST, observed 2026-08-01).
-    # UDP flows via standard ss UDP (server mode tcp_and_udp).
+    # udp_relay + uot_port are ONLY set when the sing-box UoT endpoint is
+    # deployed (02-shadowsocks.sh ENABLE_UOT=1). Otherwise udp_relay stays
+    # false and UDP flows via standard ss UDP — the default server
+    # (shadowsocks-rust) does not implement sing-box's proprietary
+    # UDP-over-TCP and RSTs it (observed 2026-08-01).
     # Priority: 1) Already in os.environ (from decrypted secrets via setup.sh)
     #           2) /root/.tier_passwords file (from 02-shadowsocks.sh)
 pw_file = "/root/.tier_passwords"
@@ -174,15 +175,21 @@ if not pw_from_file and os.path.exists(pw_file):
     pw_from_file = True
 
 if pw_from_file:
-    for t, port, udp in [("eco", 8443, False), ("stealth", 8444, False), ("strike", 8445, False)]:
+    uot_enabled = os.environ.get("ENABLE_UOT") == "1"
+    uot_port = int(os.environ.get("UOT_PORT", "8446"))
+    for t, port in [("eco", 8443), ("stealth", 8444), ("strike", 8445)]:
         pw = os.environ.get(f"{t.upper()}_PASS", "")
         if not pw:
             log(f"  {t}: no password found — skipping")
             continue
-        config_str = json.dumps({
+        udp = uot_enabled and t == "strike"
+        cfg_dict = {
             "server": DOMAIN, "server_port": port,
             "password": pw, "method": "aes-256-gcm",
-        })
+        }
+        if udp:
+            cfg_dict["uot_port"] = uot_port
+        config_str = json.dumps(cfg_dict)
         body = {"tier": t, "config": config_str, "active": True, "udp_relay": udp}
 
         # ── Idempotent upsert ──

@@ -252,13 +252,14 @@ func ValidateFingerprint(fp string) bool
 ```go
 // Config holds the parameters for generating a sing-box configuration.
 type Config struct {
-    Server     string
-    ServerPort int
-    Method     string
-    Password   string
-    TierName   string   // "eco", "stealth", or "strike" (NOTE: field is TierName, not Tier)
-    UDPRelay   bool
-    HubURL     string
+    Server          string
+    ServerPort      int
+    Method          string
+    Password        string
+    TierName        string   // "eco", "stealth", or "strike" (NOTE: field is TierName, not Tier)
+    UDPRelay        bool
+    ServerPortUOT   int      // optional UDP-over-TCP endpoint; >0 + UDPRelay enables UoT outbound
+    HubURL          string
 }
 
 // Validate checks required fields (Server, ServerPort, Password, Method).
@@ -312,8 +313,10 @@ func (m *Manager) State() string
 //   - Shadowsocks outbound to the VPS
 //   - DNS via 1.1.1.1 through tunnel
 //   - Direct outbound for private IPs
-//   - Raw UDP for Strike (udp_over_tcp is NOT emitted — sing-box's UoT is
-//     proprietary and shadowsocks-rust rejects it; see FIXES.md Follow-up 9)
+//   - UDP: raw (standard ss UDP) by default; when the tier advertises
+//     uot_port (ServerPortUOT > 0), UDP is routed to a dedicated UoT
+//     outbound (udp_over_tcp, sing-box server) while TCP stays on the
+//     standard port — see docs/GAMING-UDP.md
 func generateConfig(cfg Config) ([]byte, error)
 ```
 

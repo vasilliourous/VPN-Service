@@ -190,4 +190,106 @@ log "   Stealth: :8444 (TCP, BBR)"
 log "   Strike:  :8445 (TCP+UDP, BBR)"
 log ""
 log "   Passwords saved to ${PASS_FILE} (chmod 600)"
+
+# ═══════════════════════════════════════════
+# OPTIONAL: Strike UDP-over-TCP (sing-box server)
+# Enable with ENABLE_UOT=1 (plus optional UOT_PORT, default 8446).
+#
+# ADDITIVE: installs a sing-box server listening on UOT_PORT serving
+# Strike's credentials (aes-256-gcm) with udp_over_tcp. The standard
+# 8443/8444/8445 shadowsocks-rust services are untouched — TCP traffic
+# never uses this instance. Clients only route UDP here when the tier's
+# tier_configs config advertises "uot_port" (see seed-live.py ENABLE_UOT=1).
+# ═══════════════════════════════════════════
+UOT_ENABLED="${ENABLE_UOT:-0}"
+UOT_PORT="${UOT_PORT:-8446}"
+SING_BOX_VERSION="${SING_BOX_VERSION:-v1.12.1}"
+SING_BOX_BINARY="/usr/local/bin/sing-box"
+
+install_singbox() {
+    if [ -f "$SING_BOX_BINARY" ] && $SING_BOX_BINARY version &>/dev/null; then
+        log "sing-box already installed at ${SING_BOX_BINARY}"
+        return 0
+    fi
+
+    log "Downloading sing-box ${SING_BOX_VERSION}..."
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    cd "$tmpdir"
+
+    local url="https://github.com/SagerNet/sing-box/releases/download/${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION#v}-linux-amd64.tar.gz"
+    wget -q "$url" -O sing-box.tar.gz 2>/dev/null || {
+        log "Version ${SING_BOX_VERSION} download failed. Aborting UoT setup (TCP tiers unaffected)."
+        rm -rf "$tmpdir"
+        return 1
+    }
+
+    tar -xzf sing-box.tar.gz
+    cp "sing-box-${SING_BOX_VERSION#v}-linux-amd64/sing-box" "$SING_BOX_BINARY"
+    chmod +x "$SING_BOX_BINARY"
+    cd /
+    rm -rf "$tmpdir"
+    log "✓ sing-box installed"
+}
+
+write_uot_config() {
+    local config_file="/etc/sing-box/config.json"
+    mkdir -p /etc/sing-box
+
+    cat > "$config_file" <<EOF
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "strike-uot",
+      "listen": "::",
+      "listen_port": ${UOT_PORT},
+      "network": "tcp_and_udp",
+      "method": "aes-256-gcm",
+      "password": "${STRIKE_PASS}",
+      "udp_over_tcp": true
+    }
+  ]
+}
+EOF
+    log "✓ Created ${config_file} (port ${UOT_PORT}, Strike creds, udp_over_tcp)"
+}
+
+write_uot_service() {
+    local service_file="/etc/systemd/system/sing-box-uot.service"
+
+    cat > "$service_file" <<SERVICE
+[Unit]
+Description=sing-box server (Strike UDP-over-TCP)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${SING_BOX_BINARY} run -c /etc/sing-box/config.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+    log "✓ Created ${service_file}"
+}
+
+if [ "$UOT_ENABLED" = "1" ]; then
+    if install_singbox; then
+        write_uot_config
+        write_uot_service
+        systemctl daemon-reload
+        systemctl enable sing-box-uot.service 2>/dev/null || true
+        log "✓ UoT enabled: sing-box :${UOT_PORT} (Strike creds, tcp+udp, udp_over_tcp)"
+        log "  Advertise to clients: add \"uot_port\": ${UOT_PORT} to the strike"
+        log "  tier_configs config JSON (run seed-live.py with ENABLE_UOT=1, or edit in admin UI)."
+    else
+        warn "UoT setup aborted (download failed). TCP tiers unaffected."
+    fi
+else
+    log "UoT disabled (set ENABLE_UOT=1 to install the sing-box UDP-over-TCP endpoint)"
+fi
+
 exit 0
