@@ -1,6 +1,29 @@
 
 ---
 
+## HISTORY ARCHIVE — CURATED ORIGINALS RESTORED (2026-08-14)
+
+After the culling rounds 1–2 deleted `originals/` wholesale, review flagged
+that the business model and N4L threat research were unique knowledge with no
+living-doc equivalent. The still-relevant docs were restored from git history
+(`72eec8a^:originals/`) into a clearly-labelled archive:
+
+- `v5/docs/history/Business-Plan.md` — middleman distribution, market vs xVPN
+- `v5/docs/history/attacker-perspective.md` — insider-threat / covert-telemetry analysis
+- `v5/docs/history/defender-perspective.md` — defense-in-depth research
+- `v5/docs/history/comprehensive-vpn-blocklist.md` — N4L/Palo Alto blocklist research
+- `v5/docs/history/school-vpn-blocking-implementation.md` — N4L network-level blocking
+- `v5/docs/history/Architectural-Plan.md` — original v3 Hysteria 2 plan (context)
+
+**Not restored** (stays in git history only): `Actionable-Plan.md` (4,771-line
+superseded action plan), `V2-ACTION-PLAN.md`, `V2-BOTTLENECK-REFERENCE.md`,
+and the entire `v3/` + `simplified/` alternative doc sets.
+
+`v5/docs/history/README.md` indexes everything and gives the `git show`
+commands for anything still only in history.
+
+---
+
 ## REPO CULLING ROUND 2 — STREAMLINED LAYOUT (2026-08-13)
 
 Continuation of the 2026-08 cleanup (round 1 removed `v3/`, `simplified/`,

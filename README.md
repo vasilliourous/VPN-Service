@@ -7,8 +7,10 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 > (`v5/client/`, Go + Wails + Vue 3), server deployment (`v5/server/`), and docs
 > (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`) are historical
 > reference only. Directories removed in the 2026-08 cleanup
-> (`v3/`, `simplified/`, `originals/`, `v5/legacy/`, `modular-vps/`, root
-> `CONTEXT.md`, `v5/scripts/`) are recoverable from git history.
+> (`v3/`, `simplified/`, `v5/legacy/`, `modular-vps/`, root `CONTEXT.md`,
+> `v5/scripts/`, and the un-curated remainder of `originals/`) are recoverable
+> from git history. The still-relevant originals (business model + N4L threat
+> research) are preserved in `v5/docs/history/`.
 
 ---
 
@@ -94,6 +96,7 @@ VPN-Service/
 │   │   └── Makefile          ← dev / build / build-all targets
 │   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
 │   ├── docs/                 ← Architecture, deploy, ops, API, fixes
+│   │   └── history/          ← Curated pre-V5 research (business model, N4L threat analysis)
 │   ├── README.md             ← V5 overview
 │   └── CONTEXT.md            ← Full agent/developer context
 ├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)

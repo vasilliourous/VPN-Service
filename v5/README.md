@@ -31,6 +31,7 @@ v5/
 │   └── Makefile           # Build system
 │
 ├── docs/
+│   ├── history/          # Curated pre-V5 research archive (business model, N4L threat analysis)
 │   ├── BACKEND-API.md     # Complete API reference for all internal/ packages
 │   ├── WAILS-MIGRATION.md # Migration plan from Fyne → Wails (build & rollback)
 │   ├── ARCHITECTURE.md    # How to architect a compatible client

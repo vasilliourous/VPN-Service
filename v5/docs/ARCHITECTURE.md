@@ -450,9 +450,17 @@ admin rights. sing-box creates TUN interfaces directly.
 
 | Document | Purpose |
 |----------|---------|
+| `CONTEXT.md` | **Start here** — project history, reasoning, network analysis, agent guidance |
 | `CLIENT-GUIDE.md` | Build commands, package structure, platform notes, testing checklist |
-| `API.md` | Full server API contracts (activation, heartbeat, admin) |
+| `API.md` | Server API contracts (activation, heartbeat, admin, hiddify) |
+| `BACKEND-API.md` | Complete API reference for all `internal/` packages |
 | `DEPLOY.md` | Server deployment from blank VPS |
+| `SECRETS-MANAGEMENT.md` | Age-encrypted secrets workflow (secrets.env.age) |
+| `POCKETBASE-SETUP.md` | PocketBase collections, hooks, admin setup |
 | `OPS.md` | Day-to-day operations |
-| `CONTEXT.md` | Background reasoning, network analysis, protocol testing results |
-| `FIXES.md` | Code quality issues and their fixes |
+| `CI-CD.md` | GitHub Actions workflow, build matrix, releases |
+| `IMPLEMENT.md` | Phased implementation plan (historical) |
+| `WAILS-MIGRATION.md` | Fyne → Wails migration history & build notes |
+| `UI-AESTHETICS.md` | Visual design spec (colors, layout, icons) |
+| `FIXES.md` | Issues discovered & fixes applied (dated log) |
+| `history/` | Curated pre-V5 research archive (business model, N4L threat analysis) — reference only |

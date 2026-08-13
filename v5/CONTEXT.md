@@ -40,6 +40,7 @@ VPN-Service/
 │   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.0.0)
 │   ├── server/         ← VPS deployment modules + PocketBase hooks
 │   ├── docs/           ← Architecture, deploy, ops, API, fixes
+│   │   └── history/    ← Curated pre-V5 research archive (business model, N4L threat analysis)
 │   ├── README.md       ← V5 overview
 │   └── CONTEXT.md      ← THIS FILE
 ├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
@@ -55,6 +56,7 @@ VPN-Service/
 | `v5/client/` | Hardened Go + Wails/Vue 3 client source code | **Client developers** |
 | `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
 | `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
+| `v5/docs/history/` | Curated pre-V5 research archive (business model, N4L threat analysis) | Reference only — read CONTEXT/ARCHITECTURE first |
 | `v4/` | Predecessor client code | Reference only — use v5/client/ |
 | `scripts/` (root) | Luhn-mod-N code generator + PDF card printer | Middleman managers |
 
@@ -65,6 +67,11 @@ VPN-Service/
 > is the one and only context document. macOS support was dropped from the
 > client (unsigned builds are unusable there); darwin code and CI targets were
 > removed. All deleted files remain recoverable from git history.
+>
+> **2026-08 history archive:** the still-relevant `originals/` docs (business
+> model + N4L attacker/defender research) were restored to `v5/docs/history/`
+> after review; the rest of `originals/` (superseded action plans) stays in
+> git history only.
 
 ---
 
