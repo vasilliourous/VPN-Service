@@ -11,7 +11,8 @@
 //     This is the mode used by the Wails app on ALL platforms — app.go calls
 //     SetHelperMode(false) after construction.
 //  2. Helper mode: sends config to the privileged TUN helper via IPC.
-//     Legacy — the myvpn-helper binary is no longer shipped (see v5/legacy).
+//     Legacy — the myvpn-helper binary is no longer shipped (removed in the
+//     Wails migration; pre-migration client retained in v4/).
 //     NewManager still defaults to helper mode on Windows, so the app must
 //     explicitly disable it.
 //

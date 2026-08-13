@@ -701,8 +701,7 @@ These files use build tags and must be included in any build:
 | `updater` | `update_windows.go` | `windows` | `.old` rename trick + fork with `CREATE_NEW_PROCESS_GROUP` |
 
 > **Note:** The old Fyne GUI (`internal/gui/`) and the separate TUN helper binary
-> (`internal/helper/`) were moved OUT of the Go module to `v5/legacy/`
-> (`v5/legacy/gui/`, `v5/legacy/helper/`, `v5/legacy/cmd/myvpn/`) so they are not
-> compiled, scanned by `go vet`, or re-added to `go.mod` by `go mod tidy`.
-> They remain in the repo for reference and rollback only.
+> (`internal/helper/`) were removed from the Go module during the Wails migration,
+> and the `v5/legacy/` reference copy was deleted in the 2026-08 cleanup. The
+> pre-migration Fyne client lives in `v4/` (reference only); see git history.
 | `tunnel` | (platform code inline) | — | Runtime `GOOS` check, not build tags |

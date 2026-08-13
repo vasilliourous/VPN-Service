@@ -124,7 +124,8 @@ v5/client/
 ```
 
 There is no `cmd/myvpn/`, `internal/gui/`, or `internal/helper/` — those were
-moved to `v5/legacy/` (reference only, outside the Go module).
+removed in the Wails migration. The pre-migration Fyne client lives in `v4/`
+(reference only, outside the Go module).
 
 ---
 

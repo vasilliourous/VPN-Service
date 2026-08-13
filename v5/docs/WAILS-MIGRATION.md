@@ -310,8 +310,9 @@ v5/client/
 │   ├── tunnel/             ← TUN fallback (retained for reference)
 │   └── updater/            ← Two-phase crash-safe updates
 │
-├── _legacy note: the old Fyne code was moved OUT of the module to v5/legacy/
-│   (gui/, helper/, cmd/myvpn/) so go vet / go mod tidy / go build ./... never see it
+├── _legacy note: the old Fyne code was removed in the Wails migration and the
+│   v5/legacy/ reference copy was deleted in the 2026-08 cleanup; the pre-migration
+│   client is retained in v4/ (git history has the removed files)
 │
 ├── frontend/               ← Vue 3 + TypeScript + Vite
 │   ├── index.html
@@ -357,11 +358,11 @@ v5/client/
 
 | Component | Reason |
 |-----------|--------|
-| `internal/gui/` (Fyne) | Moved to `v5/legacy/gui/` — outside the Go module so builds stay Fyne-free |
-| `internal/helper/` (separate binary) | Moved to `v5/legacy/helper/` — Wails handles elevation; no more helper IPC |
-| `cmd/myvpn/main.go` (old) | Moved to `v5/legacy/cmd/myvpn/` — replaced by `main.go` at root |
+| `internal/gui/` (Fyne) | Removed — outside the Go module so builds stay Fyne-free (pre-migration copy in `v4/`) |
+| `internal/helper/` (separate binary) | Removed — Wails handles elevation; no more helper IPC |
+| `cmd/myvpn/main.go` (old) | Removed — replaced by `main.go` at root |
 | `myvpn-helper` binary | No longer needed |
-| Fyne dependency | Removed from `go.mod` — `go mod tidy` never re-adds it (legacy code is outside the module) |
+| Fyne dependency | Removed from `go.mod` — `go mod tidy` never re-adds it (legacy code was outside the module) |
 | 3-binary bundle | Down to 1 binary (`myvpn`) + `sing-box` (still separate but bundled in zip) |
 
 > **sing-box remains a separate binary** downloaded alongside the app. The manager
@@ -374,5 +375,8 @@ v5/client/
 If the Wails migration breaks:
 
 1. **Go backend code** — totally unchanged. The `internal/` packages are untouched.
-2. **To revert:** Restore `main.go` from the old `v5/legacy/cmd/myvpn/main.go`, revert `go.mod` to Fyne deps, and move the Fyne code back from `v5/legacy/`. The `internal/` packages work identically with either GUI.
+2. **To revert:** Restore the old Fyne code from git history (it was removed from
+   the module in the migration and the `v5/legacy/` copy was deleted in the 2026-08
+   cleanup; the pre-migration client lives in `v4/`), revert `go.mod` to Fyne deps.
+   The `internal/` packages work identically with either GUI.
 3. **Storage format** — unchanged JSON schema. The Wails version reads/writes the same `storage.json` as the Fyne version.

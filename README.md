@@ -5,8 +5,9 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 
 > **The authoritative version of everything below is `v5/`** — hardened client
 > (`v5/client/`, Go + Wails + Vue 3), server deployment (`v5/server/`), and docs
-> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`, `v3/`, `simplified/`,
-> `originals/`, `modular-vps/`) are historical reference only.
+> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`, `modular-vps/`) are
+> historical reference only. Directories removed in the 2026-08 cleanup
+> (`v3/`, `simplified/`, `originals/`, `v5/legacy/`) are recoverable from git history.
 
 ---
 
@@ -93,13 +94,10 @@ VPN-Service/
 │   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
 │   ├── docs/                 ← Architecture, deploy, ops, API, fixes
 │   ├── scripts/              ← Code generator + card printer
-│   ├── legacy/               ← Old Fyne GUI + TUN helper (reference only, NOT in module)
 │   ├── README.md             ← V5 overview
 │   └── CONTEXT.md            ← Full agent/developer context
 ├── modular-vps/              ← Original server modules (source for v5/server/)
 ├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)
-├── v3/, simplified/          ← Abandoned alternatives (reference only)
-├── originals/                ← Business plans, threat models (reference only)
 ├── scripts/                  ← Operational tooling
 │   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
 │   └── print_codes.sh        ── Printable PDF code cards

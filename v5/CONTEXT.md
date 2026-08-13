@@ -45,9 +45,6 @@ VPN-Service/
 │   └── CONTEXT.md      ← THIS FILE
 ├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
 ├── modular-vps/        ← Original server modules (source for v5/server/)
-├── originals/          ← Business plans, threat models, competitive intel (reference only)
-├── simplified/         ← Hysteria 2 / QUIC alternative (blocked by N4L, reference only)
-├── v3/                 ← Predecessor: sslocal + tun2socks (abandoned, reference only)
 ├── scripts/            ← Code generator + PDF card printer (copied to v5/scripts/)
 ├── CONTEXT.md          ← ROOT context (older, superseded by v5/CONTEXT.md)
 └── README.md, .github/...
@@ -63,7 +60,6 @@ VPN-Service/
 | `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
 | `v5/scripts/` | Code generator + card printer | Middleman managers |
 | `v4/` | Predecessor client code | Reference only — use v5/client/ |
-| `originals/`, `v3/`, `simplified/` | Historical reference | Reference only |
 
 ---
 
@@ -148,9 +144,10 @@ All documented in `v5/docs/FIXES.md`:
 
 > **⚠️ Updated for the Wails migration (2026).** The GUI moved from Fyne to
 > **Wails v2 + Vue 3** (`frontend/`). The old Fyne GUI, helper binary, and old
-> entry point were moved to `v5/legacy/` (reference only — not part of the Go
-> module). The `internal/` backend packages are unchanged. See
-> `docs/WAILS-MIGRATION.md` and `docs/BACKEND-API.md`.
+> entry point were removed in the Wails migration (the `v5/legacy/` reference
+> copy was deleted in the 2026-08 cleanup; pre-migration client in `v4/`,
+> git history for the removed files). The `internal/` backend packages are
+> unchanged. See `docs/WAILS-MIGRATION.md` and `docs/BACKEND-API.md`.
 
 ```
 v5/client/
@@ -181,13 +178,11 @@ v5/client/
 └── Makefile                    # Wails build targets
 ```
 
-Legacy (NOT in the Go module — kept for reference/rollback):
+Legacy (NOT in the Go module — removed in the 2026-08 cleanup):
 
 ```
-v5/legacy/
-├── gui/                        # Old Fyne desktop app
-├── helper/                     # Old privileged TUN helper binary
-└── cmd/myvpn/                  # Old Fyne entry point
+(removed — old Fyne GUI, TUN helper binary, and entry point. Pre-migration
+client in `v4/`; removed files recoverable from git history)
 ```
 
 ### Key Metrics
@@ -281,7 +276,7 @@ v5/legacy/
 
 ### Rules of thumb
 
-1. **Start here.** V5 is the definitive version. Don't read v4/, v3/, or originals/
+1. **Start here.** V5 is the definitive version. Don't read v4/
    unless you need historical context.
 2. **The client code is in `v5/client/`.** The old `v4/` directory exists for
    reference only — never build from it.
@@ -321,7 +316,7 @@ the full list of credential files and locations.
 
 ### Common pitfalls
 
-- **Don't use `originals/`, `v3/`, `v4/`, or `simplified/` as the source of truth** — they're
+- **Don't use `v4/` as the source of truth** — it's
   historical reference only. V5 is the authoritative version.
 - **The client code now lives in `v5/client/`** — not v4/. Always build from v5/client/.
 - **The JS hooks have been rewritten for PocketBase 0.22+** — if activation still returns a generic

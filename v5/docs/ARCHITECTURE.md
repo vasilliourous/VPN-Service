@@ -285,7 +285,8 @@ avoid a white flash while the WebView loads.
 `UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
 "Disconnected" with a tier badge (Eco/Stealth/Strike).
 
-The old Fyne GUI lives in `v5/legacy/gui/` (reference only).
+The old Fyne GUI was removed in the Wails migration (see git history); the
+pre-migration client lives in `v4/` (reference only).
 
 ### 2.8 sing-box (Engine)
 
