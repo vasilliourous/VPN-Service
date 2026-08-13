@@ -34,28 +34,32 @@ UoT. sing-box (the engine already on every client) is that server.
 
 ## 3. The change stack (ordered)
 
-### P0 — Transport fix: sing-box server + UDP-over-TCP (the core change)
+### P0 — Transport fix: UDP-over-TCP on a server that implements it (the core change)
 
-Replace `shadowsocks-rust` with **sing-box in server mode** on the VPS,
-enabling `udp_over_tcp` on the Strike tier both ends.
+The fix is to carry UDP inside the TCP tunnel. That requires a **server-side
+implementation of SagerNet's UDP-over-TCP** — shadowsocks-rust is not one.
+The server choice is an OPEN decision (see §5a) — the shape below describes
+sing-box as the leading candidate, additively.
+
+**Recommended deployment shape: ADDITIVE, not replacement.** Add a sing-box
+server instance on a new port (e.g. 8446) for Strike UDP/UoT, leaving the
+working 8443/8444/8445 shadowsocks-rust TCP path untouched. Instant rollback
+(disable one unit), zero risk to the proven TCP path. Full replacement of
+shadowsocks-rust is possible but strictly riskier — not recommended as P0.
 
 | End | Change |
 |-----|--------|
-| VPS | `v5/server/modules/02-shadowsocks.sh`: install sing-box (align version with client: 1.12.1) instead of `ssserver`; write per-tier shadowsocks **inbound** configs (Eco/Stealth `network: tcp` as today, Strike `network: tcp_and_udp` + `"udp_over_tcp": true`); keep systemd units per tier, password file, BBR + tc (04-tc.sh untouched) |
-| Client | `v5/client/internal/manager/process.go` (~line 718): set `"udp_over_tcp": true` on the shadowsocks outbound when the tier advertises UDP (Strike) |
-| Deployment | No new open ports: UoT rides the existing TCP 8445 connection; server still listens UDP 8445 for any raw fallback |
+| VPS | `v5/server/modules/02-shadowsocks.sh`: add an optional module section that installs sing-box server (version aligned with client 1.12.1) and writes a Strike-only shadowsocks **inbound** (`network: tcp_and_udp`, `"udp_over_tcp": true`) on a NEW port (e.g. 8446); keep existing ssserver units untouched; keep password file, BBR + tc (04-tc.sh untouched) |
+| Client | `v5/client/internal/manager/process.go` (~line 718): set `"udp_over_tcp": true` on the shadowsocks outbound when the tier advertises UDP (Strike) and a UoT-capable server port is configured |
+| Deployment | One new TCP port (e.g. 8446); school firewall sees plain Shadowsocks TCP wire format, identical to existing tiers. Server may also listen UDP 8446 for raw fallback |
 
-**Why this works:** the school firewall only ever sees TCP 8445 (identical to
-the working TCP traffic). UDP is encapsulated inside it, so the hostile UDP
-policy is bypassed entirely. MTU/fragmentation issues (the sizeladder
+**Why this works:** the school firewall only ever sees TCP (identical wire
+format to the working traffic). UDP is encapsulated inside it, so the hostile
+UDP policy is bypassed entirely. MTU/fragmentation issues (the sizeladder
 threshold) also disappear — TCP segments.
 
-**Why sing-box server:** same engine as the client, one binary to deploy,
-verified version (1.12.1), native UoT on both sides, same config dialect.
-Alternatives (Xray SS with `uot`, custom UDP-in-TCP relay) are worse fits.
-
-**Rollback:** keep the old `ssserver` binary + systemd units (`.bak` copies);
-one-command revert in the module.
+**Rollback:** disable the new systemd unit; delete the new port from the
+firewall module. Nothing else changes.
 
 ### P1 — Validation experiments (deferred until testing is possible)
 
@@ -122,23 +126,48 @@ These are stopgaps, not the fix.
 
 ## 5. Risks / decision points
 
+### 5a. Server choice — tradeoffs (OPEN DECISION, not settled)
+
+sing-box server is the leading candidate but is NOT the only one. The deciding
+factor is interoperability with the client's UoT framing and server-side
+operating properties. Options:
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **sing-box server** (additive instance) | Same engine as client — guaranteed UoT framing match; one binary family to learn; verified version 1.12.1 | UoT is a **proprietary SagerNet protocol** (magic domains `sp.udp-over-tcp.arpa`); bigger attack surface than ssserver (full proxy platform, not a minimal relay); client↔server version coupling (engine upgrades must track); server mode is less battle-tested than shadowsocks-rust; heavier RAM/CPU on a 2GB VPS; **non-sing-box clients (Hiddify, Clash) lose UDP entirely** |
+| **Xray (v2ray-core) SS inbound + `uot`** | Server-grade maturity; implements SagerNet UoT framing; keeps a dedicated server tool | Interop with sing-box client UoT is **reported but unverified** — needs a 5-min test; larger binary/feature set than needed; still depends on the proprietary UoT framing |
+| **shadowsocks-rust + udp2raw** | Keeps the standard, working server untouched; raw UDP wrapped in fake-TCP; battle-tested for gaming | Second tunnel layer + extra process per tier; fake-TCP may be classified by DPI (unknown); single-maintainer dependency; latency overhead |
+| **Raw UDP + P2 stopgaps only** | Zero change, zero risk; UDP works wherever the network allows it | Gaming UDP stays broken on N4L — the Strike promise is unfulfilled; this is the honest fallback if all transport options fail validation |
+
+**The key open question (needs a 5-minute test, can't run now):** does
+sing-box client UoT interoperate with Xray's SS `uot`? If yes, Xray is a
+serious alternative to sing-box server. If no, sing-box server is the only
+native option.
+
+### 5b. Other risks / decision points
+
+- **Proprietary protocol lock-in:** UoT is SagerNet-specific. Choosing it
+  (with any server) ties the UDP path to a closed framing — if it changes or
+  breaks, both ends must track it. This is the same class of dependency risk
+  that engine churn already caused twice (1.10→1.12).
+- **Third-party client loss:** with UoT on the server, Hiddify/Clash testing
+  flows (used in the diag toolkit and `hiddify.pb.js` ss:// links) lose UDP.
+  Acceptable for the shipped product (MyVPN client is sing-box) but kills a
+  useful test path.
 - **UoT latency:** TCP head-of-line blocking can add latency for UDP games
-  under packet loss. Acceptable for school WiFi; note that a future "raw
-  where allowed, UoT fallback" mode is not auto-detectable client-side —
-  product targets N4L schools, so **default Strike UDP = UoT always**.
-- **Server swap:** shadowsocks-rust → sing-box must not break the working
-  TCP path (Eco/Stealth). Keep them plain shadowsocks TCP — only Strike
-  gains UoT.
-- **Migration:** already-deployed VPS needs the module re-run; the module is
-  idempotent by design (FIXES.md R-series).
+  under packet loss. Acceptable for school WiFi; product targets N4L schools,
+  so **default Strike UDP = UoT always**; a per-network toggle is a possible
+  future setting.
+- **Migration:** the additive shape needs no migration of the working path;
+  a full swap would. The module is idempotent by design (FIXES.md R-series).
 
 ## 6. Sequence when testing resumes
 
 1. P1.3 aliveness + P1.1 VPS-direct test (closes the school-leg vs server-leg
    gap — validates the whole premise)
-2. P0 server swap on a **test port** (not 8445) + client UoT on a test build
+2. P0 on a **test port** (e.g. 8446, additive instance) + client UoT on a test build
 3. P1.4 end-to-end with an actual SCP:SL session
-4. Promote to 8445, update smoke test + docs
+4. Promote to the production Strike port, update smoke test + docs
 5. P3 hardening items
 
 ---

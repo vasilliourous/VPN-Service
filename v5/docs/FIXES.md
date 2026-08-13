@@ -7,12 +7,16 @@ The Strike-tier gaming-UDP failure chain (raw SS UDP → hostile school-network
 UDP policy; UoT removed because shadowsocks-rust RSTs SagerNet UoT) is
 consolidated into an implementation plan at `v5/docs/GAMING-UDP.md`.
 
-**Core change (P0, not yet implemented):** replace `shadowsocks-rust` with
-**sing-box server** on the VPS and enable `udp_over_tcp` on Strike both ends —
-UDP rides the existing TCP 8445 tunnel, bypassing the school's DPI-based UDP
-policy entirely. P1 validation experiments (VPS-direct byte-exact LiteNetLib
-probe, packet-rate ladder, server aliveness) are deferred until testing is
-possible. See the plan doc for the full file-change map and sequencing.
+**Core change (P0, not yet implemented):** carry game UDP inside the TCP
+tunnel via SagerNet UDP-over-TCP, with a **server that implements it**
+(additive sing-box server instance on a new port is the leading option —
+shadowsocks-rust can't do UoT and RSTs it). The server choice is an open
+decision with a tradeoff matrix in the plan (§5a: sing-box server vs Xray
+SS+uot vs shadowsocks-rust+udp2raw vs raw-UDP status quo); the deciding
+interop test can't run until testing resumes. P1 validation experiments
+(VPS-direct byte-exact LiteNetLib probe, packet-rate ladder, server
+aliveness) are deferred until testing is possible. See the plan doc for the
+full file-change map and sequencing.
 
 ---
 
