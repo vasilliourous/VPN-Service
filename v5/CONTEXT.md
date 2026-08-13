@@ -314,7 +314,7 @@ Admin API token:    CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=
 B2 bucket:          vpsvpnbackup
 ```
 
-All credentials are stored on the VPS at `/root/` — see `POCKETBASE-SETUP.md` for
+All credentials are stored on the VPS at `/root/` — see `docs/POCKETBASE-SETUP.md` for
 the full list of credential files and locations.
 
 ### Common pitfalls

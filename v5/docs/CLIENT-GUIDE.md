@@ -21,7 +21,7 @@
     `CGO_ENABLED=0` (pure Go, WebView2 COM)
 - **sing-box binary** in `v5/client/engines/` or alongside the built app
   (version 1.10.0, Shadowsocks AEAD-256-GCM over TCP)
-- **VPS already deployed** (see `docs/DEPLOY.md`) with:
+- **VPS already deployed** (see `DEPLOY.md`) with:
   - `ssserver` × 3 instances running
   - PocketBase with activation/heartbeat hooks
   - Caddy reverse proxy with TLS
@@ -211,7 +211,7 @@ On crash:
 
 ## 5. Server API Contracts
 
-See `docs/API.md` for complete request/response schemas.
+See `API.md` for complete request/response schemas.
 
 ### Activation Endpoint
 

@@ -103,7 +103,7 @@ v5-client/
 ```
 
 ### Relevant Docs
-- `docs/ARCHITECTURE.md` — Section 2.2 (Storage)
+- `ARCHITECTURE.md` — Section 2.2 (Storage)
 - `v4/internal/storage/storage.go` — Reference implementation (235 lines)
 
 ---
@@ -152,8 +152,8 @@ v5-client/
 ```
 
 ### Relevant Docs
-- `docs/ARCHITECTURE.md` — Section 2.3 (Activation)
-- `docs/API.md` — Section 1 (POST /api/activate)
+- `ARCHITECTURE.md` — Section 2.3 (Activation)
+- `API.md` — Section 1 (POST /api/activate)
 - `v4/internal/activation/` — Reference (4 files, 404 lines)
 
 ---
@@ -209,7 +209,7 @@ paths := []string{
 ```
 
 ### Relevant Docs
-- `docs/ARCHITECTURE.md` — Section 2.4 (Manager)
+- `ARCHITECTURE.md` — Section 2.4 (Manager)
 - `v4/internal/manager/process.go` — Reference (455 lines)
 
 ---
@@ -262,8 +262,8 @@ paths := []string{
 ```
 
 ### Relevant Docs
-- `docs/ARCHITECTURE.md` — Section 2.5 (Heartbeat)
-- `docs/API.md` — Section 2 (GET /api/heartbeat)
+- `ARCHITECTURE.md` — Section 2.5 (Heartbeat)
+- `API.md` — Section 2 (GET /api/heartbeat)
 - `v4/internal/heartbeat/heartbeat.go` — Reference (245 lines)
 
 ---
@@ -316,7 +316,7 @@ paths := []string{
 ```
 
 ### Relevant Docs
-- `docs/ARCHITECTURE.md` — Section 2.6 (Updater)
+- `ARCHITECTURE.md` — Section 2.6 (Updater)
 - `v4/internal/updater/` — Reference (3 files, 593 lines)
 
 ---
@@ -381,8 +381,8 @@ paths := []string{
 ```
 
 ### Relevant Docs
-- `docs/UI-AESTHETICS.md` — Full design spec (colors, layout, icons)
-- `docs/ARCHITECTURE.md` — Section 2.7 (GUI)
+- `UI-AESTHETICS.md` — Full design spec (colors, layout, icons)
+- `ARCHITECTURE.md` — Section 2.7 (GUI)
 - `v4/internal/gui/` — Reference (2 files, 636 lines)
 
 ---
@@ -421,9 +421,9 @@ Jobs:
 4. **Release** — On tag push `v*`, create GitHub Release with all ZIPs + checksums
 
 ### Relevant Docs
-- `docs/CLIENT-GUIDE.md` — Build commands, CI config
+- `CLIENT-GUIDE.md` — Build commands, CI config
 - `v4/Makefile` — Reference (162 lines)
-- `.github/workflows/build.yml` — Reference (202 lines)
+- `.github/workflows/build.yml` — Reference
 
 ---
 

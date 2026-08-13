@@ -129,7 +129,7 @@ scp -r v5/server root@new-vps:/root/
 ssh root@new-vps "DOMAIN=networkingguides.duckdns.org /root/server/setup.sh"
 
 # 3. Create PocketBase collections, seed tier configs, generate codes
-# See docs/DEPLOY.md for detailed steps
+# See DEPLOY.md for detailed steps
 ```
 
 ### Disaster Recovery (Restore from B2 Backup)

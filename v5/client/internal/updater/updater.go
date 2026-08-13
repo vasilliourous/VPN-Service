@@ -394,6 +394,6 @@ func forkNewProcess(binaryPath string) error {
 }
 
 // Platform-specific implementations
-// These are set by init() in each platform file (update_unix.go, update_windows.go)
+// These are set by init() in each platform file (update_linux.go, update_windows.go)
 var swapFile func(newPath, currentPath string) error
 var forkExec func(binaryPath string) error
