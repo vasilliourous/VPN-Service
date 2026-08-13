@@ -13,6 +13,10 @@ node_modules/
 *.zip
 *.tar.gz
 
+# Python
+__pycache__/
+*.pyc
+
 # OS junk
 .DS_Store
 Thumbs.db
