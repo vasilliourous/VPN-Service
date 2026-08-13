@@ -46,6 +46,37 @@ full file-change map and sequencing.
 
 ---
 
+## FRESH VPS DEPLOY 2026-08-14 — BUGS FOUND & FIXED (134.199.155.166)
+
+First deploy to the new VPS (Ubuntu 22.04, 1vCPU/1GB, DigitalOcean syd1).
+DNS for networkingguides.duckdns.org now points at the new IP. The deploy
+surfaced a stack of real bugs — all fixed in this round:
+
+| # | Area | Bug | Fix |
+|:-:|------|-----|-----|
+| D1 | `00-env.sh` | Hard RAM gate (<1GB FAIL) rejected a 957MB-class VPS that runs the whole stack fine | Fail only <512MB; <1GB is a warning |
+| D2 | `05-caddy.sh` | `list-modules | grep -q` under `set -euo pipefail`: grep -q closes the pipe → caddy SIGPIPE → pipefail turns the check into a FALSE NEGATIVE (a good binary was rejected) | Use `grep -c` (consumes all input); fixed in 3 places |
+| D3 | `05-caddy.sh` | caddyserver.com download API ignores the version pin (asked 2.8.4, got 2.11.4) and occasionally returns a build WITHOUT the plugin | Added deterministic xcaddy fallback build; keeps API fast-path |
+| D4 | `07-backups.sh` | `ensure_sqlite3` called before its definition → "command not found", setup died | Function moved above the Main section |
+| D5 | `setup.sh` | Post-module service-start list only started shadowsocks-* — tc-*-cap services (and sing-box-uot) were never started on fresh deploys → caps silently unenforced | Start list now includes tc-*-cap + sing-box-uot (when ENABLE_UOT=1) |
+| D6 | `02-shadowsocks.sh` UoT | sing-box REJECTS `"network": "tcp_and_udp"` (shadowsocks-rust syntax) and rejects `"udp_over_tcp"` on the INBOUND (unknown field) | Both omitted — sing-box defaults to tcp+udp and handles UoT magic-domain connections automatically |
+| D7 | `seed-pb.py` | `api()` never sent the Authorization header → admin token "verification" always failed, then old `/api/admins` endpoint (removed in PB 0.22) → bootstrap never created collections | Global TOKEN threaded through api(); PB 0.22 `_superusers` endpoints; saved-password re-auth fallback |
+| D8 | `seed-live.py` | Same PB 0.22 admin migration needed (`/api/admins` → `_superusers`) | Same fix |
+| D9 | seed schemas | `update_config` still declared `download_macos_*` fields | Removed (macOS dropped) |
+| D10 | `scripts/generate_codes.sh` | `double=!$double` in bash assigns the literal string `!false` → EVERY generated code had a wrong Luhn checksum → all codes rejected as "Invalid code format" by the client AND the activation hook | Proper toggle `if $double; then double=false; else double=true; fi` |
+| D11 | code generator docs | Instructions passed `/root/.admin_api_token` (app-level token) — PocketBase 0.22 rejects it (401). The generator needs the PB admin JWT | Docs + setup.sh hint now use `grep PB_TOKEN /root/.pb_admin_creds \| cut -d= -f2` |
+
+**Deployment notes (streamlined process):**
+- Update DNS BEFORE running setup.sh — `00-env.sh` hard-fails if the domain doesn't resolve.
+- `scp -r v5/server age-key.txt root@VPS:/root/server/` — age-key.txt must sit alongside setup.sh.
+- `ENABLE_UOT=1 DOMAIN=… ./setup.sh` installs the sing-box UoT endpoint (port 8446) + seeds `uot_port` via seed-pb.py.
+- Caddy per-IP rate limits are tight for school NAT (activate 5/10min/IP, heartbeat 1/10s/IP, api 100/10s/IP) — fine for the current client cadence; revisit if multiple students share one egress IP.
+- The old VPS's PocketBase DB (activation codes) remains in B2 (`vpsvpnbackup`, backups up to 2026-08-10 02:00 UTC) — decision 2026-08-14: fresh start, do NOT restore.
+
+**Verified live:** 23/23 smoke checks; activation 200 with `uot_port:8446`; heartbeat 200 with config refresh; TLS 200; all 10 services active; backup timer hourly.
+
+---
+
 ## HISTORY ARCHIVE — CURATED ORIGINALS RESTORED (2026-08-14)
 
 After the culling rounds 1–2 deleted `originals/` wholesale, review flagged

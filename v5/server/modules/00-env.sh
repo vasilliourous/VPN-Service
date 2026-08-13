@@ -94,8 +94,11 @@ log "✓ Disk space: $((AVAIL_KB / 1024)) MB available"
 
 # ── Memory ──
 TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+if [ "${TOTAL_MEM_KB}" -lt 524288 ]; then
+    fail "Less than 512MB RAM. Minimum 512MB required."
+fi
 if [ "${TOTAL_MEM_KB}" -lt 1048576 ]; then
-    fail "Less than 1GB RAM. Minimum 2GB recommended."
+    warn "Low memory (<1GB): 957MB-class VPS is tight but supported (validated 2026-08-14 on a 1vCPU/1GB droplet)."
 fi
 log "✓ Memory: $((TOTAL_MEM_KB / 1024)) MB total"
 

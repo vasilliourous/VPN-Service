@@ -157,14 +157,13 @@ After deployment, verify:
 ### Generate Activation Codes
 
 ```bash
-# The ADMIN_API_TOKEN is already on the VPS from secrets.env.age
-# Check it:
-ssh root@your-vps "cat /root/.admin_api_token"
-
-# Generate codes for each tier
-./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") eco 50
-./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") stealth 30
-./scripts/generate_codes.sh https://networkingguides.duckdns.org $(ssh root@your-vps "cat /root/.admin_api_token") strike 20
+# Generate codes for each tier (token = PocketBase ADMIN JWT from
+# /root/.pb_admin_creds — NOT /root/.admin_api_token, which PocketBase 0.22
+# rejects with 401)
+PB_TOKEN=$(ssh root@your-vps "grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2")
+./scripts/generate_codes.sh https://networkingguides.duckdns.org "$PB_TOKEN" eco 50
+./scripts/generate_codes.sh https://networkingguides.duckdns.org "$PB_TOKEN" stealth 30
+./scripts/generate_codes.sh https://networkingguides.duckdns.org "$PB_TOKEN" strike 20
 ```
 
 ### Print Code Cards

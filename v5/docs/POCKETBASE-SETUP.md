@@ -181,7 +181,11 @@ config:
 
 ## 4. Configure ADMIN_API_TOKEN
 
-The `ADMIN_API_TOKEN` is used by the admin unbind endpoint and the code generator.
+The `ADMIN_API_TOKEN` is used by the admin unbind endpoint. The code
+generator needs a different credential — the PocketBase ADMIN JWT
+(`grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2` on the VPS), because
+PocketBase 0.22 rejects the app-level token with 401 (see
+`scripts/generate_codes.sh --help`).
 
 ### On the VPS
 

@@ -17,6 +17,8 @@ def api(method, path, data=None):
     """Make PocketBase API request using temp file to avoid shell issues."""
     cmd = ["curl", "-s", "-X", method, f"{API}{path}",
            "-H", "Content-Type: application/json"]
+    if TOKEN:
+        cmd += ["-H", f"Authorization: {TOKEN}"]
     if data is not None:
         tf = f"/tmp/pbapi_{os.getpid()}.json"
         with open(tf, "w") as f:
@@ -31,6 +33,8 @@ def api(method, path, data=None):
 def log(msg):
     print(msg)
 
+TOKEN = ""
+
 # ── Step 1: Create or authenticate admin ──
 if os.path.exists(ADMIN_CREDS):
     with open(ADMIN_CREDS) as f:
@@ -39,6 +43,9 @@ if os.path.exists(ADMIN_CREDS):
                 k, v = line.strip().split("=", 1)
                 os.environ[k] = v
     token = os.environ.get("PB_TOKEN", "")
+    # Set the global BEFORE the verify call — the token check itself is an
+    # authenticated request (collections are admin-only in PB 0.22).
+    TOKEN = token
     # Verify token still works
     test = api("GET", "/api/collections")
     if test.get("items") is not None:
@@ -51,22 +58,27 @@ else:
     token_valid = False
 
 if not token_valid:
-    # Create admin (no auth required on fresh DB)
+    # Create the first superuser (PB 0.22+ — the old /api/admins endpoint
+    # was removed in 0.22; the first superuser may be created WITHOUT an
+    # Authorization header via _superusers).
     admin_pass = subprocess.run(
         ["openssl", "rand", "-base64", "24"],
         capture_output=True, text=True).stdout.strip()
-    resp = api("POST", "/api/admins", {
+    resp = api("POST", "/api/collections/_superusers/records", {
         "email": ADMIN_EMAIL,
         "password": admin_pass,
         "passwordConfirm": admin_pass,
     })
     token = resp.get("token", resp.get("adminToken", ""))
     if not token:
-        log(f"Admin creation returned: {resp.get('message', '')}")
-        # Try auth with password
-        resp = api("POST", "/api/admins/auth-with-password", {
+        log(f"Superuser creation returned: {resp.get('message', '')}")
+        # Try auth with the SAVED password (creation only succeeds on a
+        # truly fresh DB; if a superuser already exists, the saved password
+        # is the one that matches).
+        saved_pw = os.environ.get("PB_ADMIN_PASS", admin_pass)
+        resp = api("POST", "/api/collections/_superusers/auth-with-password", {
             "identity": ADMIN_EMAIL,
-            "password": admin_pass,
+            "password": saved_pw,
         })
         token = resp.get("token", "")
     if not token:
@@ -80,6 +92,7 @@ if not token_valid:
                 f"PB_ADMIN_EMAIL={ADMIN_EMAIL}\n"
                 f"PB_ADMIN_PASS={admin_pass}\n"
                 f"PB_TOKEN={token}\n")
+TOKEN = token
 
 # ── Step 2: Create collections ──
 collections = [
@@ -113,8 +126,6 @@ collections = [
         {"name":"update_sha256","type":"text"},
             {"name":"download_linux","type":"text"},
             {"name":"download_windows","type":"text"},
-            {"name":"download_macos_intel","type":"text"},
-            {"name":"download_macos_arm","type":"text"},
     ]),
 ]
 

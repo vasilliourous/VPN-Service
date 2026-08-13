@@ -56,7 +56,11 @@ luhn_mod_n_checksum() {
             fi
         fi
         sum=$(( sum + val ))
-        double=!$double
+        # Toggle properly — `double=!$double` would assign the literal string
+        # "!false", making every checksum wrong (fixed 2026-08-14 during the
+        # first fresh-VPS deployment: all generated codes were rejected as
+        # "Invalid code format" by the activation hook).
+        if $double; then double=false; else double=true; fi
     done
 
     local checksum=$(( (N - (sum % N)) % N ))
@@ -127,7 +131,11 @@ if [ -z "$HUB_URL" ] || [ -z "$ADMIN_TOKEN" ] || [ -z "$TIER" ] || [ -z "$COUNT"
     echo ""
     echo "Arguments:"
     echo "  hub_url      Admin hub URL (e.g. https://networkingguides.duckdns.org)"
-    echo "  admin_token  PocketBase admin API token"
+    echo "  admin_token  PocketBase ADMIN token (JWT) — on the VPS:"
+    echo "               grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2"
+    echo "               (NOT /root/.admin_api_token — that is the app-level"
+    echo "               ADMIN_API_TOKEN used by the unbind hook, rejected by"
+    echo "               PocketBase 0.22 with 401)"
     echo "  tier         eco | stealth | strike"
     echo "  count        Number of codes to generate"
     echo ""

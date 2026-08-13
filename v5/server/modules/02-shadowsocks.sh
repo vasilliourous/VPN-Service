@@ -245,15 +245,19 @@ write_uot_config() {
       "tag": "strike-uot",
       "listen": "::",
       "listen_port": ${UOT_PORT},
-      "network": "tcp_and_udp",
       "method": "aes-256-gcm",
-      "password": "${STRIKE_PASS}",
-      "udp_over_tcp": true
+      "password": "${STRIKE_PASS}"
     }
   ]
 }
 EOF
     log "✓ Created ${config_file} (port ${UOT_PORT}, Strike creds, udp_over_tcp)"
+    log "  NOTE: 'network' omitted — sing-box defaults to tcp+udp; the value"
+    log "  'tcp_and_udp' (shadowsocks-rust syntax) is REJECTED by sing-box."
+    log "  NOTE: no udp_over_tcp field on the INBOUND — sing-box <=1.12.1"
+    log "  rejects it (unknown field). UoT magic-domain connections are"
+    log "  handled automatically by the shadowsocks inbound; the option only"
+    log "  exists on the client (outbound) side."
 }
 
 write_uot_service() {

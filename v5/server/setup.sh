@@ -177,7 +177,12 @@ for svc in shadowsocks-eco shadowsocks-stealth shadowsocks-strike; do
 done
 
 # Start services and verify
-for svc in shadowsocks-eco shadowsocks-stealth shadowsocks-strike; do
+# Core tiers + tc caps; sing-box-uot is added when ENABLE_UOT=1.
+SERVICES="shadowsocks-eco shadowsocks-stealth shadowsocks-strike tc-eco-cap tc-stealth-cap tc-strike-cap"
+if [ "${ENABLE_UOT:-0}" = "1" ]; then
+    SERVICES="${SERVICES} sing-box-uot"
+fi
+for svc in $SERVICES; do
     if systemctl start "$svc" 2>/dev/null; then
         log "  Started ${svc}"
     else
@@ -188,7 +193,7 @@ done
 # ── Verify services ──
 sleep 2
 ALL_OK=true
-for svc in shadowsocks-eco shadowsocks-stealth shadowsocks-strike; do
+for svc in $SERVICES; do
     if systemctl is-active --quiet "$svc"; then
         log "✓ ${svc} running"
     else
@@ -265,7 +270,9 @@ log "    Check tier_configs collection in admin UI"
 log "    If missing, run: DOMAIN=${DOMAIN} python3 ${SCRIPT_DIR}/seed-pb.py"
 log ""
 log " 3. Generate activation codes:"
-log "    ./scripts/generate_codes.sh https://${DOMAIN} ${ADMIN_API_TOKEN} eco 50"
+log "    PB_TOKEN=\$(grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2)"
+log "    ./scripts/generate_codes.sh https://${DOMAIN} \${PB_TOKEN} eco 50"
+log "    (uses the PocketBase ADMIN JWT — the ADMIN_API_TOKEN is rejected by PB 0.22)"
 log ""
 log " 4. Verify backups are running:"
 log "    systemctl status pocketbase-backup.timer --no-pager"

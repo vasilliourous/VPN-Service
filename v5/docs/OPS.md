@@ -111,8 +111,10 @@ curl -X POST "$PB_API/api/admin/unbind-code" \
 ### Generate New Codes
 
 ```bash
-# From your local machine
-./scripts/generate_codes.sh "$PB_API" "$ADMIN_TOKEN" eco 10
+# From your local machine (the token is the PocketBase ADMIN JWT, not the
+# app-level ADMIN_API_TOKEN — see generate_codes.sh --help)
+PB_TOKEN=$(ssh root@your-vps "grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2")
+./scripts/generate_codes.sh "$PB_API" "$PB_TOKEN" eco 10
 ```
 
 ---

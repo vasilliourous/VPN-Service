@@ -56,8 +56,6 @@ COLLECTIONS = [
         {"name": "update_sha256", "type": "text"},
         {"name": "download_linux", "type": "text"},
         {"name": "download_windows", "type": "text"},
-        {"name": "download_macos_intel", "type": "text"},
-        {"name": "download_macos_arm", "type": "text"},
     ]),
 ]
 
@@ -100,17 +98,19 @@ def get_token():
             return token
         print("existing token invalid — re-authenticating")
     if pw:
-        r = curl("POST", "/api/admins/auth-with-password",
+        r = curl("POST", "/api/collections/_superusers/auth-with-password",
                  {"identity": ADMIN_EMAIL, "password": pw})
         if r.get("token"):
             print("✓ re-authenticated with saved password")
             return r["token"]
-    # Fresh DB: create the first admin (allowed without auth), then auth.
+    # Fresh DB: create the first superuser (PB 0.22+ — the first superuser
+    # may be created without auth via _superusers; the old /api/admins
+    # endpoint was removed in 0.22).
     pw = secrets.token_urlsafe(24)
-    r = curl("POST", "/api/admins",
+    r = curl("POST", "/api/collections/_superusers/records",
              {"email": ADMIN_EMAIL, "password": pw, "passwordConfirm": pw})
-    if r.get("id"):
-        r2 = curl("POST", "/api/admins/auth-with-password",
+    if r.get("id") or r.get("record"):
+        r2 = curl("POST", "/api/collections/_superusers/auth-with-password",
                   {"identity": ADMIN_EMAIL, "password": pw})
         if r2.get("token"):
             with open(CREDS, "w") as f:
@@ -119,7 +119,11 @@ def get_token():
             os.chmod(CREDS, 0o600)
             print("✓ fresh admin created and creds saved")
             return r2["token"]
-    print("AUTH FAILED:", json.dumps(r)[:300])
+        print("fresh superuser created but auth failed:", r2)
+    else:
+        print("superuser creation failed:", r)
+    print("AUTH FAILED — cannot obtain a PocketBase admin token. Check PB state:",
+          json.dumps(r)[:300])
     sys.exit(1)
 
 

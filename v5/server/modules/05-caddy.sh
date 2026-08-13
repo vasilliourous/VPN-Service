@@ -30,8 +30,8 @@ install_caddy() {
     if command -v caddy &>/dev/null; then
         local ver
         ver=$(caddy version 2>/dev/null | head -1 | cut -d' ' -f1 || echo "unknown")
-        log "Caddy already installed (v${ver})"
-        if caddy list-modules 2>/dev/null | grep -q "http.handlers.rate_limit"; then
+        log "Caddy already installed (${ver})"
+        if [ "$(caddy list-modules 2>/dev/null | grep -c 'http.handlers.rate_limit')" -gt 0 ]; then
             log "✓ rate_limit module present"
             return 0
         fi
@@ -47,7 +47,10 @@ install_caddy() {
     local tmpfile
     tmpfile=$(mktemp /tmp/caddy-XXXXXX)
 
-    # Pin to Caddy v2.8.4 (latest stable as of 2026-07) for reproducible deploys
+    # NOTE: the caddyserver.com download API ignores the version param and
+    # serves the latest release (observed 2026-08-14: requested 2.8.4, got
+    # 2.11.4), and occasionally returns a build WITHOUT the plugin (same
+    # date). The xcaddy fallback below makes this deterministic.
     CADDY_VERSION="2.8.4"
     if ! curl -sL "https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/mholt/caddy-ratelimit&version=${CADDY_VERSION}" \
         -o "$tmpfile"; then
@@ -67,9 +70,34 @@ install_caddy() {
     log "Downloaded Caddy ${ver}"
 
     # Verify ratelimit module is included
-    if ! "$tmpfile" list-modules 2>/dev/null | grep -q "http.handlers.rate_limit"; then
+    # NOTE: use grep -c (not -q) — under `set -euo pipefail`, grep -q closes
+    # the pipe after the first match, caddy gets SIGPIPE, and pipefail turns
+    # the whole check into a FALSE NEGATIVE (hit 2026-08-14: a good binary
+    # was rejected and setup fell back/aborted).
+    if [ "$("$tmpfile" list-modules 2>/dev/null | grep -c 'http.handlers.rate_limit')" -eq 0 ]; then
+        log "API build lacks rate_limit module — falling back to xcaddy build (deterministic)..."
         rm -f "$tmpfile"
-        fail "Downloaded Caddy does not include rate_limit module"
+        if command -v go &>/dev/null; then
+            local xcaddy_bin xcaddy_dir
+            xcaddy_bin=$(mktemp /tmp/caddy-xcaddy-XXXXXX)
+            xcaddy_dir="$(dirname "$xcaddy_bin")"
+            log "Building Caddy ${CADDY_VERSION} + caddy-ratelimit with xcaddy (one-time, ~2-4 min)..."
+            if GOBIN="$xcaddy_dir" go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest 2>/dev/null \
+                && "$xcaddy_dir/xcaddy" build "v${CADDY_VERSION}" --with github.com/mholt/caddy-ratelimit -o "$xcaddy_bin" 2>/dev/null; then
+                if [ "$("$xcaddy_bin" list-modules 2>/dev/null | grep -c 'http.handlers.rate_limit')" -gt 0 ]; then
+                    log "✓ xcaddy build has rate_limit (v${CADDY_VERSION})"
+                    tmpfile="$xcaddy_bin"
+                else
+                    rm -f "$xcaddy_bin"
+                    fail "xcaddy build succeeded but lacks rate_limit module"
+                fi
+            else
+                rm -f "$xcaddy_bin"
+                fail "API build lacked rate_limit AND xcaddy build failed. Install manually: xcaddy build v${CADDY_VERSION} --with github.com/mholt/caddy-ratelimit"
+            fi
+        else
+            fail "API build lacked rate_limit and go/xcaddy is unavailable. Install manually: xcaddy build v${CADDY_VERSION} --with github.com/mholt/caddy-ratelimit"
+        fi
     fi
     log "✓ rate_limit module confirmed in downloaded binary"
 
@@ -263,7 +291,7 @@ sleep 2
 if systemctl is-active --quiet caddy; then
     log "✓ Caddy is running"
     log "  Caddy version: $(caddy version 2>/dev/null | head -1)"
-    if caddy list-modules 2>/dev/null | grep -q "http.handlers.rate_limit"; then
+    if [ "$(caddy list-modules 2>/dev/null | grep -c 'http.handlers.rate_limit')" -gt 0 ]; then
         log "✓ rate_limit module confirmed active"
     fi
 else

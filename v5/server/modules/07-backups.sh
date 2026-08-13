@@ -242,17 +242,10 @@ install_b2() {
     fi
 }
 
-# ═══════════════════════════════════════════
-# Main
-# ═══════════════════════════════════════════
-
-install_b2
-ensure_sqlite3
-save_creds
-write_backup_script
-write_timer
-
 # ── Ensure sqlite3 (safe DB copy in the backup script) ──
+# NOTE: must be defined BEFORE the Main section calls it (bash has no
+# forward declarations — a call before definition is "command not found",
+# hit on a fresh 2026-08-14 deploy).
 ensure_sqlite3() {
     if command -v sqlite3 &>/dev/null; then
         log "sqlite3 already installed"
@@ -267,6 +260,16 @@ ensure_sqlite3() {
         warn "sqlite3 still missing after install"
     fi
 }
+
+# ═══════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════
+
+install_b2
+ensure_sqlite3
+save_creds
+write_backup_script
+write_timer
 
 # ── Enable timer ──
 systemctl daemon-reload
