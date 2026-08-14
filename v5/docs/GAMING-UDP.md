@@ -3,6 +3,15 @@
 > **Status:** DEPLOYED (2026-08-14) — server UoT endpoint LIVE on the
 > production VPS (134.199.155.166, port 8446) and client UoT support shipped.
 > P1 validation (real game session) is still PENDING — see §P1.
+> **P1 throughput baselines (2026-08-14, via the Stealth TCP path — clash
+> config `clash-verge-stealth.yaml`):** school network 25.3 down / 113.6 up
+> @ 51ms (single-flow: 2.47 down — school shapes downloads PER-FLOW ~2.5
+> Mbps, aggregate scales with parallel connections); mobile (Optus) 81.7
+> down / 9.5 up @ 121-150ms (mobile caps uploads); tunnel capacity from a
+> non-school link ~45-80 Mbps. Conclusion: the tunnel/VPS is not the
+> bottleneck — last-mile network shaping is. Per-flow download shaping is
+> worked around with multi-connection downloaders; a per-IP total cap would
+> need a second egress IP.
 > This document consolidates the analysis from the packet-level debugging
 > narrative (diag/ toolkit, FIXES.md, CONTEXT.md) into an ordered change plan
 > to make the Strike tier's gaming promise actually function on N4L school
