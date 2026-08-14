@@ -76,6 +76,7 @@ type StatusResult struct {
 	State     string `json:"state"`     // "running", "stopped", "crashed"
 	Failures  int    `json:"failures"`  // heartbeat failures
 	GraceDays int    `json:"graceDays"` // remaining grace period in days
+	TunnelOK  bool   `json:"tunnelOk"`  // watchdog: is the tunnel passing traffic?
 }
 
 // OpResult is returned by Connect / Disconnect.
@@ -188,8 +189,36 @@ func (a *App) Startup(ctx context.Context) {
 		a.startHeartbeatLoop(state.Code)
 	}
 
+	// ── Auto-connect after UAC elevation ──
+	// When relaunched elevated via the Connect() elevation gate, we pass
+	// "--autoconnect". The elevated instance connects on startup so the student
+	// doesn't have to click Connect again after accepting the UAC prompt.
+	if state.Activated && state.ServerConfig != nil && flagAutoConnect() {
+		log.Printf("Auto-connecting (launched with --autoconnect after elevation)")
+		go func() {
+			// Slight delay so the Wails DOM / event system is ready to receive
+			// the status:changed events emitted by Connect().
+			time.Sleep(1 * time.Second)
+			res := a.Connect()
+			if !res.Success {
+				log.Printf("Auto-connect after elevation failed: %s", res.Message)
+			}
+		}()
+	}
+
 	wailsruntime.LogInfo(a.ctx, "MyVPN started (version "+a.version+")")
 	log.Printf("Startup complete (activated=%v)", state.Activated)
+}
+
+// flagAutoConnect reports whether the process was launched with --autoconnect
+// (set by Connect() when it re-launches the app elevated via UAC).
+func flagAutoConnect() bool {
+	for _, a := range os.Args[1:] {
+		if a == "--autoconnect" {
+			return true
+		}
+	}
+	return false
 }
 
 // Shutdown is called by Wails when the application is quitting.
@@ -273,6 +302,30 @@ func (a *App) Activate(code string) ActivateResult {
 		}
 	}
 
+	// The server has already bound this code to this device, so a truncated
+	// response (missing server config or tier) would leave the client in a
+	// stuck state: the code is bound server-side, but this device cannot
+	// persist an activation and re-activation would report "already bound".
+	// Surface a clear diagnostic instead of silently failing part-way.
+	if resp.ServerCfg == nil {
+		return ActivateResult{
+			Success: false,
+			Message: "server did not return connection settings (code may already be bound) — please re-enter your code or contact support",
+		}
+	}
+	if resp.Tier == "" {
+		return ActivateResult{
+			Success: false,
+			Message: "server did not return a tier for this code — please retry or contact support",
+		}
+	}
+	if resp.ServerCfg.Server == "" || resp.ServerCfg.Password == "" || resp.ServerCfg.Method == "" {
+		return ActivateResult{
+			Success: false,
+			Message: "server returned incomplete connection settings — please retry or contact support",
+		}
+	}
+
 	// Persist activation
 	if err := a.store.SetActivation(code, resp.Tier, resp.DeviceFP, storageCfg, resp.UDPRelay); err != nil {
 		return ActivateResult{
@@ -312,6 +365,30 @@ func (a *App) Connect() OpResult {
 		return OpResult{Success: true, Message: "Already connected"}
 	}
 
+	// TUN interface creation requires administrator privileges on Windows.
+	// If we are not elevated, trigger a UAC prompt that re-launches the app
+	// elevated with --autoconnect, then exit this (non-elevated) instance so
+	// the elevated copy takes over and connects. Without this a non-admin
+	// launch would let the app open but sing-box would fail TUN creation with
+	// "Access is denied" and the connection would just die.
+	if !isElevated() {
+		log.Printf("Not elevated on Windows — requesting elevation before connecting")
+		if err := relaunchElevated("--autoconnect"); err != nil {
+			log.Printf("Elevation request returned: %v", err)
+			return OpResult{
+				Success: false,
+				Message: "Administrator permission was required to connect. The elevation prompt was declined or could not be shown — please relaunch MyVPN and allow the administrator prompt.",
+			}
+		}
+		// The elevated instance is starting; end this one.
+		log.Printf("UAC accepted — elevated instance starting; exiting non-elevated process")
+		wailsruntime.Quit(a.ctx)
+		return OpResult{
+			Success: true,
+			Message: "Requesting administrator permission — the app will reconnect automatically when allowed.",
+		}
+	}
+
 	cfg := manager.Config{
 		Server:        state.ServerConfig.Server,
 		ServerPort:    state.ServerConfig.ServerPort,
@@ -329,6 +406,24 @@ func (a *App) Connect() OpResult {
 	if err := a.mgr.Start(ctx, cfg); err != nil {
 		return OpResult{Success: false, Message: err.Error()}
 	}
+
+	// Wire the tunnel watchdog: it periodically confirms the tunnel is passing
+	// traffic and auto-recovers. Its callback keeps the UI's tunnel-health and
+	// connected state honest instead of showing "Connected" while the tunnel is
+	// silently broken.
+	a.mgr.SetProbeCallback(func(healthy bool, stage string, err error) {
+		if !healthy && a.connected {
+			// Tunnel degraded — reflect it immediately in the UI, then let the
+			// watchdog's recovery ladder keep trying before we give up.
+			wailsruntime.LogWarning(a.ctx, "Tunnel degraded ("+stage+": "+err.Error()+") — recovering")
+			wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
+			return
+		}
+		if a.connected {
+			wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
+		}
+	})
+	a.mgr.StartWatchdog()
 
 	a.connected = true
 
@@ -349,6 +444,7 @@ func (a *App) disconnect() OpResult {
 		return OpResult{Success: true, Message: "Already disconnected"}
 	}
 
+	a.mgr.StopWatchdog()
 	_ = a.mgr.Stop()
 	a.connected = false
 
@@ -370,6 +466,7 @@ func (a *App) buildStatus() StatusResult {
 		State:     a.mgr.State(),
 		Failures:  a.heartbeatFailures(),
 		GraceDays: a.graceDays(state.LastHeartbeatOK),
+		TunnelOK:  a.mgr.TunnelHealthy(),
 	}
 }
 
@@ -495,6 +592,7 @@ Go:          %s
 	Connected:   %v
 	Tier:        %s
 	Engine:      %s
+	Tunnel OK:   %v
 
 	Heartbeat OK:     %d
 	Heartbeat Fail:   %d
@@ -502,6 +600,8 @@ Go:          %s
 
 Server:       %s
 
+Leftover engines:
+%s
 Reported: %s
 `,
 		a.version,
@@ -511,14 +611,25 @@ Reported: %s
 		a.connected,
 		a.tier,
 		mgrState,
+		a.mgr.TunnelHealthy(),
 		state.LastHeartbeatOK,
 		a.heartbeatFailures(),
 		a.graceDays(state.LastHeartbeatOK),
 		a.serverReachability(),
+		leftoverLines(a.mgr.ForeignEngines()),
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
 	return report
+}
+
+// leftoverLines formats a foreign-engine summary for the diagnostics report,
+// defaulting to "(none)" when empty.
+func leftoverLines(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // serverReachability tests TCP connectivity to the configured VPN server.

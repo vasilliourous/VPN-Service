@@ -1,6 +1,6 @@
 <template>
-  <div :class="['badge', tier]">
-    <span class="badge-icon">{{ icon }}</span>
+  <div :class="['badge', tier]" role="img" :aria-label="`Tier: ${label}`">
+    <span class="badge-icon" aria-hidden="true">{{ icon }}</span>
     <span class="badge-text">{{ label }}</span>
   </div>
 </template>
@@ -20,8 +20,10 @@ const icon = computed(() => {
   }
 })
 
+// Safe label that never throws on an empty/unknown tier.
 const label = computed(() => {
-  return props.tier.charAt(0).toUpperCase() + props.tier.slice(1)
+  const t = props.tier || 'unknown'
+  return t.charAt(0).toUpperCase() + t.slice(1)
 })
 </script>
 

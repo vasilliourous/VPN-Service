@@ -16,7 +16,10 @@
       :state="vpn.state.state"
       :grace-days="vpn.state.graceDays"
       :failures="vpn.state.failures"
+      :tunnel-ok="vpn.state.tunnelOk"
+      :connecting="vpn.state.connecting"
       :loading="vpn.state.loading"
+      :version="vpn.state.version"
       :update-available="vpn.state.updateAvailable"
       :update-version="vpn.state.updateVersion"
       @connect="handleConnect"
@@ -25,25 +28,44 @@
       @check-update="handleCheckUpdate"
     />
 
-    <!-- Error toast -->
-    <div v-if="vpn.state.error" class="toast toast-error" @click="clearError">
-      {{ vpn.state.error }}
-    </div>
+    <!-- Error toast (auto-dismisses; click to dismiss immediately) -->
+    <Transition name="toast">
+      <div v-if="vpn.state.error" class="toast toast-error" @click="clearError" role="alert">
+        {{ vpn.state.error }}
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onBeforeUnmount, watch } from 'vue'
 import ActivationScreen from './components/ActivationScreen.vue'
 import MainScreen from './components/MainScreen.vue'
 import { useVPN } from './stores/vpn'
 
 const vpn = useVPN()
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(async () => {
   vpn.setupEventListeners()
   await vpn.checkActivated()
 })
+
+onBeforeUnmount(() => {
+  vpn.tearDownEventListeners()
+  if (toastTimer) clearTimeout(toastTimer)
+})
+
+// Auto-dismiss the error toast after a delay so it can't linger forever.
+watch(
+  () => vpn.state.error,
+  (val) => {
+    if (toastTimer) clearTimeout(toastTimer)
+    if (val) {
+      toastTimer = setTimeout(() => vpn.clearError(), 6000)
+    }
+  },
+)
 
 async function handleActivate(code: string): Promise<string | null> {
   return await vpn.activate(code)
@@ -67,7 +89,7 @@ async function handleCheckUpdate(): Promise<void> {
 }
 
 function clearError(): void {
-  // Cleared on next status change
+  vpn.clearError()
 }
 </script>
 
@@ -84,7 +106,6 @@ body {
   color: #F5F5F7;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   -webkit-font-smoothing: antialiased;
-  user-select: none;
 }
 
 .app-container {
@@ -100,12 +121,13 @@ body {
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 12px 24px;
+  padding: 12px 20px;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   z-index: 100;
-  animation: slideUp 0.3s ease;
+  max-width: 90%;
+  text-align: center;
 }
 
 .toast-error {
@@ -113,8 +135,7 @@ body {
   color: white;
 }
 
-@keyframes slideUp {
-  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
-  to   { transform: translateX(-50%) translateY(0); opacity: 1; }
-}
+/* toast transition */
+.toast-enter-active, .toast-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 12px); }
 </style>

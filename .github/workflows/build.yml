@@ -57,8 +57,8 @@ jobs:
         with:
           go-version: '1.22'
           cache: true
-          # go.sum doesn't exist until the first `go mod tidy` run — glob so
-          # go.mod (committed) resolves the cache path; go.sum adds once committed
+          # Both go.mod and go.sum are committed, so this glob resolves the
+          # Go module cache deterministically.
           cache-dependency-path: ${{ env.CLIENT_DIR }}/go.{mod,sum}
 
       - uses: actions/setup-node@v6

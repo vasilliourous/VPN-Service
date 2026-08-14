@@ -22,6 +22,13 @@
       <div class="status-text">{{ statusLabel }}</div>
       <div class="tier-label">{{ tierDisplay }}</div>
 
+      <!-- Tunnel degraded warning (watchdog flagged no traffic passing) -->
+      <div v-if="connected && !tunnelOk" class="degraded-warning">
+        ⚠ Connection is being repaired — the tunnel stopped passing traffic and
+        is recovering automatically. If this persists, open Diagnostics and copy
+        the report.
+      </div>
+
       <!-- Grace period warning -->
       <div v-if="graceDays <= 3 && connected" class="grace-warning">
         ⚠ {{ graceDays }} day{{ graceDays === 1 ? '' : 's' }} remaining
@@ -45,7 +52,7 @@
     <div class="card stats-card">
       <div class="stat-row">
         <span class="stat-label">State</span>
-        <span :class="['stat-value', stateColor]">{{ state }}</span>
+        <span :class="['stat-value', stateColor]">{{ stateLabel }}</span>
       </div>
       <div class="stat-row">
         <span class="stat-label">Heartbeat</span>
@@ -73,6 +80,11 @@
       </button>
     </div>
 
+    <!-- Version footer (helps with support diagnostics in the field) -->
+    <div class="version-footer" aria-label="App version">
+      MyVPN{{ version ? ' v' + version : '' }}
+    </div>
+
     <!-- Diagnostics modal -->
     <div v-if="showDiagnostics" class="modal-overlay" @click.self="showDiagnostics = false">
       <div class="modal">
@@ -94,7 +106,6 @@ import { ref, computed } from 'vue'
 import StatusIndicator from './StatusIndicator.vue'
 import TierBadge from './TierBadge.vue'
 import * as bridge from '@/lib/bridge'
-
 const emit = defineEmits<{
   connect: []
   disconnect: []
@@ -108,7 +119,10 @@ const props = defineProps<{
   state: string
   graceDays: number
   failures: number
+  tunnelOk: boolean
+  connecting: boolean
   loading: boolean
+  version: string
   updateAvailable: boolean
   updateVersion: string
 }>()
@@ -118,14 +132,21 @@ const showDiagnostics = ref(false)
 const diagnosticsText = ref('')
 const copied = ref(false)
 
+// A tunnel that is connected but not passing traffic (watchdog flagged it) is
+// shown as degraded (amber) rather than a healthy green "Connected".
 const statusState = computed(() => {
-  if (props.connected) return 'connected'
+  if (props.connected) {
+    return props.tunnelOk ? 'connected' : 'degraded'
+  }
   if (props.state === 'crashed') return 'error'
   return 'disconnected'
 })
 
 const statusLabel = computed(() => {
-  if (props.connected) return 'Connected'
+  if (props.connected) {
+    return props.tunnelOk ? 'Connected' : 'Repairing…'
+  }
+  if (props.connecting) return 'Connecting…'
   if (props.state === 'crashed') return 'Engine Error'
   return 'Disconnected'
 })
@@ -134,6 +155,14 @@ const stateColor = computed(() => {
   if (props.state === 'running') return 'stat-ok'
   if (props.state === 'crashed') return 'stat-error'
   return ''
+})
+
+// Human-readable label for the raw engine state string.
+const stateLabel = computed(() => {
+  if (props.state === 'running') return 'Running'
+  if (props.state === 'crashed') return 'Crashed'
+  if (props.state === 'stopped') return 'Stopped'
+  return props.state
 })
 
 const tierDisplay = computed(() => {
@@ -146,8 +175,12 @@ async function toggleConnection(): Promise<void> {
   if (props.connected) {
     emit('disconnect')
   } else {
-    const err = await emit('connect')
-    // The parent handles the actual connect; we just pass it through
+    // The parent resolves the connect promise with an error message (or null on
+    // success). Surface failures here so a failed connect is never silent.
+    const connectErr = await emit('connect')
+    if (connectErr) {
+      error.value = connectErr as string
+    }
   }
 }
 
@@ -164,12 +197,10 @@ async function handleCheckUpdate(): Promise<void> {
 }
 
 async function copyDiagnostics(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(diagnosticsText.value)
+  const ok = await bridge.copyToClipboard(diagnosticsText.value)
+  if (ok) {
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
-  } catch {
-    // Clipboard not available
   }
 }
 </script>
@@ -239,6 +270,11 @@ async function copyDiagnostics(): Promise<void> {
   color: #EF4444;
 }
 
+.status-circle.degraded {
+  background: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+}
+
 .status-text {
   font-size: 20px;
   font-weight: 600;
@@ -255,6 +291,16 @@ async function copyDiagnostics(): Promise<void> {
   padding: 6px 12px;
   background: rgba(245, 158, 11, 0.1);
   border-radius: 6px;
+}
+
+.degraded-warning {
+  font-size: 12px;
+  color: #F59E0B;
+  line-height: 1.5;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
 }
 
 .btn {
@@ -347,6 +393,14 @@ async function copyDiagnostics(): Promise<void> {
   flex: 1;
 }
 
+.version-footer {
+  margin-top: 4px;
+  text-align: center;
+  font-size: 11px;
+  color: #4A4A52;
+  user-select: text;
+}
+
 /* ── Diagnostics Modal ── */
 
 .modal-overlay {
@@ -370,11 +424,20 @@ async function copyDiagnostics(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .modal h3 {
   font-size: 16px;
   font-weight: 600;
+  flex-shrink: 0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .diagnostics-text {
@@ -387,7 +450,8 @@ async function copyDiagnostics(): Promise<void> {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow: auto;
-  max-height: 400px;
+  flex: 1;
+  min-height: 80px;
   color: #8E8E96;
 }
 

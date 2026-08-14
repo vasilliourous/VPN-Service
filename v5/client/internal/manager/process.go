@@ -63,6 +63,9 @@ var (
 	ErrHelperNotRunning  = fmt.Errorf("TUN helper is not running")
 	ErrInvalidConfig     = fmt.Errorf("invalid sing-box configuration")
 	ErrMaxRestarts       = fmt.Errorf("maximum restart attempts exceeded")
+	// errEngineAlreadyRunning guards against concurrent double-spawn from the
+	// health loop and the watchdog sharing myvpn0.
+	errEngineAlreadyRunning = fmt.Errorf("sing-box engine is already running")
 )
 
 // boundedBuffer is a thread-safe writer that keeps only the last max bytes
@@ -170,6 +173,16 @@ type Manager struct {
 	restartCount     int
 	firstRestartTime time.Time
 	stopHealthCheck  chan struct{}
+
+	// tunCfg is the last successful tunnel config, retained so the watchdog
+	// can restart/recover the exact same tunnel (config file is deleted on
+	// Stop, so recovery must regenerate it).
+	tunCfg Config
+
+	// Watchdog state.
+	watchdogStop    chan struct{}
+	watchdogOnProbe ProbeCallback // notified on each probe outcome (nil = no-op)
+	tunnelHealthy   bool
 }
 
 // Config holds the parameters needed to start the tunnel.
@@ -245,14 +258,19 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("tunnel is already running")
 	}
 
-	// Refuse to stack a second engine on the same TUN: a leftover sing-box
-	// (orphaned from a previous session/crash, or another VPN app) plus a
-	// fresh spawn means TWO instances sharing myvpn0 — packets go to both,
-	// routes fight, and the user sees random failures (observed 2026-08-01:
-	// duplicate "started at myvpn0" in one log, "a variety of issues").
+	// Auto-clean before connecting. Previously this hard-failed with "close it
+	// in Task Manager" — a manual dead-end for students. A leftover sing-box
+	// (orphaned after a crash) or a stale myvpn0 TUN will corrupt routing if we
+	// stack a fresh engine on top, so we clear both first, then start clean.
 	if foreignSingBoxRunning() {
-		return fmt.Errorf("another sing-box process is already running (leftover from a previous session or another app) — close it (Task Manager) and retry")
+		log.Printf("Leftover sing-box detected before connect; killing it and clearing stale TUN")
+		killForeignEngines()
+		_ = removeStaleTUN()
 	}
+
+	// Retain the tunnel config so the watchdog can restart/recover it later
+	// (the config file is deleted on Stop).
+	m.tunCfg = cfg
 
 	// Generate the sing-box configuration
 	configJSON, err := generateConfig(cfg)
@@ -445,6 +463,13 @@ func (m *Manager) startWithHelper(configJSON []byte) error {
 
 // startDirect spawns sing-box directly as a subprocess.
 func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
+	// Guard against concurrent double-spawn (e.g. the health loop and the
+	// watchdog both trying to recover at once): two sing-box instances sharing
+	// myvpn0 corrupt routing. Prefer the running instance over spawning a second.
+	if m.processAlive() {
+		return errEngineAlreadyRunning
+	}
+
 	// Write config to disk
 	if err := os.WriteFile(m.configPath, configJSON, 0600); err != nil {
 		return fmt.Errorf("cannot write config file: %w", err)
@@ -533,32 +558,27 @@ func (m *Manager) healthLoop() {
 					return
 				}
 
-				// Attempt restart
+				// Attempt restart. Route through startDirect so the shared
+				// double-spawn guard applies — otherwise this loop could race
+				// the watchdog's recovery and spawn a second sing-box on the
+				// same TUN (which corrupts routing).
 				if m.canRestart() {
 					m.restartCount++
 					m.mu.Unlock()
-					// Reload config and restart
-					if _, err := os.ReadFile(m.configPath); err != nil {
+					configJSON, err := os.ReadFile(m.configPath)
+					if err != nil {
+						// Config gone — nothing to restart with; give up the loop.
+						m.mu.Lock()
+						m.healthFailures = maxHealthFailures
+						m.mu.Unlock()
 						return
 					}
-					newCtx := context.Background()
-					cmd := exec.CommandContext(newCtx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
-					cmd.Stdout = os.Stdout
-					cmd.Stderr = os.Stderr
-					cmd.SysProcAttr = newProcAttr()
-					if startErr := cmd.Start(); startErr == nil {
-						exited := make(chan struct{})
+					if startErr := m.startDirect(context.Background(), configJSON); startErr == nil {
 						m.mu.Lock()
-						m.cmd = cmd
-						m.exited = exited
 						m.healthFailures = 0
 						m.mu.Unlock()
-						go func() {
-							_ = cmd.Wait()
-							close(exited)
-						}()
 					}
-					// Restart failed — will retry next cycle
+					// Restart failed or engine already up — will retry next cycle.
 					continue
 				}
 				m.mu.Unlock()
@@ -727,15 +747,24 @@ func generateConfig(cfg Config) ([]byte, error) {
 	// captures sing-box's own Shadowsocks connection, this rule sends it
 	// DIRECT (out via the physical NIC) instead of looping it back into the
 	// proxy. Best-effort — resolution happens before the TUN exists.
+	//
+	// This rule (and the UoT UDP rule below) is APPENDED after the base
+	// [sniff, hijack-dns] rules, NEVER prepended: the DNS query must be
+	// handled by hijack-dns before any `network:`/`ip_cidr:` matcher can
+	// capture it. If a network-based rule were first it would swallow DNS
+	// (e.g. UDP DNS hitting the proxy-uot route) and nothing would resolve —
+	// the classic "TUN up but no traffic passes" symptom.
 	if serverIPs, err := net.LookupIP(cfg.Server); err == nil {
 		for _, ip := range serverIPs {
 			if ip4 := ip.To4(); ip4 != nil {
-				config.Route.Rules = append([]RouteRule{
+				config.Route.Rules = append(config.Route.Rules, RouteRule{
 					// Canonical action form — the top-level `outbound` field
 					// was deprecated in 1.11 and is silently problematic; the
 					// `"action": "route"` form works on 1.12 and 1.13+.
-					{IPCIDR: []string{ip4.String() + "/32"}, Action: "route", Outbound: "direct"},
-				}, config.Route.Rules...)
+					IPCIDR:   []string{ip4.String() + "/32"},
+					Action:   "route",
+					Outbound: "direct",
+				})
 				break
 			}
 		}
@@ -767,9 +796,14 @@ func generateConfig(cfg Config) ([]byte, error) {
 			UDPOverTCP: true,
 		})
 		// Route UDP flows to the UoT outbound; TCP continues via "proxy".
-		config.Route.Rules = append([]RouteRule{
-			{Network: "udp", Action: "route", Outbound: "proxy-uot"},
-		}, config.Route.Rules...)
+		// Appended AFTER the base sniff/hijack-dns rules so DNS over UDP is
+		// hijacked before it can match this network:udp matcher (see the
+		// server-IP exclusion comment above).
+		config.Route.Rules = append(config.Route.Rules, RouteRule{
+			Network:  "udp",
+			Action:   "route",
+			Outbound: "proxy-uot",
+		})
 	}
 
 	return json.MarshalIndent(config, "", "  ")

@@ -87,7 +87,10 @@ const validationClass = ref('')
 const codeInput = ref<HTMLInputElement>()
 
 const canActivate = computed(() => {
-  return code.value.replace(/-/g, '').length >= 16 && !props.loading
+  // Code must be the full 18-char body (MYVPN + 3×4 segments + checksum)
+  // before the button enables — submitting a shorter code would only fail
+  // client-side Luhn validation and waste a server round-trip.
+  return code.value.replace(/-/g, '').length === 18 && !props.loading
 })
 
 async function onCodeInput(): Promise<void> {

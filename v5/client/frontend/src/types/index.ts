@@ -24,6 +24,7 @@ export interface StatusResult {
   state: string     // "running" | "stopped" | "crashed"
   failures: number
   graceDays: number
+  tunnelOk: boolean // watchdog: is the tunnel actually passing traffic?
 }
 
 // ── Connection Operations ──
@@ -48,4 +49,22 @@ export interface UpdateAvailableEvent {
   version: string
   url: string
   sha256: string
+}
+
+// ── Go backend binding surface (mirrors the bound App methods) ──
+// Keep in sync with the Go `App` struct's frontend-bound methods.
+
+export interface AppBindings {
+  GetVersion(): Promise<string>
+  GetHubURL(): Promise<string>
+  GetCodeCharset(): Promise<string>
+  GetCodePrefix(): Promise<string>
+  ValidateCode(code: string): Promise<ValidateResult>
+  Activate(code: string): Promise<ActivateResult>
+  IsActivated(): Promise<boolean>
+  Connect(): Promise<OpResult>
+  Disconnect(): Promise<OpResult>
+  GetStatus(): Promise<StatusResult>
+  CheckForUpdate(): Promise<UpdateCheckResult>
+  GetDiagnostics(): Promise<string>
 }

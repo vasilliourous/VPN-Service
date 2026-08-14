@@ -67,10 +67,10 @@ type Data struct {
 
 // ServerConfig holds the Shadowsocks connection parameters.
 type ServerConfig struct {
-	Server        string `json:"server"`
-	ServerPort    int    `json:"server_port"`
-	Password      string `json:"password"`
-	Method        string `json:"method"`
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
+	Password   string `json:"password"`
+	Method     string `json:"method"`
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
@@ -283,11 +283,16 @@ func (s *Store) SetHeartbeat(timestamp int64) error {
 }
 
 // SetHeartbeatFailure increments the heartbeat failure counter.
+//
+// This must NOT update LastHeartbeatOK: that timestamp records the last
+// *successful* heartbeat and drives the grace-period clock. Refreshing it on a
+// failure would keep a suspended/stalled device perpetually within the grace
+// window (it never sees the 7-day counter expire) — defeating suspension.
+// `timestamp` is the failure time for diagnostics only.
 func (s *Store) SetHeartbeatFailure(timestamp int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.data.LastHeartbeatOK = timestamp
 	s.data.HeartbeatFailures++
 	return s.save()
 }

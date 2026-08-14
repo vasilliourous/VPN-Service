@@ -1,13 +1,29 @@
 <template>
-  <div :class="['indicator', state]">
+  <div
+    :class="['indicator', state]"
+    role="status"
+    :aria-label="statusText"
+    :title="statusText"
+  >
     <div class="dot"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{
-  state: 'connected' | 'disconnected' | 'error'
+import { computed } from 'vue'
+
+const props = defineProps<{
+  state: 'connected' | 'disconnected' | 'error' | 'degraded'
 }>()
+
+const statusText = computed(() => {
+  switch (props.state) {
+    case 'connected': return 'Connected'
+    case 'degraded': return 'Connection being repaired'
+    case 'error': return 'Error'
+    default: return 'Disconnected'
+  }
+})
 </script>
 
 <style scoped>
@@ -30,6 +46,11 @@ defineProps<{
 
 .disconnected .dot {
   background: #6B7280;
+}
+
+.degraded .dot {
+  background: #F59E0B;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
 }
 
 .error .dot {

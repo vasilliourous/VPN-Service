@@ -40,6 +40,26 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Accessibility: visible focus for keyboard users ── */
+:focus-visible {
+  outline: 2px solid #A855F7;
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #C084FC;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
 code, pre, .mono {
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
 }

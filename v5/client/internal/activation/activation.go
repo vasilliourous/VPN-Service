@@ -44,10 +44,10 @@ type ActivateResponse struct {
 
 // ServerConfig holds Shadowsocks connection parameters from the server.
 type ServerConfig struct {
-	Server        string `json:"server"`
-	ServerPort    int    `json:"server_port"`
-	Password      string `json:"password"`
-	Method        string `json:"method"`
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
+	Password   string `json:"password"`
+	Method     string `json:"method"`
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
