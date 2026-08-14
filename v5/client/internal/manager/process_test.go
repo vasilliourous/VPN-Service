@@ -115,8 +115,11 @@ func TestGeneratedConfig(t *testing.T) {
 	if !strings.Contains(s, `"auto_detect_interface": true`) {
 		t.Errorf("auto_detect_interface must be enabled:\n%s", s)
 	}
-	if !strings.Contains(s, `"sniff": true`) {
-		t.Errorf("tun inbound must have sniff enabled (required for the protocol:dns rule):\n%s", s)
+	if strings.Contains(s, `"sniff": true`) {
+		t.Errorf("tun inbound must NOT set legacy sniff:true (removed in sing-box 1.13, breaks routing); use the sniff rule action instead:\n%s", s)
+	}
+	if !strings.Contains(s, `"action": "sniff"`) {
+		t.Errorf("route rules must sniff via the modern sniff rule action:\n%s", s)
 	}
 	if !strings.Contains(s, `"server": "dns-direct"`) || !strings.Contains(s, `"default_domain_resolver"`) {
 		t.Errorf("route.default_domain_resolver -> dns-direct must be present (prevents the server-domain resolution loop, sing-box #2207):\n%s", s)
@@ -126,6 +129,9 @@ func TestGeneratedConfig(t *testing.T) {
 	}
 	if !strings.Contains(s, `"hijack-dns"`) {
 		t.Errorf("route rules must use the hijack-dns action for DNS (sing-box 1.11+ format):\n%s", s)
+	}
+	if !strings.Contains(s, `"action": "route"`) {
+		t.Errorf("rules that route to an outbound must use the modern action form (action: route + outbound):\n%s", s)
 	}
 	if !strings.Contains(s, `"ip_cidr"`) {
 		t.Errorf("route rule excluding the VPN server IP (direct) must be present:\n%s", s)
@@ -180,8 +186,8 @@ func TestGeneratedConfigUOT(t *testing.T) {
 	if !strings.Contains(s, `"server_port": 8446`) {
 		t.Errorf("proxy-uot must point at the advertised uot_port (8446):\n%s", s)
 	}
-	if !strings.Contains(s, `"network": "udp"`) || !strings.Contains(s, `"outbound": "proxy-uot"`) {
-		t.Errorf("a network:udp route rule must pin UDP to proxy-uot:\n%s", s)
+	if !strings.Contains(s, `"network": "udp"`) || !strings.Contains(s, `"outbound": "proxy-uot"`) || !strings.Contains(s, `"action": "route"`) {
+		t.Errorf("a network:udp route rule must pin UDP to proxy-uot using the modern action form:\n%s", s)
 	}
 	if !strings.Contains(s, `"tag": "proxy"`) || !strings.Contains(s, `"server_port": 8445`) {
 		t.Errorf("the TCP proxy outbound must stay on the standard port (8445):\n%s", s)

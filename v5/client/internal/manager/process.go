@@ -612,6 +612,12 @@ func (m *Manager) State() string {
 // (incl. the school laptops this app targets) also blocks sing-box's own
 // outbound + DNS and kills all connectivity. auto_route alone still routes
 // all traffic through the TUN (see FIXES.md).
+//
+// All route rules use the MODERN rule-action format ("action": "route", ...)
+// and the tun inbound NO LONGER sets the legacy "sniff": true field: those
+// legacy 1.10-era fields are deprecated (1.11) and removed (1.13), and make
+// the config fail to start or break routing on newer engines. Validated to
+// `sing-box check` clean on both 1.12.1 and 1.13.x.
 func generateConfig(cfg Config) ([]byte, error) {
 	// Debug is the DEFAULT level while the tunnel data path is under active
 	// investigation (2026-08-01): with it, myvpn.log shows sing-box's dial
@@ -668,7 +674,14 @@ func generateConfig(cfg Config) ([]byte, error) {
 				MTU:           1500,
 				AutoRoute:     true,
 				StrictRoute:   false,
-				Sniff:         true,
+				// NOTE: sniff is intentionally NOT set here. The legacy
+				// `"sniff": true` tun-inbound field was deprecated in sing-box
+				// 1.11 and REMOVED in 1.13 (legacy inbound fields → rule
+				// actions migration). Leaving it in makes the whole config
+				// fail to start on any sing-box ≥ 1.13 ("removed in 1.13.0")
+				// and was a source of DNS/routing breakage. DNS sniffing is
+				// handled in the modern way by the `sniff` route rule action
+				// below (see Route.Rules).
 			},
 		},
 		Outbounds: []Outbound{
@@ -699,6 +712,11 @@ func generateConfig(cfg Config) ([]byte, error) {
 			// is deprecated in 1.12).
 			DefaultDomainResolver: &DomainResolveOptions{Server: "dns-direct"},
 			Rules: []RouteRule{
+				// Sniff connections first (modern equivalent of the removed
+				// legacy tun-inbound `"sniff": true`) so the protocol:dns rule
+				// below can match DNS by sniffed protocol. First rule so the
+				// metadata is available to every subsequent rule.
+				{Action: "sniff"},
 				// DNS traffic is handled by the hijack-dns rule action (1.11+).
 				{Protocol: "dns", Action: "hijack-dns"},
 			},
@@ -713,7 +731,10 @@ func generateConfig(cfg Config) ([]byte, error) {
 		for _, ip := range serverIPs {
 			if ip4 := ip.To4(); ip4 != nil {
 				config.Route.Rules = append([]RouteRule{
-					{IPCIDR: []string{ip4.String() + "/32"}, Outbound: "direct"},
+					// Canonical action form — the top-level `outbound` field
+					// was deprecated in 1.11 and is silently problematic; the
+					// `"action": "route"` form works on 1.12 and 1.13+.
+					{IPCIDR: []string{ip4.String() + "/32"}, Action: "route", Outbound: "direct"},
 				}, config.Route.Rules...)
 				break
 			}
@@ -747,7 +768,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 		})
 		// Route UDP flows to the UoT outbound; TCP continues via "proxy".
 		config.Route.Rules = append([]RouteRule{
-			{Network: "udp", Outbound: "proxy-uot"},
+			{Network: "udp", Action: "route", Outbound: "proxy-uot"},
 		}, config.Route.Rules...)
 	}
 
@@ -830,6 +851,12 @@ type RouteRule struct {
 	Protocol string   `json:"protocol,omitempty"`
 	Network  string   `json:"network,omitempty"`
 	IPCIDR   []string `json:"ip_cidr,omitempty"`
-	Outbound string   `json:"outbound,omitempty"`
-	Action   string   `json:"action,omitempty"`
+	// Outbound is the target outbound for the "route" action. This must be
+	// paired with Action == "route" (sing-box 1.11+): the bare top-level
+	// `outbound` field is the deprecated legacy form and is troublesome on
+	// sing-box 1.12+/1.13. See generateConfig.
+	Outbound string `json:"outbound,omitempty"`
+	// Action names the rule action: "route", "hijack-dns", "sniff", etc.
+	// Required for all rules on sing-box 1.11+.
+	Action string `json:"action,omitempty"`
 }

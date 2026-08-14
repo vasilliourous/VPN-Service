@@ -521,9 +521,16 @@ Reported: %s
 	return report
 }
 
-// serverReachability quickly tests TCP connectivity to the configured VPN
-// server. Used to distinguish network blocks from tunnel-state problems:
-// "reachable" while the tunnel still times out ⇒ stale TUN/routes on the host.
+// serverReachability tests TCP connectivity to the configured VPN server.
+// It distinguishes network blocks from tunnel-state problems.
+//
+// IMPORTANT: when the VPN tunnel is UP, auto_route captures the host's OWN
+// sockets — including this probe's dial — and routes them through the TUN. A
+// raw host-level dial is then no longer an out-of-band test: it fails whenever
+// the tunnel isn't passing traffic, which previously produced a confusing
+// "server UNREACHABLE" in diagnostics even though the server itself was fine
+// and the real problem was the tunnel. The label is therefore qualified by the
+// connection state so support reports read correctly.
 func (a *App) serverReachability() string {
 	state := a.store.GetData()
 	if state.ServerConfig == nil {
@@ -531,11 +538,17 @@ func (a *App) serverReachability() string {
 	}
 	addr := net.JoinHostPort(state.ServerConfig.Server, strconv.Itoa(state.ServerConfig.ServerPort))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
-	if err != nil {
-		return fmt.Sprintf("%s UNREACHABLE (%v)", addr, err)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Sprintf("%s reachable", addr)
 	}
-	_ = conn.Close()
-	return fmt.Sprintf("%s reachable", addr)
+	if a.connected {
+		// Tunnel up but this host-level probe fails: traffic is being routed
+		// through the (now non-functional) tunnel, so "unreachable" is not a
+		// statement about the server — it means the tunnel is not passing TCP.
+		return fmt.Sprintf("%s via tunnel UNREACHABLE — tunnel not passing TCP (server out-of-band not tested)", addr)
+	}
+	return fmt.Sprintf("%s UNREACHABLE (%v)", addr, err)
 }
 
 // ──────────────────────────────────────────
