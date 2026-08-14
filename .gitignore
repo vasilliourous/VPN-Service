@@ -35,3 +35,5 @@ whale.txt
 # Secrets (encrypted is fine; plaintext never)
 .secrets.env
 age-key.txt
+clash-verge-stealth.yaml  # contains tier password — never commit
+clash-verge-stealth-notun.yaml  # contains tier password — never commit
