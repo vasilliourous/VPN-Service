@@ -2,7 +2,11 @@
 
 > **Status:** DEPLOYED (2026-08-14) — server UoT endpoint LIVE on the
 > production VPS (134.199.155.166, port 8446) and client UoT support shipped.
-> P1 validation (real game session) is still PENDING — see §P1.
+> **UoT transport VALIDATED end-to-end (2026-08-14):** sing-box client with
+> `udp_over_tcp: true` → :8446 → sing-box server → UDP to 1.1.1.1:53 → DNS
+> reply returned through the UoT chain (2 answers, QR flag set) — the first
+> successful UDP-over-TCP round-trip on this stack. Remaining P1 item: a REAL
+> game session (SCP:SL) on the school network.
 > **P1 throughput baselines (2026-08-14, via the Stealth TCP path — clash
 > config `clash-verge-stealth.yaml`):** school network 25.3 down / 113.6 up
 > @ 51ms (single-flow: 2.47 down — school shapes downloads PER-FLOW ~2.5

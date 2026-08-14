@@ -106,6 +106,31 @@ surfaced a stack of real bugs — all fixed in this round:
 
 ---
 
+## NEW VPS — VOYAGER-PROBLEM REGRESSION TEST (2026-08-14)
+
+Tested 134.199.155.166 against every failure class that plagued the old
+Voyager VPS. Results:
+
+| Old-Voyager problem | Test | Result |
+|---------------------|------|:------:|
+| IP drift (domain pointed at dead IP, cached clients broke) | duckdns resolves to 134.199.155.166 from VPS + public resolvers | ✅ |
+| tc caps evaporate on kernel update / reboot | **Full reboot** → all 10 services active, exactly 3 tc filters attached post-boot | ✅ |
+| "Can't validate the SS leg on the VPS" (TUN captured own egress) | sing-box client on the VPS → :8445 → curl example.com → **HTTP 200 in 89ms** | ✅ |
+| UoT RST'd by shadowsocks-rust (~300ms) | sing-box client `udp_over_tcp` → :8446 → DNS query to 1.1.1.1:53 → **reply returned (2 answers)** — first working UoT round-trip on this stack | ✅ |
+| Backups silently stopped (old box's last backup 2026-08-10) | B2 shows 24 fresh `.db.gz` backups from Aug 13-14; timer active; checksum verified | ✅ |
+| `source <(age -d …)` secrets silently failing | setup.sh decrypts via age-key.txt temp-file path; tier passwords match configs + tier_configs | ✅ |
+| PB hooks broken → generic 400 on activation | Activation returns proper "Missing code" 400; heartbeat 200; health 200; TLS 200 | ✅ |
+| "Empty tier_configs" red herring | tier_configs populated (eco/stealth/strike, strike has uot_port) | ✅ |
+| B2 CLI syntax drift / restore-path bugs | b2 CLI 4.7.1 installed; backup upload + checksum verification working | ✅ |
+| Admin-password drift after restore | PB admin JWT in /root/.pb_admin_creds valid (seeds + API calls succeed) | ✅ |
+
+**Remaining (needs the user's environment):** real SCP:SL game session on
+the school network (P1 in GAMING-UDP.md). Also note: school network shapes
+downloads per-flow (~2.5 Mbps/flow; 25 Mbps aggregate with parallel flows,
+113 Mbps up) — a last-mile policy, not a VPS defect.
+
+---
+
 ## HISTORY ARCHIVE — CURATED ORIGINALS RESTORED (2026-08-14)
 
 After the culling rounds 1–2 deleted `originals/` wholesale, review flagged
