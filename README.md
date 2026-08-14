@@ -104,7 +104,7 @@ VPN-Service/
 │   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
 │   └── print_codes.sh        ── Printable PDF code cards
 └── .github/workflows/        ← CI/CD
-    └── build.yml             ── Build + release for Linux + Windows (Wails)
+    └── build.yml             ── Build + release for Linux + macOS + Windows (Wails)
 ```
 
 ---
@@ -214,7 +214,7 @@ This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 
 ```bash
 cd v5/client
 make build          # current platform only
-make build-all      # Linux + Windows
+make build-all      # Linux + Windows + macOS
 ```
 
 Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds, bundles, and releases

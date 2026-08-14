@@ -37,7 +37,7 @@ help:
 	@echo "Targets:"
 	@echo "  dev              Hot-reload development mode (wails dev)"
 	@echo "  build            Build for current platform (wails build)"
-	@echo "  build-all        Build for Linux + Windows"
+	@echo "  build-all        Build for Linux + Windows + macOS"
 	@echo "  clean            Remove build artifacts"
 	@echo "  test             Run Go unit tests"
 	@echo "  vet              Run go vet"
@@ -82,10 +82,20 @@ build-windows:
 	mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe
 
-build-all: build-linux build-windows
+build-macos-intel:
+	mkdir -p $(BUILD_DIR)
+	GOOS=darwin GOARCH=amd64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
+
+build-macos-arm:
+	mkdir -p $(BUILD_DIR)
+	GOOS=darwin GOARCH=arm64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
+
+build-all: build-linux build-windows build-macos-intel build-macos-arm
 	@echo "═══ All platform builds complete ═══"
 	@echo "  $(BUILD_DIR)/$(APP_NAME)-linux-amd64"
 	@echo "  $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-darwin-amd64"
+	@echo "  $(BUILD_DIR)/$(APP_NAME)-darwin-arm64"
 
 # ── Frontend setup (install NPM deps manually if wails doesn't do it) ──
 frontend-setup:

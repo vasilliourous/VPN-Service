@@ -65,7 +65,9 @@ make dev             # Builds frontend, then wails dev (Vite dev server)
 ```bash
 make build-linux        # Linux amd64
 make build-windows      # Windows amd64 (CGO_ENABLED=0 in CI)
-make build-all          # Both targets
+make build-macos-intel  # macOS Intel (needs osxcross or Mac builder)
+make build-macos-arm    # macOS Apple Silicon
+make build-all          # All four targets
 ```
 
 ### CI/CD
@@ -73,7 +75,7 @@ make build-all          # Both targets
 The `.github/workflows/build.yml` workflow (repo root):
 1. Lints and vets all Go code
 2. Builds the Vue frontend, then the client with `-tags frontend`
-3. Builds for Linux and Windows in parallel
+3. Builds for Linux, macOS (Intel + ARM), and Windows in parallel
 4. Downloads the matching sing-box binary (1.10.0) for each platform
 5. Bundles 2 binaries (`myvpn` + `sing-box`) into platform ZIPs
 6. Creates a GitHub Release with a `checksums.sha256` file
@@ -351,6 +353,16 @@ never emitted for any tier.
 - **Build:** CI compiles with `CGO_ENABLED=0` (`-H windowsgui` — no console window);
   local `wails build` may need MinGW-w64 on Linux
 - **WebView:** WebView2 (included in Windows 10+)
+
+### macOS
+- **TUN:** sing-box creates the TUN interface directly
+- **Fingerprint:** `networksetup -getmacaddress en0/en1`, `ioreg IOPlatformSerialNumber`,
+  `ioreg IOPlatformUUID`
+- **WebView:** WKWebView; needs `darwin_link.go` (the `UTType` cgo shim) — see FIXES.md
+- **Signing:** the build is **UNSIGNED** (no Apple Developer account). Gatekeeper will
+  block it on first launch. Workaround: right-click the app → **Open**, or run
+  `xattr -cr /Applications/MyVPN.app` (or `chmod +x` is not needed). Full user-facing
+  instructions are planned for the download site (built separately).
 
 ---
 

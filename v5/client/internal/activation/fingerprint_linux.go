@@ -14,10 +14,9 @@
 // The caller (storage layer) persists the first generated fingerprint
 // so it remains stable across app restarts.
 //
-// Supported platforms: linux, windows (macOS dropped in the 2026-08 culling —
-// unsigned builds are unusable on macOS, so darwin code was removed entirely).
-// Each platform file is self-contained: shared logic lives in
-// fingerprint_linux.go / fingerprint_windows.go.
+// Supported platforms: linux, darwin, windows. Each platform file is
+// self-contained: shared logic lives in fingerprint_linux.go /
+// fingerprint_darwin.go / fingerprint_windows.go.
 //
 // Hardening: thread-safe, error wrapping, minimum-entropy check.
 package activation

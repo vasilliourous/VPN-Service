@@ -46,6 +46,35 @@ full file-change map and sequencing.
 
 ---
 
+## MACOS RE-ENABLED — UNSIGNED BUILD (2026-08-14)
+
+Round-2 culling dropped macOS (unsigned builds were deemed unusable).
+Revisited when it became clear macOS is ~50% of the target market; decision:
+ship the **unsigned** build with a documented Gatekeeper workaround (right-click
+→ Open, or `xattr -cr /Applications/MyVPN.app`). Full end-user instructions
+will live on the separate download site.
+
+What was restored (all previously removed in the culling commits):
+- `tunnel.go`: `darwinTUN`, `killSwitchDarwin` (pfctl), `setDNSDarwin`
+  (networksetup), darwin switch cases + interface assertion
+- `activation/fingerprint_darwin.go`: self-contained darwin fingerprint
+  (networksetup / ioreg), mirroring the linux/windows layout
+- `updater/update_darwin.go`: darwin binary swap + fork (`swapDarwin`/`forkDarwin`)
+- `darwin_link.go`: `UTType` cgo shim (Wails + Xcode 26 SDK linker fix)
+- `manager/process.go`: elevation case back to `linux, darwin`
+- `updater.go` + `heartbeat.go`: `DownloadURLMacOSIntel/ARM`,
+  `UpdateMacOSIntel/ARM` fields + darwin case in `PlatformDownloadURL`
+- `server/pb_hooks/heartbeat.pb.js`: `update_macos_intel`/`arm` field emission
+- `.github/workflows/build.yml`: macOS-amd64 + macOS-arm64 matrix entries,
+  sing-box darwin download case, release-table macOS rows + unsigned note
+- `v5/client/Makefile`: `build-macos-intel` / `build-macos-arm` + build-all
+
+**Verified:** `go build ./...` and `go vet` pass for darwin arm64 + amd64
+(cross-compile), plus linux + windows. The full `wails build` (frontend
+embed) must be validated on a macOS runner (CI) before shipping a release.
+
+---
+
 ## FRESH VPS DEPLOY 2026-08-14 — BUGS FOUND & FIXED (134.199.155.166)
 
 First deploy to the new VPS (Ubuntu 22.04, 1vCPU/1GB, DigitalOcean syd1).
@@ -111,7 +140,7 @@ platform support. All removed files are recoverable from git history.
 | C1 | `modular-vps/` deleted | Stale duplicate of `v5/server/` (untouched by commits since 2026-07-27). `v5/server/` is the one and only server deployment directory. Its `hiddify.pb.js` hook was moved into `v5/server/pb_hooks/`. |
 | C2 | Root `CONTEXT.md` deleted | Superseded by `v5/CONTEXT.md` — one context document. |
 | C3 | `v5/scripts/` deleted | Duplicate of root `scripts/` (which holds the newer hardened `generate_codes.sh`). Root `scripts/` is canonical; all docs updated to `./scripts/…`. |
-| C4 | macOS (darwin) support dropped from client | Unsigned builds are unusable on macOS (no Apple signing/notarization). Removed `darwin_link.go`, `darwinTUN`/`killSwitchDarwin`/`setDNSDarwin` from `tunnel.go`, darwin case in `process.go`, macOS URLs in `updater.go`/`heartbeat.go`, and darwin targets from `.github/workflows/build.yml` + Makefile. Client now builds Linux + Windows only. |
+| C4 | macOS (darwin) support dropped from client | Unsigned builds are unusable on macOS (no Apple signing/notarization). **REVERSED 2026-08-14** — macOS was ~50% of market, so the unsigned build is shipped with a documented Gatekeeper workaround (right-click → Open / `xattr -cr`). See "MACOS RE-ENABLED" below. |
 | C5 | Fingerprint files made self-contained | `fingerprint.go` (shared) + `fingerprint_darwin.go` deleted; shared logic (hashSources, UUID fallback, ValidateFingerprint, caching) folded into `fingerprint_linux.go` and `fingerprint_windows.go`. `update_unix.go` → `update_linux.go` (linux-only, macOS gone). |
 | C6 | `POCKETBASE-SETUP.md` leaked admin token | Five hardcoded `ADMIN_API_TOKEN` values replaced with `YOUR_ADMIN_TOKEN` placeholder. |
 

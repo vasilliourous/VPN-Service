@@ -397,7 +397,9 @@ paths := []string{
 build              # Current platform
 build-linux        # Linux amd64 (CGO)
 build-windows      # Windows amd64 (needs MinGW CC)
-build-all          # Linux + Windows
+build-macos-intel  # macOS Intel (needs osxcross or Mac builder)
+build-macos-arm    # macOS Apple Silicon
+build-all          # All 4 targets
 clean              # Remove dist/
 ```
 
@@ -461,7 +463,7 @@ Jobs:
 [ ] Connection: kill switch blocks non-VPN traffic on disconnect
 [ ] Diagnostics: report includes all fields without PII
 [ ] Grace period: heartbeat fails 7 days → "tap to retry"
-[ ] Cross-platform: builds and runs on Windows and Linux
+[ ] Cross-platform: builds and runs on Windows, macOS, and Linux
 ```
 
 ---

@@ -418,16 +418,19 @@ Update:
 
 ## 6. Platform Support
 
-| Component | Linux | Windows |
-|-----------|:-----:|:-------:|
-| Wails + Vue 3 GUI | ✅ | ✅ |
-| Hardware fingerprint | ✅ sysfs | ✅ PowerShell / WMI |
-| sing-box TUN | ✅ direct | ✅ direct |
-| Binary swap | ✅ rename | ✅ .old trick |
-| sing-box binary | linux-amd64 | windows-amd64 |
+| Component | Linux | macOS | Windows |
+|-----------|:-----:|:-----:|:-------:|
+| Wails + Vue 3 GUI | ✅ | ✅ (unsigned) | ✅ |
+| Hardware fingerprint | ✅ sysfs | ✅ networksetup / ioreg | ✅ PowerShell / WMI |
+| sing-box TUN | ✅ direct | ✅ direct | ✅ direct |
+| Binary swap | ✅ rename | ✅ rename | ✅ .old trick |
+| sing-box binary | linux-amd64 | darwin-amd64 / arm64 | windows-amd64 |
 
 **No privileged helper service needed** — BYOD environment means the user has
 admin rights. sing-box creates TUN interfaces directly.
+
+**macOS note:** the build is unsigned — Gatekeeper blocks first launch; the
+user must right-click → Open or run `xattr -cr` (see `CLIENT-GUIDE.md`).
 
 ---
 

@@ -64,9 +64,15 @@ VPN-Service/
 > `v5/scripts/` were deleted as stale duplicates — `v5/server/` is the one and
 > only server deployment directory (it absorbed `hiddify.pb.js`), root
 > `scripts/` is the one and only code-generator location, and `v5/CONTEXT.md`
-> is the one and only context document. macOS support was dropped from the
-> client (unsigned builds are unusable there); darwin code and CI targets were
-> removed. All deleted files remain recoverable from git history.
+> is the one and only context document. All deleted files remain recoverable
+> from git history.
+>
+> **2026-08-14 follow-up:** macOS support was RE-ENABLED (unsigned local build
+> — see `v5/docs/CLIENT-GUIDE.md` for the Gatekeeper workaround). The darwin
+> code paths (`darwinTUN`, `pfctl` kill-switch, `networksetup` DNS, `ioreg`
+> fingerprint), `darwin_link.go`, macOS CI targets, updater URLs, and Makefile
+> targets were restored. macOS installs are unsigned: the user must
+> right-click → Open (or `xattr -cr`) on first launch.
 >
 > **2026-08 history archive:** the still-relevant `originals/` docs (business
 > model + N4L attacker/defender research) were restored to `v5/docs/history/`
@@ -203,7 +209,7 @@ client in `v4/`; removed files recoverable from git history)
 | Client version | 2.0.0 |
 | Engine | sing-box 1.10.0 |
 | Min Go version | 1.22 |
-| Platforms | Linux, Windows |
+| Platforms | Linux, macOS (Intel+ARM, unsigned), Windows |
 | Dependencies | Wails v2 + Vue 3 (Fyne removed) |
 
 ---

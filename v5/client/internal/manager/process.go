@@ -394,7 +394,7 @@ func (m *Manager) autoStartHelper() error {
 			"-Verb", "RunAs", "-WindowStyle", "Hidden")
 		cmd.SysProcAttr = newProcAttr()
 		return cmd.Start()
-	case "linux":
+	case "linux", "darwin":
 		// On Unix, try pkexec (PolKit) or sudo for elevation
 		cmds := [][]string{
 			{"pkexec", m.helperPath},
