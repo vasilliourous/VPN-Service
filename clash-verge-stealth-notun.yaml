@@ -1,0 +1,45 @@
+# MyVPN — Stealth tier (TCP-only), SYSTEM-PROXY MODE fallback for Clash Verge Rev
+# Server: 134.199.155.166:8444 (Shadowsocks aes-256-gcm)
+#
+# USE THIS IF the TUN version still blackouts your machine (e.g. Service Mode
+# can't be installed). No TUN = only apps using the system proxy go through
+# MyVPN; the rest of the machine is untouched, so nothing can fully blackout.
+# Enable via Clash Verge Rev: Settings -> System Proxy (or the app's toggle).
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+
+dns:
+  enable: true
+  enhanced-mode: redir-host
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+
+proxies:
+  - name: "MyVPN Stealth"
+    type: ss
+    server: 134.199.155.166
+    port: 8444
+    cipher: aes-256-gcm
+    password: "95fee4978796490984a9b9e6835a9473"
+    udp: false
+
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "MyVPN Stealth"
+      - DIRECT
+
+rules:
+  - GEOIP,private,DIRECT,no-resolve
+  - MATCH,PROXY

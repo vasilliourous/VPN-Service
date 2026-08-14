@@ -1,0 +1,65 @@
+# MyVPN — Stealth tier (TCP-only, reliable) for Clash Verge Rev (mihomo)
+# Server: 134.199.155.166:8444 (Shadowsocks aes-256-gcm, BBR, 100 Mbps)
+#
+# WHY THIS WORKS WHERE THE PREVIOUS ONE DIDN'T:
+# 1. Server is the IP, not the domain — the proxy leg needs NO client-side
+#    DNS. On N4L the old config tried to resolve networkingguides.duckdns.org
+#    via plain UDP DNS (proxy-server-nameserver), which the school UDP policy
+#    kills -> proxy never connected -> TUN blackholed everything.
+#    (If the VPS IP ever changes, update the two IPs below.)
+# 2. TUN excludes the VPS IP (route-exclude-address) so auto-route cannot
+#    capture mihomo's own outbound connection (the classic loop).
+# 3. All real DNS goes via DoH over TCP 443 (https://1.1.1.1) — the same
+#    path the MyVPN client's dns-direct uses successfully.
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+
+# TUN covers games + hijacks DNS. On Windows this needs Clash Verge Rev's
+# Service Mode (the app prompts to install it — accept).
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  route-exclude-address:
+    - 134.199.155.166/32
+  dns-hijack:
+    - any:53
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+
+proxies:
+  - name: "MyVPN Stealth"
+    type: ss
+    server: 134.199.155.166
+    port: 8444
+    cipher: aes-256-gcm
+    password: "95fee4978796490984a9b9e6835a9473"
+    udp: false
+
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "MyVPN Stealth"
+      - DIRECT
+
+rules:
+  - GEOIP,private,DIRECT,no-resolve
+  - MATCH,PROXY
