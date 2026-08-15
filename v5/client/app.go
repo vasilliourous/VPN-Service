@@ -366,11 +366,13 @@ func (a *App) Connect() OpResult {
 	}
 
 	// TUN interface creation requires administrator privileges on Windows.
-	// If we are not elevated, trigger a UAC prompt that re-launches the app
-	// elevated with --autoconnect, then exit this (non-elevated) instance so
-	// the elevated copy takes over and connects. Without this a non-admin
-	// launch would let the app open but sing-box would fail TUN creation with
-	// "Access is denied" and the connection would just die.
+	// With the embedded requireAdministrator manifest (see rsrc_windows_*.syso)
+	// the app normally ALREADY runs elevated, so this branch is a defense-in-depth
+	// fallback for the rare case it launched asInvoker (e.g. an older bundle or
+	// a dev run without the .syso). It re-launches the app elevated with
+	// --autoconnect, then exits this (non-elevated) instance so the elevated
+	// copy takes over and connects — without this a non-admin launch would
+	// fail TUN creation with "Access is denied" and the connection would die.
 	if !isElevated() {
 		// Guard against an elevation loop: if this instance ALREADY came from a
 		// UAC relaunch (--autoconnect) and still isn't elevated, relaunching

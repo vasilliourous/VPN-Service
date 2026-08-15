@@ -41,6 +41,20 @@ import (
 //	go build -ldflags "-X main.version=2.0.0"
 var version = "2.0.0"
 
+// Windows executables carry an embedded manifest (rsrc_windows_amd64.syso /
+// rsrc_windows_arm64.syso) that sets requestedExecutionLevel="requireAdministrator" —
+// the app must run elevated because sing-box needs a TUN interface. Regenerate
+// them from this module's root with:
+//
+//	go generate -tags windows
+//
+// (uses github.com/tc-hib/go-winres, pure Go — no windres/MinGW required).
+//
+// If the .syso files are missing, Go builds a Windows exe with the default
+// asInvoker manifest and Connect() falls back to a runtime UAC relaunch.
+//
+//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name MyVPN --file-description "MyVPN secure school VPN" --product-version 2.0.0 --file-version 2.0.0
+
 func main() {
 	// Route Go's stderr (panic traces) and the standard logger to a file so
 	// failures are never invisible in this GUI app (Windows GUI builds have
