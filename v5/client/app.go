@@ -372,7 +372,17 @@ func (a *App) Connect() OpResult {
 	// launch would let the app open but sing-box would fail TUN creation with
 	// "Access is denied" and the connection would just die.
 	if !isElevated() {
-		log.Printf("Not elevated on Windows — requesting elevation before connecting")
+		// Guard against an elevation loop: if this instance ALREADY came from a
+		// UAC relaunch (--autoconnect) and still isn't elevated, relaunching
+		// again would only bounce the window forever. Fail clearly instead.
+		if flagAutoConnect() {
+			log.Printf("Already relaunched for elevation but still not elevated — refusing to loop")
+			return OpResult{
+				Success: false,
+				Message: "MyVPN needs administrator permission to connect, but the elevated copy did not have permission. Close it and relaunch as Administrator, or run it from an administrator account.",
+			}
+		}
+		log.Printf("Not elevated — requesting elevation before connecting")
 		if err := relaunchElevated("--autoconnect"); err != nil {
 			log.Printf("Elevation request returned: %v", err)
 			return OpResult{
@@ -380,7 +390,8 @@ func (a *App) Connect() OpResult {
 				Message: "Administrator permission was required to connect. The elevation prompt was declined or could not be shown — please relaunch MyVPN and allow the administrator prompt.",
 			}
 		}
-		// The elevated instance is starting; end this one.
+		// The elevated instance is starting; end this one. The original window
+		// is closing on purpose as part of the elevation handoff.
 		log.Printf("UAC accepted — elevated instance starting; exiting non-elevated process")
 		wailsruntime.Quit(a.ctx)
 		return OpResult{

@@ -66,6 +66,7 @@ func relaunchElevated(argsToAdd ...string) error {
 		return err
 	}
 	exe, _ = filepath.Abs(exe)
+	exeDir := filepath.Dir(exe)
 
 	// Build the full command line from current args plus the extras. On Windows
 	// we rebuild args as a single quoted command line so spaces in paths are
@@ -74,13 +75,16 @@ func relaunchElevated(argsToAdd ...string) error {
 	allArgs = append(allArgs, argsToAdd...)
 	cmdLine := quoteCommandLine(allArgs)
 
-	// ShellExecuteW(hwnd=0, "runas", exe, cmdLine, dir="", showCmd=SW_SHOWNORMAL)
+	// ShellExecuteW(hwnd=0, "runas", exe, cmdLine, dir=exeDir, showCmd=SW_SHOWNORMAL).
+	// Passing the executable directory as the working directory ensures the
+	// elevated copy can find its own resources (sing-box etc.) regardless of
+	// how it was launched.
 	res, _, _ := shellExecuteW.Call(
 		0,
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("runas"))),
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exe))),
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(cmdLine))),
-		0,
+		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exeDir))),
 		1, // SW_SHOWNORMAL
 	)
 
