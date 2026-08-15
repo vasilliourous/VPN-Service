@@ -43,7 +43,7 @@ func TestProbeHealthyLifecycle(t *testing.T) {
 	if err := m.Start(ctx, cfg); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer m.Stop()
+	defer func() { _ = m.Stop() }()
 
 	// The probe should pass on process liveness (TUN check is best-effort and
 	// unavailable in the test env).
@@ -73,7 +73,7 @@ func TestStartAutoCleansLeftover(t *testing.T) {
 	if err := m.Start(ctx, cfg); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	defer m.Stop()
+	defer func() { _ = m.Stop() }()
 
 	// With the engine running, a second Start must NOT stack a second engine:
 	// Start's own processAlive guard rejects it up front.
