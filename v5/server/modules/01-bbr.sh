@@ -74,6 +74,12 @@ net.core.somaxconn = 4096
 net.ipv4.tcp_keepalive_time = 300
 net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_keepalive_intvl = 15
+
+# Gaming/latency (added 2026-08-14): keep cwnd after idle so games that
+# alternate quiet/burst don't re-slow-start every round; MTU probing helps
+# if the path fragments. See FIXES.md Strike gaming optimisation.
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
 EOF
     sysctl --system &>/dev/null
     log "Created ${SYSCTL_TCP} with TCP optimizations"

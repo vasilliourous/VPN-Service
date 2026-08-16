@@ -26,12 +26,10 @@ log "Primary interface: ${IFACE}"
 
 # ── Write the tc helper script (used by systemd oneshot services) ──
 # This avoids inline shell escaping bugs in ExecStart= lines.
+# NOTE: always rewritten (not skip-if-exists) so helper updates actually
+# reach already-deployed VPSs — previously a stale helper persisted forever
+# (hit 2026-08-14: fq_codel + filter-flush changes never applied).
 write_tc_helper() {
-    if [ -f "$TC_HELPER" ]; then
-        log "tc helper script already exists at ${TC_HELPER}"
-        return 0
-    fi
-
     mkdir -p "$TC_CONF_DIR"
 
     cat > "$TC_HELPER" << 'HELPER'
@@ -59,12 +57,20 @@ if ! tc class add dev "$IFACE" parent 1: classid "$CLASSID" htb rate "$RATE" cei
     tc class change dev "$IFACE" parent 1: classid "$CLASSID" htb rate "$RATE" ceil "$RATE" 2>/dev/null || true
 fi
 
+# Low-latency leaf qdisc under this class (gaming optimisation 2026-08-14):
+# HTB classes default to FIFO queues -> bufferbloat -> latency spikes when
+# the tier is under load. fq_codel gives per-flow fairness + CoDel AQM,
+# keeping latency flat (the recommended pairing with BBR). Handle is the
+# class minor (1:10 -> 10:, 1:20 -> 20:, 1:30 -> 30:).
+HANDLE="${CLASSID#1:}:"
+tc qdisc replace dev "$IFACE" parent "$CLASSID" handle "$HANDLE" fq_codel 2>/dev/null || \
+    echo "[tc-apply][WARN] Could not attach fq_codel to ${CLASSID} (continuing with FIFO)"
+
 # Add or replace the filter
-# Idempotency: this parent holds ONLY the tier-port filters, so flush it
-# first — `tc filter add` with an identical u32 spec silently creates
-# DUPLICATES (observed on the 2026-08-14 deploy: 4 copies of each filter),
-# and a spec-matching `tc filter del` is unreliable across versions.
-tc filter del dev "$IFACE" parent 1: 2>/dev/null || true
+# The MODULE flushes parent 1: once before applying all three tiers; this
+# helper is add-only (it also runs from systemd oneshot units at boot where
+# there are no stale filters to flush). A per-call flush would leave only
+# the LAST tier's filter (hit 2026-08-14).
 tc filter add dev "$IFACE" protocol ip parent 1: prio 10 u32 \
     match ip sport "$PORT" 0xffff flowid "$CLASSID" 2>/dev/null || true
 
@@ -133,6 +139,11 @@ write_tc_helper
 
 # ── Apply to live interface ──
 log "Applying tc rules to ${IFACE}..."
+# Flush stale filters ONCE (this parent holds only the tier-port filters),
+# then let the three helpers add exactly one filter each. Without the flush,
+# repeated `tc filter add` with an identical u32 spec silently creates
+# DUPLICATES (observed 2026-08-14: 4 copies of each after repeated runs).
+tc filter del dev "$IFACE" parent 1: 2>/dev/null || true
 # Apply all three tiers (order doesn't matter — different classids)
 apply_tc_now 8443 "1:10" "5mbit"
 apply_tc_now 8444 "1:20" "100mbit"

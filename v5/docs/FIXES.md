@@ -106,6 +106,37 @@ surfaced a stack of real bugs — all fixed in this round:
 
 ---
 
+## STRIKE GAMING LATENCY — BUFFERBLOAT CONTROL (2026-08-14)
+
+Gaming speed = latency + jitter, not Mbps (school RTT 51ms is already good).
+The real server-side win was bufferbloat: the HTB tier classes used plain
+FIFO queues, so when a tier ran at full bandwidth (e.g. someone downloading
+at 200 Mbps), queuing added latency spikes to game traffic on the same tier.
+
+Changes (applied live + in modules):
+
+- `04-tc.sh` helper: **fq_codel leaf qdisc under every HTB class**
+  (parent 1:10/1:20/1:30, handles 10:/20:/30:) — per-flow fair queuing +
+  CoDel AQM keeps latency flat under load (the standard BBR pairing).
+  UoT traffic (port 8446, default class 1:30) benefits too.
+- `01-bbr.sh` 91-tcp-tune.conf: `tcp_slow_start_after_idle = 0` (games that
+  alternate quiet/burst don't re-slow-start every round) +
+  `tcp_mtu_probing = 1`.
+- `04-tc.sh` module bugs fixed while doing this:
+  - helper script is now ALWAYS rewritten (was skip-if-exists → a stale
+    helper persisted on deployed VPSs and helper updates never applied)
+  - filter flush moved to the module main (once, before applying all three
+    tiers) — the per-call flush design would have left only the LAST tier's
+    filter; repeated adds without any flush duplicate filters (both hit
+    during the 2026-08-14 apply)
+
+Verified live: 3 filters, fq_codel under all 3 classes, sysctls applied.
+
+Expected effect: latency stays flat on Strike when the tier is saturated;
+game RTT (already ~51ms school → Sydney) unchanged at low load.
+
+---
+
 ## NEW VPS — VOYAGER-PROBLEM REGRESSION TEST (2026-08-14)
 
 Tested 134.199.155.166 against every failure class that plagued the old
