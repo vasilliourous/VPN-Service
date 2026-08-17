@@ -12,6 +12,8 @@ import type {
   StatusResult,
   OpResult,
   UpdateCheckResult,
+  UpdateResult,
+  UpdateStatusEvent,
   AppBindings,
 } from '@/types'
 
@@ -101,6 +103,10 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   return wrap(() => go().CheckForUpdate())
 }
 
+export async function applyUpdate(): Promise<UpdateResult> {
+  return wrap(() => go().ApplyUpdate())
+}
+
 export async function getDiagnostics(): Promise<string> {
   return wrap(() => go().GetDiagnostics())
 }
@@ -112,8 +118,10 @@ export async function getDiagnostics(): Promise<string> {
 // do NOT stack Go-bound event handlers — they simply add/remove JS callbacks.
 let registeredStatus = false
 let registeredUpdate = false
+let registeredUpdateStatus = false
 let statusListeners: Array<(s: StatusResult) => void> = []
 let updateListeners: Array<(e: { version: string; url: string; sha256: string }) => void> = []
+let updateStatusListeners: Array<(e: UpdateStatusEvent) => void> = []
 
 export function onStatusChanged(callback: (status: StatusResult) => void): void {
   statusListeners.push(callback)
@@ -147,6 +155,33 @@ export function onUpdateAvailable(callback: (e: { version: string; url: string; 
   })
 }
 
+// onUpdateStatus subscribes to the background apply-update progress event
+// emitted by App.ApplyUpdate (downloading → verifying → applying → applied /
+// failed). Same single-Go-listener pattern as the other events.
+export function onUpdateStatus(callback: (e: UpdateStatusEvent) => void): void {
+  updateStatusListeners.push(callback)
+  if (registeredUpdateStatus) return
+  registeredUpdateStatus = true
+  runtime().EventsOn('update:status', (data: any) => {
+    const e = data as UpdateStatusEvent
+    updateStatusListeners.forEach((cb) => {
+      try {
+        cb(e)
+      } catch {
+        // ignore per-listener failures
+      }
+    })
+  })
+}
+
+export function unsubscribeUpdateStatus(cb: (e: UpdateStatusEvent) => void): void {
+  updateStatusListeners = updateStatusListeners.filter((c) => c !== cb)
+  if (updateStatusListeners.length === 0 && registeredUpdateStatus) {
+    registeredUpdateStatus = false
+    runtime().EventsOff('update:status')
+  }
+}
+
 // unsubscribe removes a single listener. The Wails event stays registered as
 // long as at least one listener remains, and is fully removed when none do.
 export function unsubscribeStatus(cb: (s: StatusResult) => void): void {
@@ -170,6 +205,7 @@ export function unsubscribeUpdate(cb: (e: { version: string; url: string; sha256
 export function removeAllListeners(): void {
   statusListeners = []
   updateListeners = []
+  updateStatusListeners = []
   if (registeredStatus) {
     registeredStatus = false
     runtime().EventsOff('status:changed')
@@ -177,6 +213,10 @@ export function removeAllListeners(): void {
   if (registeredUpdate) {
     registeredUpdate = false
     runtime().EventsOff('update:available')
+  }
+  if (registeredUpdateStatus) {
+    registeredUpdateStatus = false
+    runtime().EventsOff('update:status')
   }
 }
 

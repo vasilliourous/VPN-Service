@@ -22,10 +22,12 @@
       :version="vpn.state.version"
       :update-available="vpn.state.updateAvailable"
       :update-version="vpn.state.updateVersion"
+      :update-phase="vpn.state.updatePhase"
+      :update-message="vpn.state.updateMessage"
       @connect="handleConnect"
       @disconnect="handleDisconnect"
       @show-diagnostics="handleDiagnostics"
-      @check-update="handleCheckUpdate"
+      @apply-update="handleApplyUpdate"
     />
 
     <!-- Error toast (auto-dismisses; click to dismiss immediately) -->
@@ -84,8 +86,8 @@ async function handleDiagnostics(): Promise<string> {
   return vpn.state.diagnostics
 }
 
-async function handleCheckUpdate(): Promise<void> {
-  await vpn.checkUpdate()
+async function handleApplyUpdate(): Promise<void> {
+  await vpn.applyUpdate()
 }
 
 function clearError(): void {

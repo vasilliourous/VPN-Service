@@ -132,6 +132,24 @@ func FormatCode(raw string) string {
 		raw[len(raw)-1:]
 }
 
+// NormalizeCode returns the canonical hyphenated form of an activation code,
+// tolerating any input formatting (hyphens, spaces, lowercase, pasted text).
+// The server stores and looks up codes in the canonical "MYVPN-XXXX-XXXX-XXXX-C"
+// form (see v5/server/scripts/seed-live.py make_test_code), so the client must
+// persist and transmit exactly that form: a hyphenated code in storage (older
+// clients) or an unformatted code (direct pastes) would otherwise 404 the
+// heartbeat lookup ("Code not found").
+//
+// Returns the input unchanged when it does not parse to a full-length code —
+// validation (ValidateCodeFormat) reports the real error.
+func NormalizeCode(code string) string {
+	cleaned := stripFormatting(code)
+	if len(cleaned) != CodeTotalLen {
+		return code
+	}
+	return FormatCode(cleaned)
+}
+
 // stripFormatting removes hyphens and converts to uppercase.
 func stripFormatting(code string) string {
 	result := make([]byte, 0, len(code))

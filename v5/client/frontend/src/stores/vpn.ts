@@ -3,7 +3,7 @@
 
 import { reactive, readonly } from 'vue'
 import * as bridge from '@/lib/bridge'
-import type { StatusResult, UpdateCheckResult } from '@/types'
+import type { StatusResult, UpdateCheckResult, UpdatePhase } from '@/types'
 
 interface State {
   // Connection
@@ -30,6 +30,9 @@ interface State {
   updateVersion: string
   updateUrl: string
   updateSha256: string
+  // Background apply flow (ApplyUpdate): 'idle' until a download starts.
+  updatePhase: UpdatePhase
+  updateMessage: string
 }
 
 const state = reactive<State>({
@@ -50,6 +53,8 @@ const state = reactive<State>({
   updateVersion: '',
   updateUrl: '',
   updateSha256: '',
+  updatePhase: 'idle',
+  updateMessage: '',
 })
 
 function setError(msg: string): void {
@@ -168,6 +173,25 @@ async function checkUpdate(): Promise<void> {
   }
 }
 
+async function applyUpdate(): Promise<string | null> {
+  if (state.updatePhase === 'downloading' || state.updatePhase === 'verifying' || state.updatePhase === 'applying') {
+    return 'An update is already being applied'
+  }
+  try {
+    const result = await bridge.applyUpdate()
+    if (!result.success) {
+      setError(result.message)
+      return result.message
+    }
+    // The backend drives progress via update:status from here on.
+    return null
+  } catch (err: any) {
+    const msg = err?.message || 'Update failed to start'
+    setError(msg)
+    return msg
+  }
+}
+
 async function loadDiagnostics(): Promise<void> {
   try {
     state.diagnostics = await bridge.getDiagnostics()
@@ -203,6 +227,19 @@ export function setupEventListeners(): void {
     state.updateSha256 = event.sha256
   })
 
+  bridge.onUpdateStatus((event) => {
+    state.updatePhase = event.phase
+    state.updateMessage = event.message || ''
+    if (event.phase === 'applied') {
+      // The backend quits ~1.5s after emitting this — the forked new binary
+      // takes over. Clear the stale availability flag so a re-render during
+      // the restart window doesn't offer the update again.
+      state.updateAvailable = false
+    } else if (event.phase === 'failed') {
+      setError(event.message || 'Update failed')
+    }
+  })
+
   // Proactively refresh status when the window regains focus — the tunnel may
   // have changed (reconnected, degraded, recovered) while unfocused.
   window.addEventListener('focus', refreshStatus)
@@ -233,6 +270,7 @@ export function useVPN() {
     disconnect,
     activate,
     checkUpdate,
+    applyUpdate,
     loadDiagnostics,
     setupEventListeners,
     tearDownEventListeners,

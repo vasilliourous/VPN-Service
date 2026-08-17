@@ -118,13 +118,28 @@ func New(appName string) (*Store, error) {
 		}
 	}
 
+	return openAt(dir)
+}
+
+// openAt loads (or recovers) a Store rooted at dir. Extracted from New so
+// tests can exercise the corrupt-file recovery path without touching the real
+// user config directory.
+func openAt(dir string) (*Store, error) {
 	path := filepath.Join(dir, "storage.json")
 	s := &Store{path: path, dir: dir}
 
 	if err := s.load(); err != nil && !os.IsNotExist(err) {
 		// Corrupt or unreadable storage file (crash mid-write, aborted session,
-		// manual edit). Move it aside and start fresh — a bad JSON file must
-		// never brick the app at startup.
+		// manual edit). The save path rotates numbered backups (.bak.0..2), so
+		// BEFORE giving up and starting fresh, restore the newest valid backup
+		// — otherwise a single corrupt write would silently deactivate the
+		// device (student loses the VPN, code now "bound to another device").
+		log.Printf("storage: unreadable storage file (%v) — attempting backup restore", err)
+		if rbErr := s.tryRestoreBackups(); rbErr == nil {
+			return s, nil
+		}
+		// No usable backup: move the bad file aside and start fresh — a bad
+		// JSON file must never brick the app at startup.
 		backupPath := fmt.Sprintf("%s.corrupt-%d", path, time.Now().Unix())
 		if rbErr := os.Rename(path, backupPath); rbErr != nil {
 			return nil, fmt.Errorf("cannot load storage (%v) and cannot move it aside (%w)", err, rbErr)
@@ -133,6 +148,41 @@ func New(appName string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// tryRestoreBackups walks the numbered backups (newest .bak.0 first), validates
+// each as JSON, and restores the first valid one into both memory and the live
+// file. Returns nil on success. Must be called before the Store is shared.
+func (s *Store) tryRestoreBackups() error {
+	for i := 0; i < maxBackups; i++ {
+		bakPath := fmt.Sprintf("%s.bak.%d", s.path, i)
+		data, err := os.ReadFile(bakPath)
+		if err != nil {
+			continue
+		}
+		var restored Data
+		if err := json.Unmarshal(data, &restored); err != nil {
+			log.Printf("storage: backup %d unreadable (%v)", i, err)
+			continue
+		}
+		// An "activated" snapshot with no code is internally inconsistent
+		// (Data.Validate would reject it) — skip to the next backup.
+		if restored.Activated && restored.Code == "" {
+			log.Printf("storage: backup %d invalid (activated but empty code)", i)
+			continue
+		}
+		// Write back atomically, then load into memory.
+		if err := s.saveData(&restored); err != nil {
+			log.Printf("storage: cannot write restored backup %d: %v", i, err)
+			continue
+		}
+		s.mu.Lock()
+		s.data = restored
+		s.mu.Unlock()
+		log.Printf("storage: restored state from backup %s (activated=%v)", bakPath, restored.Activated)
+		return nil
+	}
+	return fmt.Errorf("no valid backup found to restore")
 }
 
 // Path returns the full path to the storage file.
@@ -154,12 +204,19 @@ func (s *Store) load() error {
 // Strategy: write to .tmp file, then rename over target.
 // This prevents corruption from crashes during write.
 func (s *Store) save() error {
+	return s.saveData(&s.data)
+}
+
+// saveData atomically writes an arbitrary Data snapshot to disk using the same
+// backup rotation + temp-file/rename strategy as save. Used by both the normal
+// path and backup restore (which writes a recovered snapshot).
+func (s *Store) saveData(d *Data) error {
 	// Create backup before overwriting
 	if err := s.rotateBackups(); err != nil {
 		return fmt.Errorf("backup rotation failed: %w", err)
 	}
 
-	data, err := json.MarshalIndent(&s.data, "", "  ")
+	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return fmt.Errorf("cannot marshal storage: %w", err)
 	}
@@ -371,35 +428,10 @@ func (s *Store) ListBackups() []string {
 	return matches
 }
 
-// RestoreFromBackup restores state from the most recent backup (index 0).
-// Returns the number of backups restored from, or an error.
+// RestoreFromBackup restores state from the most recent valid backup.
+// Returns an error if no usable backup exists.
 func (s *Store) RestoreFromBackup() error {
-	// Check for any backup file
-	for i := 0; i < maxBackups; i++ {
-		bakPath := fmt.Sprintf("%s.bak.%d", s.path, i)
-		if _, err := os.Stat(bakPath); err == nil {
-			// Restore this backup
-			data, err := os.ReadFile(bakPath)
-			if err != nil {
-				continue
-			}
-			// Validate it's valid JSON
-			var restored Data
-			if err := json.Unmarshal(data, &restored); err != nil {
-				continue
-			}
-			// Write it as the current file
-			if err := os.WriteFile(s.path, data, filePerm); err != nil {
-				return fmt.Errorf("cannot restore backup %d: %w", i, err)
-			}
-			// Load into memory
-			s.mu.Lock()
-			s.data = restored
-			s.mu.Unlock()
-			return nil
-		}
-	}
-	return fmt.Errorf("no backup files found to restore from")
+	return s.tryRestoreBackups()
 }
 
 // SanitizePath ensures a path component is safe for use in file paths.

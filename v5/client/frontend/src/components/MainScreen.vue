@@ -44,8 +44,6 @@
         <span v-else>{{ connected ? 'Disconnect' : 'Connect' }}</span>
       </button>
 
-      <!-- Error message -->
-      <div v-if="error" class="error-text">{{ error }}</div>
     </div>
 
     <!-- Stats card -->
@@ -71,12 +69,20 @@
       <button class="btn btn-secondary" @click="handleDiagnostics">
         Diagnostics
       </button>
+      <!-- Update button: applies the staged update when one is available. While
+           the background apply flow runs it shows progress; the backend quits
+           the app after applying so the forked new binary takes over. -->
       <button
-        v-if="updateAvailable"
+        v-if="updateAvailable || updatePhase !== 'idle'"
         class="btn btn-accent"
-        @click="handleCheckUpdate"
+        :disabled="updateActive"
+        @click="handleApplyUpdate"
       >
-        Update {{ updateVersion }} available
+        <span v-if="updateActive" class="spinner"></span>
+        <span v-else>Update {{ updateVersion }} available</span>
+        <span v-if="updateActive">
+          {{ updatePhase === 'applied' ? 'Restarting…' : (updateMessage || updateLabel) }}
+        </span>
       </button>
     </div>
 
@@ -110,7 +116,7 @@ const emit = defineEmits<{
   connect: []
   disconnect: []
   'show-diagnostics': []
-  'check-update': []
+  'apply-update': []
 }>()
 
 const props = defineProps<{
@@ -125,9 +131,10 @@ const props = defineProps<{
   version: string
   updateAvailable: boolean
   updateVersion: string
+  updatePhase: string
+  updateMessage: string
 }>()
 
-const error = ref('')
 const showDiagnostics = ref(false)
 const diagnosticsText = ref('')
 const copied = ref(false)
@@ -170,30 +177,39 @@ const tierDisplay = computed(() => {
   return props.tier.charAt(0).toUpperCase() + props.tier.slice(1)
 })
 
+// NOTE: Vue 3 emits are fire-and-forget — emit() returns void, it does NOT
+// resolve with the parent handler's return value. Connect failures are
+// surfaced by the global error toast (the parent store sets state.error), so
+// there is no local error path here.
 async function toggleConnection(): Promise<void> {
-  error.value = ''
   if (props.connected) {
     emit('disconnect')
   } else {
-    // The parent resolves the connect promise with an error message (or null on
-    // success). Surface failures here so a failed connect is never silent.
-    const connectErr = await emit('connect')
-    if (connectErr) {
-      error.value = connectErr as string
-    }
+    emit('connect')
   }
+}
+
+// updateActive is true while the backend apply flow runs (downloading →
+// verifying → applying → applied). The button is disabled and shows progress.
+const updateActive = computed(() => props.updatePhase === 'downloading' || props.updatePhase === 'verifying' || props.updatePhase === 'applying' || props.updatePhase === 'applied')
+
+const updateLabel = computed(() => {
+  switch (props.updatePhase) {
+    case 'downloading': return 'Downloading…'
+    case 'verifying': return 'Verifying…'
+    case 'applying': return 'Applying…'
+    default: return 'Updating…'
+  }
+})
+
+async function handleApplyUpdate(): Promise<void> {
+  emit('apply-update')
 }
 
 async function handleDiagnostics(): Promise<void> {
   const text = await bridge.getDiagnostics()
   diagnosticsText.value = text
   showDiagnostics.value = true
-}
-
-async function handleCheckUpdate(): Promise<void> {
-  // The update flow would trigger the Go updater
-  // For now, just reset the notification
-  emit('check-update')
 }
 
 async function copyDiagnostics(): Promise<void> {
@@ -350,11 +366,6 @@ async function copyDiagnostics(): Promise<void> {
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.error-text {
-  font-size: 13px;
-  color: #EF4444;
 }
 
 .stats-card {

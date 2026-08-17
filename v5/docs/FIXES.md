@@ -1,6 +1,77 @@
 
 ---
 
+## CLIENT APP PASS — UPDATE FLOW WIRED, CODE NORMALIZATION, STORAGE RECOVERY (2026-08-17)
+
+Client-side fix pass (no server re-deploy needed for the client fixes; the two
+hook edits are hardening and deploy with the next hook sync):
+
+**1. Update flow was a dead end — now wired end-to-end.**
+The `updater` package (crash-safe two-phase swap) was fully implemented but
+NOTHING called `PerformUpdate`: the UI's "Update vX available" button only
+re-ran `CheckForUpdate` and never downloaded anything. Students would see the
+button forever with no update ever applying.
+
+- `app.go`: heartbeat + manual check now record the update signal
+  (`recordUpdateSignal` → `a.lastUpdate`), and a new frontend-bound
+  `App.ApplyUpdate()` runs `PerformUpdate` in the background (5 min timeout,
+  serialized by `upMu`), emitting `update:status` events
+  (`downloading → verifying → applying → applied | failed`). On success the
+  app quits ~1.5s later so the forked new binary takes over. Re-applying the
+  already-running version (staged rollouts re-advertise every heartbeat) is
+  rejected with "Already running the latest version".
+- Frontend: `bridge.applyUpdate()`, `update:status` listener, store
+  `updatePhase`/`updateMessage` state, and the MainScreen button now applies
+  the update with a live spinner + "Downloading…/Restarting…" label.
+- Note: after an update the app does NOT auto-reconnect the tunnel (the new
+  binary starts disconnected; student clicks Connect). Follow-up candidate.
+
+**2. Activation-code normalization (heartbeat 404 risk).**
+The server looks up codes formatting-sensitively (`findFirstRecordByData` on
+the seeded hyphenated form), but the client stored whatever the user typed.
+The frontend auto-formats with hyphens so the happy path worked, but any
+unformatted/lowercase stored code (old clients, direct pastes) 404'd every
+heartbeat — killing suspension checks and update signals.
+
+- `activation.NormalizeCode()` added; `App.Activate` stores + heartbeats the
+  canonical `MYVPN-XXXX-XXXX-XXXX-C` form; `Startup` self-heals legacy stored
+  codes by rewriting storage.
+- Hardening: both `activation.pb.js` and `heartbeat.pb.js` now normalize the
+  lookup code to the canonical form before `findFirstRecordByData`.
+
+**3. Storage: corrupt file now recovers from backups instead of deactivating.**
+`storage.New` previously moved a corrupt `storage.json` aside and started
+fresh — silently deactivating the device (and the code is then "bound to
+another device" server-side, a support nightmare). The `.bak.0..2` rotation
+existed but was never used for recovery.
+
+- `New()` now tries `tryRestoreBackups()` (newest valid `.bak.N` first, JSON +
+  consistency checked) before the fresh-start fallback; restored via the same
+  atomic save path.
+- `RestoreFromBackup()` simplified to reuse the same logic.
+- New tests: `storage_test.go` (corrupt→restore keeps activation, no-backup→
+  fresh start moves file aside, invalid backups skipped, rotation pruning).
+
+**4. Frontend fixes.**
+- `MainScreen.vue`: removed dead `await emit('connect')` error handling —
+  Vue 3 `emit()` returns void, so the "failed connect" branch could never
+  fire. Connect failures surface through the global error toast (store path),
+  which already worked. Also removed the unused `check-update` emit/handler.
+- `app.go`: bound methods (`Activate`, `Connect`, `GetStatus`, `IsActivated`,
+  `GetDiagnostics`, `disconnect`, `startHeartbeatLoop`) now nil-guard via
+  `notReady()` when Startup fails part-way — a broken startup shows a clear
+  message instead of panicking inside the Wails binding.
+
+**Verified:** `go build ./...` + `go vet` + `go test ./...` (incl. new storage
+tests) green on linux, windows-amd64 and darwin-arm64 cross-compile;
+`vue-tsc --noEmit` + `vite build` clean; frontend/dist rebuilt and committed.
+
+**Deploy:** client fixes ship with the next client build. The two `pb_hooks`
+edits are safe to deploy anytime (normalization is a no-op for canonical
+codes); restart pocketbase or rely on hook hot-reload.
+
+---
+
 ## GAMING UDP — P0 CODE LANDED (UNTESTED) (2026-08-14)
 
 The P0 transport change from `v5/docs/GAMING-UDP.md` is implemented but

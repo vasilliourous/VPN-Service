@@ -9,8 +9,18 @@ routerAdd("POST", "/api/heartbeat", function(e) {
 
         if (!code) return e.json(400, {code:400, message:"Missing code"});
 
+        // Normalize the lookup code to the canonical hyphenated form
+        // ("MYVPN-XXXX-XXXX-XXXX-C" — the form codes are seeded in). Clients
+        // should send the canonical form, but tolerating any pasted variant
+        // keeps heartbeat (suspension checks, update signals) alive for
+        // legacy installs that stored an unformatted code.
+        var s = code.replace(/-/g,"").toUpperCase();
+        var canonical = (s.length === 18)
+            ? s.substring(0,5)+"-"+s.substring(5,9)+"-"+s.substring(9,13)+"-"+s.substring(13,17)+"-"+s.substring(17,18)
+            : code;
+
         // Use findFirstRecordByData (same approach as activation hook — confirmed working on PB 0.22.21)
-        var record = $app.dao().findFirstRecordByData("codes", "code", code);
+        var record = $app.dao().findFirstRecordByData("codes", "code", canonical);
         if (!record) return e.json(404, {code:404, message:"Code not found"});
 
         if (record.getBool("suspended")) return e.json(403, {code:403, message:"Account suspended — contact your middleman"});

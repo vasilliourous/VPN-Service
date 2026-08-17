@@ -397,6 +397,8 @@ Before releasing a new client build:
 - [ ] Heartbeat: interval doubles on failure, resets on success
 - [ ] Heartbeat: 7-day grace period counted correctly in the UI
 - [ ] Heartbeat: update signal triggers update notification
+- [ ] Update: clicking the "Update vX available" button downloads, shows progress (spinner + "Downloading…"), applies, and restarts into the new version
+- [ ] Update: failed download/checksum surfaces a toast and leaves the old binary running
 - [ ] Update: SHA256 mismatch → download rejected
 - [ ] Update: successful update → new binary runs, confirmed sentinel created
 - [ ] Update: crash new binary → auto-revert on next start

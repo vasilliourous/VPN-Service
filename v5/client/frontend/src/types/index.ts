@@ -43,12 +43,17 @@ export interface UpdateCheckResult {
   sha256?: string
 }
 
-// ── Events (emitted by Go backend) ──
+export interface UpdateResult {
+  success: boolean
+  message: string
+}
 
-export interface UpdateAvailableEvent {
-  version: string
-  url: string
-  sha256: string
+// Phases of the background apply flow emitted on the update:status event.
+export type UpdatePhase = 'idle' | 'downloading' | 'verifying' | 'applying' | 'applied' | 'failed'
+
+export interface UpdateStatusEvent {
+  phase: UpdatePhase
+  message?: string
 }
 
 // ── Go backend binding surface (mirrors the bound App methods) ──
@@ -66,5 +71,6 @@ export interface AppBindings {
   Disconnect(): Promise<OpResult>
   GetStatus(): Promise<StatusResult>
   CheckForUpdate(): Promise<UpdateCheckResult>
+  ApplyUpdate(): Promise<UpdateResult>
   GetDiagnostics(): Promise<string>
 }

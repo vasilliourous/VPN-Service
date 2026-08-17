@@ -43,8 +43,13 @@ routerAdd("POST", "/api/activate", function(e) {
         att.set("code_attempted",code.substring(0,4)+"****");
         $app.dao().saveRecord(att);
 
-        // Find code — use findFirstRecordByData which is simpler
-        var rec = $app.dao().findFirstRecordByData("codes", "code", code);
+        // Find code — use findFirstRecordByData which is simpler.
+        // Lookup uses the canonical hyphenated form (the form codes are seeded
+        // in); tolerate any pasted variant just like the heartbeat hook.
+        var canonical = (s.length === 18)
+            ? s.substring(0,5)+"-"+s.substring(5,9)+"-"+s.substring(9,13)+"-"+s.substring(13,17)+"-"+s.substring(17,18)
+            : code;
+        var rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
         if (!rec) return e.json(404, {code:404, message:"Code not found"});
 
         // Check binding

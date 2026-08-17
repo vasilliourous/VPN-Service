@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"myvpn/internal/activation"
@@ -50,6 +51,32 @@ type App struct {
 	connected bool
 	tier      string
 	fp        string
+
+	// lastUpdate is the most recent update signal from the hub (heartbeat or
+	// manual check). ApplyUpdate consumes it.
+	lastUpdate *updater.UpdateInfo
+
+	// upMu serializes ApplyUpdate calls (UI double-clicks, heartbeat races).
+	upMu     sync.Mutex
+	updating bool
+
+	// startupErr is set when Startup fails part-way (e.g. storage cannot be
+	// created). Frontend-bound methods check it so a broken startup shows a
+	// clear error instead of panicking on nil store/manager.
+	startupErr error
+}
+
+// notReady returns a human-readable failure reason when the app is not fully
+// initialized, or "" when it is ready. All frontend-bound methods should bail
+// out with this message when it is non-empty.
+func (a *App) notReady() string {
+	if a.startupErr != nil {
+		return a.startupErr.Error()
+	}
+	if a.store == nil || a.mgr == nil {
+		return "application is not ready — restart MyVPN"
+	}
+	return ""
 }
 
 // ──────────────────────────────────────────
@@ -128,6 +155,7 @@ func (a *App) Startup(ctx context.Context) {
 	// Never call LogFatal here — it exits the process silently on GUI builds.
 	store, err := storage.New("myvpn")
 	if err != nil {
+		a.startupErr = fmt.Errorf("cannot initialize storage: %w", err)
 		wailsruntime.LogError(a.ctx, "Cannot initialize storage: "+err.Error())
 		return
 	}
@@ -186,7 +214,20 @@ func (a *App) Startup(ctx context.Context) {
 
 	// ── If already activated, start heartbeat ──
 	if state.Activated && state.Code != "" {
-		a.startHeartbeatLoop(state.Code)
+		// Self-heal legacy installs whose stored code is not in the canonical
+		// hyphenated form (older clients stored the raw input). The server
+		// looks up codes formatting-sensitively, so a non-canonical code would
+		// 404 every heartbeat. Rewriting storage here is a one-time fix; the
+		// heartbeat always transmits the canonical form (see startHeartbeatLoop).
+		canonical := activation.NormalizeCode(state.Code)
+		if canonical != state.Code {
+			if err := a.store.SetActivation(canonical, state.Tier, state.DeviceFingerprint, state.ServerConfig, state.UDPRelay); err != nil {
+				wailsruntime.LogWarning(a.ctx, "Cannot normalize stored code: "+err.Error())
+			} else {
+				log.Printf("Stored code normalized to canonical form")
+			}
+		}
+		a.startHeartbeatLoop(canonical)
 	}
 
 	// ── Auto-connect after UAC elevation ──
@@ -269,6 +310,10 @@ func (a *App) ValidateCode(code string) ValidateResult {
 // Activate sends the code and device fingerprint to the hub server.
 // On success, it persists the activation and starts the heartbeat.
 func (a *App) Activate(code string) ActivateResult {
+	if msg := a.notReady(); msg != "" {
+		return ActivateResult{Success: false, Message: msg}
+	}
+
 	state := a.store.GetData()
 	if state.Activated {
 		return ActivateResult{
@@ -277,6 +322,13 @@ func (a *App) Activate(code string) ActivateResult {
 			Tier:    state.Tier,
 		}
 	}
+
+	// Store and heartbeat the CANONICAL code form ("MYVPN-XXXX-XXXX-XXXX-C").
+	// The server's code lookup is formatting-sensitive (codes are seeded in the
+	// hyphenated form), so normalizing here — not echoing the raw user input —
+	// keeps activation, heartbeat, suspension checks and update signals on the
+	// same code string regardless of how the student typed/pasted it.
+	code = activation.NormalizeCode(code)
 
 	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
 	defer cancel()
@@ -350,6 +402,9 @@ func (a *App) Activate(code string) ActivateResult {
 
 // IsActivated returns whether the device has been activated.
 func (a *App) IsActivated() bool {
+	if a.store == nil {
+		return false
+	}
 	return a.store.IsActivated()
 }
 
@@ -357,6 +412,10 @@ func (a *App) IsActivated() bool {
 
 // Connect starts the VPN tunnel via sing-box.
 func (a *App) Connect() OpResult {
+	if msg := a.notReady(); msg != "" {
+		return OpResult{Success: false, Message: msg}
+	}
+
 	state := a.store.GetData()
 	if !state.Activated || state.ServerConfig == nil {
 		return OpResult{Success: false, Message: "Not activated"}
@@ -456,6 +515,10 @@ func (a *App) disconnect() OpResult {
 	if !a.connected {
 		return OpResult{Success: true, Message: "Already disconnected"}
 	}
+	if a.mgr == nil {
+		a.connected = false
+		return OpResult{Success: true, Message: "Already disconnected"}
+	}
 
 	a.mgr.StopWatchdog()
 	_ = a.mgr.Stop()
@@ -472,6 +535,9 @@ func (a *App) GetStatus() StatusResult {
 }
 
 func (a *App) buildStatus() StatusResult {
+	if a.store == nil || a.mgr == nil {
+		return StatusResult{}
+	}
 	state := a.store.GetData()
 	return StatusResult{
 		Connected: a.connected,
@@ -505,6 +571,10 @@ func (a *App) graceDays(lastHeartbeatOK int64) int {
 // and starts the periodic loop. Safe to call multiple times — a running
 // heartbeat is left untouched.
 func (a *App) startHeartbeatLoop(code string) {
+	if a.store == nil {
+		log.Printf("heartbeat: store not ready — not starting loop")
+		return
+	}
 	if a.hb != nil && a.hb.IsRunning() {
 		return
 	}
@@ -548,6 +618,7 @@ func (a *App) startHeartbeatLoop(code string) {
 
 				// Check for staged-rollout update signal
 				if result.Resp.UpdateAvailable != "" {
+					a.recordUpdateSignal(result.Resp)
 					wailsruntime.EventsEmit(a.ctx, "update:available", map[string]interface{}{
 						"version": result.Resp.UpdateAvailable,
 						"url":     result.Resp.UpdateURL,
@@ -569,6 +640,23 @@ func (a *App) startHeartbeatLoop(code string) {
 
 // ── Updates ──
 
+// recordUpdateSignal stores the hub's latest update signal so ApplyUpdate can
+// consume it later (the heartbeat fires every 5 min, but the user may click
+// "Update" minutes after the signal arrived).
+func (a *App) recordUpdateSignal(resp *heartbeat.Response) {
+	a.upMu.Lock()
+	defer a.upMu.Unlock()
+	a.lastUpdate = &updater.UpdateInfo{
+		Version:               resp.UpdateAvailable,
+		SHA256:                resp.UpdateSHA256,
+		DownloadURL:           resp.UpdateURL,
+		DownloadURLLinux:      resp.UpdateLinux,
+		DownloadURLWindows:    resp.UpdateWindows,
+		DownloadURLMacOSIntel: resp.UpdateMacOSIntel,
+		DownloadURLMacOSARM:   resp.UpdateMacOSARM,
+	}
+}
+
 // CheckForUpdate performs a manual heartbeat to check for available updates.
 func (a *App) CheckForUpdate() UpdateCheckResult {
 	if a.hb == nil {
@@ -580,6 +668,8 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 		return UpdateCheckResult{Available: false}
 	}
 
+	a.recordUpdateSignal(result.Resp)
+
 	return UpdateCheckResult{
 		Available: true,
 		Version:   result.Resp.UpdateAvailable,
@@ -588,10 +678,80 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 	}
 }
 
+// ApplyUpdate downloads, verifies and applies the update signalled by the hub,
+// then quits so the forked new binary takes over. It runs in the background and
+// emits update:status events so the UI can show progress:
+//
+//	{phase: "downloading"} → {phase: "verifying"} → {phase: "applying"}
+//	→ {phase: "applied"} (app quits ~1.5s later) | {phase: "failed", message}
+//
+// Returns immediately; failures are surfaced through the update:status event
+// (phase "failed") and shown in the UI toast.
+func (a *App) ApplyUpdate() OpResult {
+	a.upMu.Lock()
+	defer a.upMu.Unlock()
+
+	if a.updating {
+		return OpResult{Success: false, Message: "An update is already being applied"}
+	}
+	if a.up == nil {
+		return OpResult{Success: false, Message: "Updater not initialized"}
+	}
+	if a.lastUpdate == nil {
+		return OpResult{Success: false, Message: "No update available — check for updates first"}
+	}
+	if a.lastUpdate.Version == a.version {
+		// Staged rollouts re-advertise the same version every heartbeat —
+		// don't re-download and re-apply a build that is already running.
+		a.lastUpdate = nil
+		return OpResult{Success: false, Message: "Already running the latest version"}
+	}
+	info := *a.lastUpdate // copy — the heartbeat may replace the pointer
+	a.updating = true
+
+	go func() {
+		emit := func(phase, message string) {
+			wailsruntime.EventsEmit(a.ctx, "update:status", map[string]interface{}{
+				"phase":   phase,
+				"message": message,
+			})
+		}
+
+		// Downloads can take minutes on school WiFi — never block a 10s RPC
+		// timeout. The UI stays responsive and is driven by update:status.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		emit("downloading", "Downloading update…")
+		log.Printf("ApplyUpdate: downloading %s (v%s)", info.Version, info.Version)
+		if err := a.up.PerformUpdate(ctx, info); err != nil {
+			a.upMu.Lock()
+			a.updating = false
+			a.upMu.Unlock()
+			log.Printf("ApplyUpdate: failed: %v", err)
+			emit("failed", "Update failed: "+err.Error())
+			return
+		}
+
+		log.Printf("ApplyUpdate: applied v%s — restarting", info.Version)
+		emit("applied", "Update applied — restarting…")
+
+		// Give the webview a moment to paint the "Restarting…" state, then quit
+		// so the forked new binary takes over (see updater.PerformUpdate).
+		time.Sleep(1500 * time.Millisecond)
+		wailsruntime.Quit(a.ctx)
+	}()
+
+	return OpResult{Success: true, Message: "Update started"}
+}
+
 // ── Diagnostics ──
 
 // GetDiagnostics returns a plain-text support report with no PII.
 func (a *App) GetDiagnostics() string {
+	if msg := a.notReady(); msg != "" {
+		return fmt.Sprintf("MyVPN Diagnostics\n===================\nVersion: %s\n\nApp not ready: %s\n", a.version, msg)
+	}
 	state := a.store.GetData()
 	mgrState := a.mgr.State()
 
