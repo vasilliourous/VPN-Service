@@ -200,15 +200,15 @@ func ValidateHubURL(hubURL string) error
 // CodeCharset is the valid character set: ABCDEFGHJKLMNPQRSTUVWXYZ23456789
 const CodeCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-const CodePrefix = "MYVPN"
+const CodePrefix = "RQ"
 const CodeSegments = 3
 const CodeSegmentLen = 4
-const CodeTotalLen = 18  // prefix(5) + segments(12) + checksum(1)
+const CodeTotalLen = 15  // prefix(2) + segments(12) + checksum(1)
 
 // ValidateCharset checks that a character belongs to CodeCharset.
 func ValidateCharset(c byte) error
 
-// FormatCode inserts hyphens: "MYVPNXXXX...C" → "MYVPN-XXXX-XXXX-XXXX-C"
+// FormatCode inserts hyphens: "RQXXXX...C" → "RQ-XXXX-XXXX-XXXX-C"
 func FormatCode(raw string) string
 
 // GenerateCheckChar computes the Luhn-mod-N checksum for a code body.

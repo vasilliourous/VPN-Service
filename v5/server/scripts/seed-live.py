@@ -128,7 +128,9 @@ def get_token():
 
 
 def make_test_code():
-    body = "MYVPN" + "".join(secrets.choice(CHARSET) for _ in range(12))
+    # Canonical code format: RQ-XXXX-XXXX-XXXX-C (2-char prefix + 3×4 segments
+    # + Luhn-mod-N checksum over the full body, prefix included).
+    body = "RQ" + "".join(secrets.choice(CHARSET) for _ in range(12))
     total, double = 0, False
     for i in range(len(body) - 1, -1, -1):
         val = CHARSET.index(body[i])
@@ -140,7 +142,7 @@ def make_test_code():
         double = not double
     chk = CHARSET[(N - (total % N)) % N]
     code = body + chk
-    return f"{code[0:5]}-{code[5:9]}-{code[9:13]}-{code[13:17]}-{code[17]}"
+    return f"{code[0:2]}-{code[2:6]}-{code[6:10]}-{code[10:14]}-{code[14]}"
 
 
 def main():

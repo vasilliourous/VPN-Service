@@ -151,7 +151,7 @@ Frontend:
 ```
 Collect fingerprint (SHA256 of MAC + disk serial + motherboard UUID)
          │
-Validate code client-side (Luhn-mod-N checksum, MYVPN-XXXX-XXXX-XXXX-C)
+Validate code client-side (Luhn-mod-N checksum, RQ-XXXX-XXXX-XXXX-C)
          │
 POST /api/activate {code, fingerprint}
          │
@@ -222,7 +222,7 @@ POST /api/activate
 Content-Type: application/json
 
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "fingerprint": "<sha256 hash>"
 }
 
@@ -241,7 +241,7 @@ POST /api/heartbeat
 Content-Type: application/json
 
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "fingerprint": "<sha256 hash>"
 }
 
@@ -261,7 +261,7 @@ Content-Type: application/json
 
 ```json
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "tier": "eco",
   "device_fingerprint": "<sha256>",
   "server_config": {

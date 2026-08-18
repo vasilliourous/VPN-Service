@@ -103,7 +103,7 @@ Persistent state management. Single JSON file, thread-safe, atomic writes.
 **Data stored:**
 ```json
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "tier": "eco",
   "device_fingerprint": "<sha256>",
   "server_config": { "server": "...", "server_port": 8443, "password": "...", "method": "aes-256-gcm" },
@@ -152,7 +152,7 @@ User enters code → strip formatting → Luhn-mod-N check
 - Fallback chain: full hardware → MAC+hostname → random UUID (persisted)
 - Fingerprint is STABLE once generated (cached in memory, persisted in storage)
 
-**Code format:** `MYVPN-XXXX-XXXX-XXXX-C` (18 chars, base-32 charset excluding I/O/0/1, Luhn-mod-N checksum)
+**Code format:** `RQ-XXXX-XXXX-XXXX-C` (15 chars, base-32 charset excluding I/O/0/1, Luhn-mod-N checksum)
 
 ### 2.4 Manager (`internal/manager/`)
 
@@ -230,7 +230,7 @@ Periodic communication with hub. Runs in a background goroutine.
 POST /api/heartbeat
 Content-Type: application/json
 
-{ "code": "MYVPN-...", "fingerprint": "<sha256>" }
+{ "code": "RQ-...", "fingerprint": "<sha256>" }
 ```
 (POST with a JSON body — the code never appears in query strings or access logs.)
 

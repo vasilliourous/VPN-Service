@@ -30,7 +30,7 @@ In PocketBase admin UI, go to **Settings → Collections** and create these:
 
 | Field | Type | Required | Unique | Notes |
 |-------|------|:--------:|:------:|-------|
-| `code` | text (plain) | ✅ | ✅ | Full code: `MYVPN-ABCD-EFGH-IJKL-M` |
+| `code` | text (plain) | ✅ | ✅ | Full code: `RQ-ABCD-EFGH-JKMN-T` |
 | `tier` | select | ✅ | ❌ | Options: `eco`, `stealth`, `strike` |
 | `used` | bool | ❌ | ❌ | Default: false |
 | `suspended` | bool | ❌ | ❌ | Default: false |

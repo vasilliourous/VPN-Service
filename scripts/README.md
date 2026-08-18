@@ -40,12 +40,12 @@ cat eco-codes.txt | ./scripts/print_codes.sh -o eco-cards.pdf
 ## Code Format
 
 ```
-MYVPN-XXXX-XXXX-XXXX-C
+RQ-XXXX-XXXX-XXXX-C
 ```
 
-- **MYVPN**: Static prefix
+- **RQ**: Static prefix
 - **XXXX**: Random base-32 segments (charset: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, no I/O/0/1)
-- **C**: Luhn-mod-N checksum character
+- **C**: Luhn-mod-N checksum character (computed over the full body including the prefix)
 
 The Luhn-mod-N checksum is validated client-side before sending to server,
 preventing mistakes (typos) and reducing server load from invalid codes.

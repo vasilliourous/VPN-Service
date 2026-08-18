@@ -209,7 +209,7 @@ func (a *App) GetDiagnostics() string    // Text report for support
 
 // ── Codec ──
 func (a *App) GetCodeCharset() string    // "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-func (a *App) GetCodePrefix() string     // "MYVPN"
+func (a *App) GetCodePrefix() string     // "RQ"
 func (a *App) GetVersion() string        // App version
 func (a *App) GetHubURL() string         // Hub URL
 

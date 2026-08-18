@@ -127,7 +127,7 @@ All three tiers use **BBR** (Bottleneck Bandwidth and Round-trip propagation tim
 
 ### Activation Flow
 
-1. User enters code in the app: `MYVPN-A7X3-K9M2-Q5P1-C`
+1. User enters code in the app: `RQ-ABCD-EFGH-JKMN-T`
 2. **Client-side Luhn-mod-N validation** catches typos instantly
 3. App generates a **device fingerprint** (SHA256 of MAC address + disk serial + motherboard UUID)
 4. POST to `/api/activate` with `{ code, fingerprint }`

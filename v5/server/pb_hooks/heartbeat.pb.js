@@ -10,13 +10,13 @@ routerAdd("POST", "/api/heartbeat", function(e) {
         if (!code) return e.json(400, {code:400, message:"Missing code"});
 
         // Normalize the lookup code to the canonical hyphenated form
-        // ("MYVPN-XXXX-XXXX-XXXX-C" — the form codes are seeded in). Clients
+        // ("RQ-XXXX-XXXX-XXXX-C" — the form codes are seeded in). Clients
         // should send the canonical form, but tolerating any pasted variant
         // keeps heartbeat (suspension checks, update signals) alive for
         // legacy installs that stored an unformatted code.
         var s = code.replace(/-/g,"").toUpperCase();
-        var canonical = (s.length === 18)
-            ? s.substring(0,5)+"-"+s.substring(5,9)+"-"+s.substring(9,13)+"-"+s.substring(13,17)+"-"+s.substring(17,18)
+        var canonical = (s.length === 15)
+            ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
 
         // Use findFirstRecordByData (same approach as activation hook — confirmed working on PB 0.22.21)

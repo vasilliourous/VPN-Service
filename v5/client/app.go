@@ -323,7 +323,7 @@ func (a *App) Activate(code string) ActivateResult {
 		}
 	}
 
-	// Store and heartbeat the CANONICAL code form ("MYVPN-XXXX-XXXX-XXXX-C").
+	// Store and heartbeat the CANONICAL code form ("RQ-XXXX-XXXX-XXXX-C").
 	// The server's code lookup is formatting-sensitive (codes are seeded in the
 	// hyphenated form), so normalizing here — not echoing the raw user input —
 	// keeps activation, heartbeat, suspension checks and update signals on the

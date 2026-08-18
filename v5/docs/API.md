@@ -24,7 +24,7 @@ Activates a device with an activation code and binds it to the hardware fingerpr
 **Request:**
 ```json
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "fingerprint": "a1b2c3d4e5f6...abcdef"
 }
 ```
@@ -88,7 +88,7 @@ and refreshed tier config.
 **Request:**
 ```json
 {
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "fingerprint": "a1b2c3d4e5f6...abcdef"
 }
 ```
@@ -154,7 +154,7 @@ Requires valid admin API token.
 ```json
 {
   "admin_token": "your-secure-token",
-  "code": "MYVPN-ABCD-EFGH-IJKL-M",
+  "code": "RQ-ABCD-EFGH-JKMN-T",
   "reason": "Device lost/stolen"
 }
 ```

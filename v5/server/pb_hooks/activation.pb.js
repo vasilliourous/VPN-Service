@@ -46,8 +46,8 @@ routerAdd("POST", "/api/activate", function(e) {
         // Find code — use findFirstRecordByData which is simpler.
         // Lookup uses the canonical hyphenated form (the form codes are seeded
         // in); tolerate any pasted variant just like the heartbeat hook.
-        var canonical = (s.length === 18)
-            ? s.substring(0,5)+"-"+s.substring(5,9)+"-"+s.substring(9,13)+"-"+s.substring(13,17)+"-"+s.substring(17,18)
+        var canonical = (s.length === 15)
+            ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
         var rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
         if (!rec) return e.json(404, {code:404, message:"Code not found"});

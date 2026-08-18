@@ -1,6 +1,50 @@
 
 ---
 
+## CODE FORMAT MIGRATION — MYVPN- → RQ- (2026-08-17)
+
+**All activation codes now use `RQ-XXXX-XXXX-XXXX-C` (15 chars) instead of
+`MYVPN-XXXX-XXXX-XXXX-C` (18 chars).** The Luhn-mod-N checksum covers the whole
+body INCLUDING the prefix, so every code's check digit changed with the prefix.
+
+Changed (live code + docs):
+- `v5/client/internal/activation/luhn.go`: `CodePrefix = "RQ"`; `CodeTotalLen`
+  is derived (now 15). Client-side validation rejects old `MYVPN-` codes with
+  the prefix error.
+- `ActivationScreen.vue`: placeholder `RQ-XXXX-XXXX-XXXX-C`, auto-format
+  segments `2-4-4-4-1`, full-body length check 15.
+- `v5/server/pb_hooks/activation.pb.js` + `heartbeat.pb.js` + `hiddify.pb.js`:
+  canonical-lookup normalization now formats `2-4-4-4-1` (15 chars).
+- `v5/server/scripts/seed-live.py` `make_test_code()`: `RQ` body + `2-4-4-4-1`.
+- `v5/server/scripts/codes.json`: all 15 codes migrated — random segments
+  preserved, prefix + checksum recomputed (e.g. `MYVPN-8FAU-DJBA-DBA7-H` →
+  `RQ-8FAU-DJBA-DBA7-N`). Same bodies as the previously seeded cards.
+- `scripts/generate_codes.sh` + `scripts/README.md`: `PREFIX="RQ"` (generator
+  is prefix-length agnostic otherwise).
+- Docs: README.md, API.md, ARCHITECTURE.md, BACKEND-API.md, CLIENT-GUIDE.md,
+  IMPLEMENT.md, OPS.md, POCKETBASE-SETUP.md, UI-AESTHETICS.md,
+  WAILS-MIGRATION.md — code examples/format updated.
+- New `luhn_test.go` locks in the RQ format, validates the migrated codes.json
+  codes + the doc example, and rejects legacy MYVPN codes.
+
+NOT changed (intentional): `v4/` and `v5/docs/history/` are historical records
+and keep the old format; `MYVPN_DEBUG`/`MYVPN_LOG_LEVEL`/`MYVPN_AGE_KEY` are
+app-infra env/secret names, not code prefixes; app name remains "MyVPN".
+
+**Deploy (REQUIRED, breaks old codes):**
+1. The live PocketBase `codes` collection still holds the MYVPN codes — update
+   each record to its RQ form (same random segments, new checksum) or delete +
+   reseed from the new `codes.json` (`seed-live.py` skips existing codes, so
+   plain re-run ADDS duplicates — it does NOT replace).
+2. Existing bound activations keep working server-side (binding is by
+   fingerprint; the heartbeat/activation hooks now normalize to the RQ form),
+   BUT already-issued MYVPN cards can no longer be activated: new client
+   validation rejects the prefix. Reissue/print cards with the RQ codes.
+3. Deploy the three pb_hooks edits (activation/heartbeat/hiddify) with the DB
+   update — the hooks are forward/backward tolerant, but the DB must match.
+
+---
+
 ## CLIENT APP PASS — UPDATE FLOW WIRED, CODE NORMALIZATION, STORAGE RECOVERY (2026-08-17)
 
 Client-side fix pass (no server re-deploy needed for the client fixes; the two

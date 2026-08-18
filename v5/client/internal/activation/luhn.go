@@ -1,7 +1,7 @@
 // Package activation provides activation code validation and device fingerprinting.
 //
-// Code Format: MYVPN-XXXX-XXXX-XXXX-C
-//   - MYVPN: Static prefix
+// Code Format: RQ-XXXX-XXXX-XXXX-C
+//   - RQ: Static prefix
 //   - XXXX: Random base-32 segments (charset: ABCDEFGHJKLMNPQRSTUVWXYZ23456789)
 //   - C: Luhn-mod-N checksum character
 //
@@ -22,7 +22,7 @@ const (
 	codeBase = len(CodeCharset)
 
 	// CodePrefix is the MyVPN code prefix.
-	CodePrefix = "MYVPN"
+	CodePrefix = "RQ"
 
 	// CodeSegments is the number of random segments.
 	CodeSegments = 3
@@ -116,7 +116,7 @@ func GenerateCheckChar(body string) (byte, error) {
 }
 
 // FormatCode formats a raw code string with hyphens.
-// Input: "MYVPNXXXX...C" → Output: "MYVPN-XXXX-XXXX-XXXX-C"
+// Input: "RQXXXX...C" → Output: "RQ-XXXX-XXXX-XXXX-C"
 func FormatCode(raw string) string {
 	if len(raw) != CodeTotalLen {
 		return raw // Return as-is if not the expected length
@@ -134,7 +134,7 @@ func FormatCode(raw string) string {
 
 // NormalizeCode returns the canonical hyphenated form of an activation code,
 // tolerating any input formatting (hyphens, spaces, lowercase, pasted text).
-// The server stores and looks up codes in the canonical "MYVPN-XXXX-XXXX-XXXX-C"
+// The server stores and looks up codes in the canonical "RQ-XXXX-XXXX-XXXX-C"
 // form (see v5/server/scripts/seed-live.py make_test_code), so the client must
 // persist and transmit exactly that form: a hyphenated code in storage (older
 // clients) or an unformatted code (direct pastes) would otherwise 404 the

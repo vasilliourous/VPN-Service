@@ -118,7 +118,7 @@ v5-client/
    - `ValidateCode(code string) error` — client-side check, no server call
    - `GenerateCheckChar(body string) (byte, error)` — for code generation
    - Charset: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no I/O/0/1)
-   - Format: `MYVPN-XXXX-XXXX-XXXX-C` (18 chars with hyphens)
+   - Format: `RQ-XXXX-XXXX-XXXX-C` (15 chars with hyphens)
 
 2. **Device fingerprint** — `internal/activation/fingerprint_linux.go` + `fingerprint_windows.go` (self-contained per platform)
    - `GenerateFingerprint() string` — SHA256 of MAC + disk serial + motherboard UUID
@@ -228,7 +228,7 @@ paths := []string{
 
 2. **Request:**
    ```
-   GET /api/heartbeat?code=MYVPN-...&fp=<sha256>
+   GET /api/heartbeat?code=RQ-...&fp=<sha256>
    ```
 
 3. **Response handling:**

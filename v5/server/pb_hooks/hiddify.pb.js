@@ -8,7 +8,7 @@
 //   GET /api/hiddify?code=CODE&sub=1     — returns a Hiddify subscription (base64 list)
 //
 // Usage from any HTTP client (curl, browser, Hiddify import):
-//   curl "https://networkingguides.duckdns.org/api/hiddify?code=MYVPN-XXXX-XXXX-XXXX-X"
+//   curl "https://networkingguides.duckdns.org/api/hiddify?code=RQ-XXXX-XXXX-XXXX-X"
 
 function sanitizeFilter(val) {
     if (typeof val !== "string") return "";
@@ -24,8 +24,13 @@ routerAdd("GET", "/api/hiddify", function(e) {
 
         if (!code) return e.json(400, {code: 400, message: "Missing code parameter"});
 
-        // ── Look up the code ──
-        var safeCode = sanitizeFilter(code);
+        // ── Look up the code (canonical RQ-XXXX-XXXX-XXXX-C form, tolerating
+        // any pasted variant, same as the activation/heartbeat hooks) ──
+        var s = code.replace(/-/g,"").toUpperCase();
+        var canonical = (s.length === 15)
+            ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
+            : code;
+        var safeCode = sanitizeFilter(canonical);
         var records = $app.findRecordsByFilter(
             "codes",
             "code={:code}",

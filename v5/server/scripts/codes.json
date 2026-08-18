@@ -1,17 +1,62 @@
 [
-  {"code": "MYVPN-8FAU-DJBA-DBA7-H", "tier": "eco"},
-  {"code": "MYVPN-YMS5-W4B4-2V9U-H", "tier": "eco"},
-  {"code": "MYVPN-2DTS-TDUQ-TKJR-E", "tier": "eco"},
-  {"code": "MYVPN-6LN9-WM76-WDSD-4", "tier": "eco"},
-  {"code": "MYVPN-UE6S-Q7LY-LLLW-W", "tier": "eco"},
-  {"code": "MYVPN-TKUQ-KFEW-5W8B-W", "tier": "stealth"},
-  {"code": "MYVPN-WUTK-B574-E64M-U", "tier": "stealth"},
-  {"code": "MYVPN-X4KT-DPLN-3EUZ-B", "tier": "stealth"},
-  {"code": "MYVPN-RAGU-28R8-J7MN-3", "tier": "stealth"},
-  {"code": "MYVPN-KPMC-BH6P-NNZX-B", "tier": "stealth"},
-  {"code": "MYVPN-U2ZP-R4YK-XDM8-G", "tier": "strike"},
-  {"code": "MYVPN-U55P-SACY-KHZB-H", "tier": "strike"},
-  {"code": "MYVPN-6SJN-UZM2-QAYE-V", "tier": "strike"},
-  {"code": "MYVPN-FVBJ-6JUB-NKBE-4", "tier": "strike"},
-  {"code": "MYVPN-GRJ3-KNRU-QMAX-B", "tier": "strike"}
+  {
+    "code": "RQ-8FAU-DJBA-DBA7-N",
+    "tier": "eco"
+  },
+  {
+    "code": "RQ-YMS5-W4B4-2V9U-N",
+    "tier": "eco"
+  },
+  {
+    "code": "RQ-2DTS-TDUQ-TKJR-K",
+    "tier": "eco"
+  },
+  {
+    "code": "RQ-6LN9-WM76-WDSD-9",
+    "tier": "eco"
+  },
+  {
+    "code": "RQ-UE6S-Q7LY-LLLW-3",
+    "tier": "eco"
+  },
+  {
+    "code": "RQ-TKUQ-KFEW-5W8B-3",
+    "tier": "stealth"
+  },
+  {
+    "code": "RQ-WUTK-B574-E64M-Z",
+    "tier": "stealth"
+  },
+  {
+    "code": "RQ-X4KT-DPLN-3EUZ-G",
+    "tier": "stealth"
+  },
+  {
+    "code": "RQ-RAGU-28R8-J7MN-8",
+    "tier": "stealth"
+  },
+  {
+    "code": "RQ-KPMC-BH6P-NNZX-G",
+    "tier": "stealth"
+  },
+  {
+    "code": "RQ-U2ZP-R4YK-XDM8-M",
+    "tier": "strike"
+  },
+  {
+    "code": "RQ-U55P-SACY-KHZB-N",
+    "tier": "strike"
+  },
+  {
+    "code": "RQ-6SJN-UZM2-QAYE-2",
+    "tier": "strike"
+  },
+  {
+    "code": "RQ-FVBJ-6JUB-NKBE-9",
+    "tier": "strike"
+  },
+  {
+    "code": "RQ-GRJ3-KNRU-QMAX-G",
+    "tier": "strike"
+  }
 ]

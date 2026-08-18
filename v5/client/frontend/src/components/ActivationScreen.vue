@@ -25,8 +25,8 @@
           v-model="code"
           type="text"
           class="code-input"
-          placeholder="MYVPN-XXXX-XXXX-XXXX-C"
-          maxlength="23"
+          placeholder="RQ-XXXX-XXXX-XXXX-C"
+          maxlength="19"
           :disabled="loading"
           @input="onCodeInput"
           @keyup.enter="submitActivation"
@@ -87,10 +87,10 @@ const validationClass = ref('')
 const codeInput = ref<HTMLInputElement>()
 
 const canActivate = computed(() => {
-  // Code must be the full 18-char body (MYVPN + 3×4 segments + checksum)
+  // Code must be the full 15-char body (RQ + 3×4 segments + checksum)
   // before the button enables — submitting a shorter code would only fail
   // client-side Luhn validation and waste a server round-trip.
-  return code.value.replace(/-/g, '').length === 18 && !props.loading
+  return code.value.replace(/-/g, '').length === 15 && !props.loading
 })
 
 async function onCodeInput(): Promise<void> {
@@ -98,16 +98,16 @@ async function onCodeInput(): Promise<void> {
   let raw = code.value.replace(/-/g, '').toUpperCase()
   const parts: string[] = []
 
-  if (raw.length > 0) parts.push(raw.substring(0, 5))   // MYVPN
-  if (raw.length > 5) parts.push(raw.substring(5, 9))   // XXXX
-  if (raw.length > 9) parts.push(raw.substring(9, 13))  // XXXX
-  if (raw.length > 13) parts.push(raw.substring(13, 17)) // XXXX
-  if (raw.length > 17) parts.push(raw.substring(17, 18)) // C
+  if (raw.length > 0) parts.push(raw.substring(0, 2))   // RQ
+  if (raw.length > 2) parts.push(raw.substring(2, 6))   // XXXX
+  if (raw.length > 6) parts.push(raw.substring(6, 10))  // XXXX
+  if (raw.length > 10) parts.push(raw.substring(10, 14)) // XXXX
+  if (raw.length > 14) parts.push(raw.substring(14, 15)) // C
 
   code.value = parts.join('-')
 
   // Validate client-side when full
-  if (raw.length === 18) {
+  if (raw.length === 15) {
     const result = await bridge.validateCode(raw)
     validationMessage.value = result.valid ? '✓ Valid code' : result.message || 'Invalid code'
     validationClass.value = result.valid ? 'valid' : 'invalid'

@@ -108,7 +108,7 @@ when the device is not activated (`App.vue` → `v-if="!activated"`).
 │  │  Enter the code from your      │  │
 │  │  activation card               │  │
 │  │  ┌──────────────────────────┐  │  │
-│  │  │ MYVPN-XXXX-XXXX-XXXX-C   │  │  │  code input, monospace, auto-format
+│  │  │ RQ-XXXX-XXXX-XXXX-C      │  │  │  code input, monospace, auto-format
 │  │  └──────────────────────────┘  │  │
 │  │  ✓ Valid code / ✗ error hint   │  │  live Luhn validation (green/red)
 │  │  ┌──────────────────────────┐  │  │

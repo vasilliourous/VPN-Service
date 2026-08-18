@@ -27,7 +27,7 @@ func TestCorruptFileRestoresFromBackup(t *testing.T) {
 		t.Fatalf("openAt: %v", err)
 	}
 	cfg := &ServerConfig{Server: "vpn.example.com", ServerPort: 8443, Password: "secret", Method: "aes-256-gcm"}
-	if err := s.SetActivation("MYVPN-AAAA-BBBB-CCCC-D", "eco", "fp1234567890abcdef", cfg, false); err != nil {
+	if err := s.SetActivation("RQ-AAAA-BBBB-CCCC-C", "eco", "fp1234567890abcdef", cfg, false); err != nil {
 		t.Fatalf("SetActivation: %v", err)
 	}
 
@@ -51,8 +51,8 @@ func TestCorruptFileRestoresFromBackup(t *testing.T) {
 	if !s2.IsActivated() {
 		t.Fatal("activation lost after corrupt-file recovery — backup restore failed")
 	}
-	if got := s2.GetCode(); got != "MYVPN-AAAA-BBBB-CCCC-D" {
-		t.Fatalf("code = %q after recovery, want MYVPN-AAAA-BBBB-CCCC-D", got)
+	if got := s2.GetCode(); got != "RQ-AAAA-BBBB-CCCC-C" {
+		t.Fatalf("code = %q after recovery, want RQ-AAAA-BBBB-CCCC-C", got)
 	}
 	if s2.GetData().ServerConfig == nil || s2.GetData().ServerConfig.Password != "secret" {
 		t.Fatal("server config not restored from backup")
@@ -96,7 +96,7 @@ func TestBackupRestoreSkipsInvalidBackups(t *testing.T) {
 	writeJSON(t, filepath.Join(dir, "storage.json.bak.1"), `{"activated": true, "code": ""}`)
 	// Oldest backup (.bak.2) holds the valid activated state.
 	writeJSON(t, filepath.Join(dir, "storage.json.bak.2"), `{
-	  "code": "MYVPN-AAAA-BBBB-CCCC-D",
+	  "code": "RQ-AAAA-BBBB-CCCC-C",
 	  "tier": "eco",
 	  "device_fingerprint": "fp1234567890abcdef",
 	  "activated": true,
@@ -112,8 +112,8 @@ func TestBackupRestoreSkipsInvalidBackups(t *testing.T) {
 	if !s.IsActivated() {
 		t.Fatal("recovery failed to restore the valid .bak.2 snapshot")
 	}
-	if got := s.GetCode(); got != "MYVPN-AAAA-BBBB-CCCC-D" {
-		t.Fatalf("code = %q, want MYVPN-AAAA-BBBB-CCCC-D", got)
+	if got := s.GetCode(); got != "RQ-AAAA-BBBB-CCCC-C" {
+		t.Fatalf("code = %q, want RQ-AAAA-BBBB-CCCC-C", got)
 	}
 }
 

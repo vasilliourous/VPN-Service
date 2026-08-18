@@ -86,7 +86,7 @@ curl -s "$PB_API/api/collections/codes/records?skipTotal=1" \
 
 ```bash
 # Find the record ID
-RECORD_ID=$(curl -s "$PB_API/api/collections/codes/records?filter=(code='MYVPN-ABCD-EFGH-IJKL-M')" \
+RECORD_ID=$(curl -s "$PB_API/api/collections/codes/records?filter=(code='RQ-ABCD-EFGH-JKMN-T')" \
   -H "Authorization: Bearer $PB_TOKEN" | jq -r '.items[0].id')
 
 # Suspend
@@ -103,7 +103,7 @@ curl -X POST "$PB_API/api/admin/unbind-code" \
   -H "Content-Type: application/json" \
   -d '{
     "admin_token": "'$ADMIN_TOKEN'",
-    "code": "MYVPN-ABCD-EFGH-IJKL-M",
+    "code": "RQ-ABCD-EFGH-JKMN-T",
     "reason": "Device reported lost"
   }'
 ```

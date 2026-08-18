@@ -2,9 +2,9 @@
 # MyVPN Code Generator
 # Generates activation codes with Luhn-mod-N checksum.
 #
-# Code format: MYYYP-XXXX-XXXX-XXXX-C
+# Code format: RQ-XXXX-XXXX-XXXX-C
 # Where:
-#   MYYYP = MyVPN prefix (static)
+#   RQ    = prefix (static)
 #   XXXX  = random alphanumeric segments
 #   C     = Luhn-mod-N checksum character
 #
@@ -24,7 +24,7 @@ set -euo pipefail
 # ── Configuration ──
 CHARSET="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # No I/O/0/1 (avoid ambiguity)
 N=${#CHARSET}
-PREFIX="MYVPN"
+PREFIX="RQ"
 SEGMENTS=3
 SEGMENT_LEN=4
 
@@ -89,7 +89,7 @@ generate_code() {
     local checksum
     checksum=$(luhn_mod_n_checksum "$core")
 
-    # Format with hyphens: MYYYP-XXXX-XXXX-XXXX-C
+    # Format with hyphens: RQ-XXXX-XXXX-XXXX-C
     local formatted="${PREFIX}-"
     for (( i = 0; i < SEGMENTS; i++ )); do
         local start=$(( (i * SEGMENT_LEN) + ${#PREFIX} ))
