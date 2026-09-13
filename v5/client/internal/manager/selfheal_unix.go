@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const tunInterfaceName = "myvpn0"
+const tunInterfaceName = "locus0"
 
 // tunInterfaceUp reports whether the TUN interface is present and up.
 // Returns (up, available) where available=false means the platform/tooling
@@ -23,13 +23,13 @@ func tunInterfaceUp() (up bool, available bool) {
 }
 
 // killForeignEngines terminates any sing-box processes this app does not track,
-// which could otherwise share the myvpn0 TUN and corrupt routing. Best-effort.
+// which could otherwise share the locus0 TUN and corrupt routing. Best-effort.
 func killForeignEngines() {
 	// pkill may not be present; ignore failures.
 	_ = exec.Command("pkill", "-9", "-x", "sing-box").Run()
 }
 
-// removeStaleTUN deletes a leftover myvpn0 TUN interface so a fresh engine can
+// removeStaleTUN deletes a leftover locus0 TUN interface so a fresh engine can
 // create a clean one. Best-effort; requires privileges (root on Linux, which
 // the client obtains via the same elevation path as TUN creation).
 func removeStaleTUN() error {

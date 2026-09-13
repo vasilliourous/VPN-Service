@@ -7,7 +7,7 @@
 //
 //	1. restart sing-box in place,
 //	2. if that does not help, kill leftover sing-box processes and clear a
-//	   stale myvpn0 TUN, then start a fresh engine,
+//	   stale locus0 TUN, then start a fresh engine,
 //	3. if still broken, report a clear degraded state instead of claiming
 //	   Connected.
 //
@@ -92,7 +92,7 @@ func (m *Manager) StopWatchdog() {
 // actually passing traffic. It layers several signals:
 //
 //  1. the sing-box process is alive and tracked,
-//  2. the myvpn0 TUN interface is present and up (best effort),
+//  2. the locus0 TUN interface is present and up (best effort),
 //  3. an in-band TCP dial out through the tunnel completes quickly.
 //
 // The dial targets the configured VPN server endpoint: when the tunnel is
@@ -113,7 +113,7 @@ func (m *Manager) ProbeTunnel() error {
 	}
 
 	if up, ok := tunInterfaceUp(); ok && !up {
-		return fmt.Errorf("TUN interface myvpn0 is down")
+		return fmt.Errorf("TUN interface locus0 is down")
 	}
 
 	cfg, err := m.currentConfig()
@@ -208,6 +208,7 @@ func (m *Manager) markHealthy() {
 // notifyProbe invokes the registered callback with the outcome, if any.
 func (m *Manager) notifyProbe(stage ProbeStage, humanStage string, err error) {
 	m.mu.Lock()
+	m.probeStage = stage
 	cb := m.watchdogOnProbe
 	healthy := m.tunnelHealthy
 	m.mu.Unlock()
@@ -218,6 +219,15 @@ func (m *Manager) notifyProbe(stage ProbeStage, humanStage string, err error) {
 		humanStage = string(stage)
 	}
 	cb(healthy, humanStage, err)
+}
+
+// WatchdogStage returns the last watchdog recovery stage reported (e.g.
+// "healthy", "restart", "full-reset", "degraded"). Empty string before the
+// watchdog runs. Thread-safe.
+func (m *Manager) WatchdogStage() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return string(m.probeStage)
 }
 
 // restartEngine regenerates the config and starts a fresh sing-box process
@@ -243,7 +253,7 @@ func (m *Manager) restartEngine() error {
 	return fmt.Errorf("sing-box would not restart after 3 attempts")
 }
 
-// fullReset kills leftover sing-box processes, clears the myvpn0 TUN, and
+// fullReset kills leftover sing-box processes, clears the locus0 TUN, and
 // starts a clean engine.
 func (m *Manager) fullReset() error {
 	if err := m.killProcess(); err != nil {

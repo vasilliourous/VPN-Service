@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+#
+# publish-update.sh — Publish a Locus client release so devices self-update.
+#
+# The client checks for updates via the hub heartbeat (PocketBase "update_config"
+# record) and downloads the new *executable* for its platform, verifying SHA-256
+# before swapping. This script prepares that payload and optionally uploads it.
+#
+# WHAT IT DOES
+#   1. Resolves the target version (default: reads ../../v5/VERSION; override
+#      with -v).
+#   2. Takes one or more EXPLODED client executables ("locus<platform>" — the
+#      single runnable the updater swaps in, NOT the .zip). For each it computes
+#      sha256, so the channels report a stable per-platform hash.
+#   3. Writes an <out>/update.json manifest (mirrors docs/API.md "Update
+#      Manifest") and prints the exact PocketBase "update_config" JSON to paste
+#      (rollout_percent + per-platform download URLs + sha per platform).
+#   4. Optionally (-u DOMAIN, with -k SSH_KEY) rsyncs the whole payload under the
+#      webroot to https://DOMAIN/updates/<version>/ so curl-able, matching the
+#      URLs in the printed update_config.
+#
+# It NEVER reads secrets itself: the SSH/rsync step uses your key only.
+#
+# EXIT CODES: 0 success; 2 usage; 3 a required input file is missing.
+#
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEFAULT_VERSION="$(tr -d '[:space:]' < "${REPO}/v5/VERSION" 2>/dev/null || true)"
+
+usage() { cat >&2 <<EOF
+Usage: $0 [options] <executable>[=<platform>] [...]
+
+  -v VERSION      version to publish (default: read v5/VERSION => '${DEFAULT_VERSION:-<unset>}')
+  -o DIR          output dir for update.json (default: ./.update-out)
+  -d DOMAIN       when set, print URLs rooted at https://DOMAIN and (with -k)
+                  actually upload under /updates/<version>/
+  -k SSH_KEY      -d with path to an SSH identity used to reach the web server
+  -s WEBROOT      remote webroot path (default /var/www/html); used only when -k
+  -h              this help
+
+  Dynamic arguments: each <exe> is a path to the raw client binary for a platform.
+  Platform is inferred from the filename unless given explicitly:
+      ./dist/locus-linux-amd64          -> linux, amd64
+      ./dist/locus               (build) -> current OS/arch
+      ./dist/locus.exe[=windows]        -> windows
+EOF
+exit 2
+}
+
+err() { echo "publish-update: error: $*" >&2; exit 3; }
+
+VERSION="${DEFAULT_VERSION:-}"
+OUT="${PWD}/.update-out"
+DOMAIN=""
+KEY=""
+WEBROOT="/var/www/html"
+
+while getopts "hv:o:d:k:s:" opt; do
+  case "$opt" in
+    v) VERSION="$OPTARG" ;;
+    o) OUT="$OPTARG" ;;
+    d) DOMAIN="$OPTARG" ;;
+    k) KEY="$OPTARG" ;;
+    s) WEBROOT="$OPTARG" ;;
+    h) usage ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+[ -n "$VERSION" ] || err "no version (set -v or create v5/VERSION)"
+[ "$#" -ge 1 ] || usage
+
+infer_platform() {
+  local file="$1" base
+  base="$(basename "$file")"
+  case "$base" in
+    linux-x86_64|linux-amd64|*-linux-amd64|*-linux-x86_64) echo "linux:amd64" ;;
+    *-windows*|*.exe) echo "windows:amd64" ;;
+    *-darwin-arm64|*-macos-arm64|*-apple*-arm64) echo "macos:arm" ;;
+    *-darwin-amd64|*-macos-amd64|*-apple*-amd64|*-darwin-x86_64) echo "macos:intel" ;;
+    *)
+      # If unlabeled, cannot know which tier/OS file the updater should fetch.
+      err "cannot infer platform from '${base}'. Append =platform (linux:amd64|windows:amd64|macos:arm|macos:intel)."
+      ;;
+  esac
+}
+
+declare -A SHA
+for arg in "$@"; do
+  bin=""; want=""
+  case "$arg" in
+    *=*) bin="${arg%%=*}"; want="${arg#*=}" ;;
+    *)   bin="$arg" ;;
+  esac
+  [ -f "$bin" ] || err "not a file: $bin"
+  if [ -z "$want" ]; then
+    want="$(infer_platform "$bin")"
+  fi
+  key="${want%%:*}"
+  SHA["$key"]="$(sha256sum "$bin" | awk '{print $1}')"
+done
+
+mkdir -p "$OUT"
+
+# ── update_config record JSON (paste into PocketBase "update_config") ──
+# Keys mirror the heartbeat hook / API.md; per-platform download URLs point at
+# the files under https://DOMAIN/updates/<version>/ when -d is provided, else
+# they carry a "<URL-to-...>" placeholder for the operator to fill in.
+gen_config() {
+  local primary_sha=""
+  # Prefer the sha for whichever we actually included (linux if present else first)
+  for k in linux windows macos:intel macos:arm; do
+    if [ -n "${SHA[$k]:-}" ]; then primary_sha="${SHA[$k]}"; break; fi
+  done
+  cat <<EOF
+{
+  "active": true,
+  "version": "$VERSION",
+  "rollout_percent": 5,
+  "update_sha256": "$primary_sha",
+  "update_url": "$( [ -n "$DOMAIN" ] && echo "https://$DOMAIN/updates/$VERSION/locus" || echo "<URL-to-locus-binary>" )",
+  "download_linux": "$( [ -n "$DOMAIN" ] && echo "https://$DOMAIN/updates/$VERSION/locus-linux-amd64" || echo "<URL-to-linux-binary>" )",
+  "download_windows": "$( [ -n "$DOMAIN" ] && echo "https://$DOMAIN/updates/$VERSION/locus-windows-amd64.exe" || echo "<URL-to-windows-exe>" )",
+  "download_macos_intel": "$( [ -n "$DOMAIN" ] && echo "https://$DOMAIN/updates/$VERSION/locus-macos-amd64" || echo "<URL-to-macos-intel-binary>" )",
+  "download_macos_arm": "$( [ -n "$DOMAIN" ] && echo "https://$DOMAIN/updates/$VERSION/locus-macos-arm64" || echo "<URL-to-macos-arm-binary>" )"
+}
+EOF
+}
+
+# Generate update.json (public static manifest served at /update.json)
+jqfile="$OUT/update.json"
+{
+  cat <<EOF
+{
+  "version": "$VERSION",
+  "rollout_percent": 0,
+  "assets": {
+EOF
+  n=0
+  for k in "${!SHA[@]}"; do
+    [ "$n" -gt 0 ] && echo ","
+    printf '    "%s": { "sha256": "%s" }' "$k" "${SHA[$k]}"
+    n=$((n + 1))
+  done
+  echo
+  echo "  }"
+  echo "}"
+} > "$jqfile"
+
+echo "publish-update: version        = $VERSION"
+echo "publish-update: update.json    = $jqfile"
+echo
+echo "=== Update config JSON (paste into PocketBase 'update_config') ==="
+gen_config
+echo "=== End update config JSON ==="
+
+# ── Optional upload (opt-in; needs SSH key) ──
+if [ -n "$DOMAIN" ]; then
+  [ -n "$KEY" ] || { echo "publish-update: -d given without -k — not uploading (dry run)."; exit 0; }
+  dest="/var/www/html/updates/${VERSION}"
+  ssh_cmd=(ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@"$DOMAIN")
+  "${ssh_cmd[@]}" "mkdir -p '$dest'"
+  for arg in "$@"; do
+    bin="${arg%%=*}"
+    base="$(basename "$bin")"
+    case "$bin" in
+      *.exe) remote="locus-windows-amd64.exe" ;;
+      *) remote="$base" ;;
+    esac
+    scp "${KEY:+-i} ${KEY}" "${bin}" "root@${DOMAIN}:$dest/$remote"
+  done
+  scp "${KEY:+-i} ${KEY}" "$jqfile" "root@${DOMAIN}:/var/www/html/update.json"
+  echo "publish-update: uploaded to https://${DOMAIN}/updates/${VERSION}/ and default /update.json"
+fi

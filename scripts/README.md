@@ -1,6 +1,6 @@
-# MyVPN Scripts
+# Locus Scripts
 
-Utility scripts for MyVPN code generation, printing, and operations.
+Utility scripts for Locus code generation, printing, and operations.
 
 ## Files
 

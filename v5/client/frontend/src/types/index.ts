@@ -1,4 +1,4 @@
-// MyVPN TypeScript types — mirrors the Go backend API
+// Locus TypeScript types — mirrors the Go backend API
 // See docs/BACKEND-API.md for the complete Go type definitions.
 
 // ── Validation (client-side, no server call) ──
@@ -25,6 +25,7 @@ export interface StatusResult {
   failures: number
   graceDays: number
   tunnelOk: boolean // watchdog: is the tunnel actually passing traffic?
+  repairStage?: string // '' | 'restart' | 'full-reset' | 'degraded'
 }
 
 // ── Connection Operations ──

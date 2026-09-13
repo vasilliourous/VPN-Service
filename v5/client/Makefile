@@ -1,6 +1,6 @@
-# MyVPN Wails Build System
+# Locus Wails Build System
 #
-# Builds the MyVPN desktop client as a single native binary using Wails.
+# Builds the Locus desktop client as a single native binary using Wails.
 # All backend logic (activation, heartbeat, storage, updater) is in internal/.
 # The frontend is a Vue 3 + Vite + TypeScript SPA embedded in the binary.
 #
@@ -20,9 +20,24 @@
 #   make test         # Run Go tests
 #   make vet          # Run Go vet
 
-APP_NAME    := myvpn
-VERSION     := 2.0.0
+APP_NAME    := locus
 BUILD_DIR   := dist
+
+# ── Single source of version ─────────────────────────────────────────────
+# The canonical version for every official build is <repo>/v5/VERSION (one
+# line, e.g. "2.0.1"). Bump that ONE file to change the client version.
+# The runtime version (what the updater and UI report) is injected exactly
+# once via -ldflags "-X main.version=<VERSION>" — never hardcode a number in
+# main.go, the frontend, or wails.json for a release.
+#
+# This Makefile's directory is v5/client, so v5/VERSION is one level up.
+CLIENT_DIR     := $(dir $(lastword $(MAKEFILE_LIST)))
+VERSION_FILE   := $(realpath $(CLIENT_DIR)../VERSION)
+VERSION        := $(firstword $(shell cat $(VERSION_FILE) 2>/dev/null))
+ifeq ($(strip $(VERSION)),)
+VERSION := 2.0.0
+endif
+LDFLAGS        := -s -w -X main.version=$(VERSION)
 
 # ── Detect current OS/arch ──
 UNAME_OS    := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -32,7 +47,7 @@ UNAME_ARCH  := $(shell uname -m)
 .PHONY: help dev build build-all clean test vet install-deps frontend-install frontend-build
 
 help:
-	@echo "MyVPN Wails Desktop App"
+	@echo "Locus Wails Desktop App"
 	@echo ""
 	@echo "Targets:"
 	@echo "  dev              Hot-reload development mode (wails dev)"
@@ -71,24 +86,29 @@ frontend-build: frontend-install
 # For manual `go build`, use: -tags "frontend desktop production"
 build:
 	mkdir -p $(BUILD_DIR)
-	wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)
+	wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME) \
+		-ldflags="$(LDFLAGS)"
 
 # ── Cross-compilation ──
 build-linux:
 	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64
+	GOOS=linux GOARCH=amd64 wails build -tags frontend \
+		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64
 
 build-windows:
 	mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe
+	GOOS=windows GOARCH=amd64 wails build -tags frontend \
+		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe
 
 build-macos-intel:
 	mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=amd64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
+	GOOS=darwin GOARCH=amd64 wails build -tags frontend \
+		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
 
 build-macos-arm:
 	mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=arm64 wails build -tags frontend -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
+	GOOS=darwin GOARCH=arm64 wails build -tags frontend \
+		-ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
 
 build-all: build-linux build-windows build-macos-intel build-macos-arm
 	@echo "═══ All platform builds complete ═══"
@@ -124,3 +144,13 @@ clean:
 	rm -rf frontend/dist
 	rm -rf frontend/node_modules
 	@echo "Cleaned"
+
+# ── Publish an update (tooling) ──
+# Prepares update.json + a PocketBase "update_config" snippet from the built
+# current-platform binary. Dry-run unless you pass -d <domain> -k <ssh key>.
+# See scripts/publish-update.sh (repo root). Full multi-platform publishing is
+# done from CI release artifacts, not from a local scanner.
+publish: build
+	@bash ../../scripts/publish-update.sh -v "$(VERSION)" -o "$(BUILD_DIR)/updates" \
+		"$(BUILD_DIR)/$(APP_NAME)"
+	@echo "Publish dry-run done. Re-run with  -d <domain> -k <key>  to upload."

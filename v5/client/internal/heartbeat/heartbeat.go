@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"locus/internal/pinned"
 )
 
 // Default intervals.
@@ -145,6 +147,7 @@ func New(hubURL, code, fingerprint string, callback Callback) *Heartbeat {
 			Transport: &http.Transport{
 				MaxIdleConns:    2,
 				IdleConnTimeout: 30 * time.Second,
+				TLSClientConfig: pinned.TLSClientConfig(),
 			},
 		},
 	}

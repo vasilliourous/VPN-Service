@@ -1,4 +1,4 @@
-# Build Assets for MyVPN Wails App
+# Build Assets for Locus Wails App
 
 ## App Icon
 
@@ -14,4 +14,4 @@ inkscape -w 512 -h 512 ../frontend/src/assets/icon.svg -o appicon.png
 ### Or use a placeholder
 
 Wails will use a default icon if none is provided. For production builds,
-create a proper icon matching the MyVPN brand (purple shield, see UI-AESTHETICS.md).
+create a proper icon matching the Locus brand (purple shield, see UI-AESTHETICS.md).

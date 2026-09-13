@@ -17,7 +17,7 @@ func init() {
 // swapLinux performs an atomic rename on Linux.
 func swapLinux(newPath, currentPath string) error {
 	// On Linux, we can atomically rename the new binary over the current one.
-	// The old binary is still backed up in .myvpn-backups/
+	// The old binary is still backed up in .locus-backups/
 	if err := os.Rename(newPath, currentPath); err != nil {
 		return fmt.Errorf("rename failed: %w", err)
 	}

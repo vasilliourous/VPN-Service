@@ -5,12 +5,12 @@
       <div class="brand-icon">
         <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
           <path d="M32 4L8 16v16c0 14.3 9.6 27.7 24 32 14.4-4.3 24-17.7 24-32V16L32 4z"
-                fill="#A855F7" opacity="0.9"/>
+                fill="#2EA86A" opacity="0.9"/>
           <path d="M24 28l6 6 10-10"
                 stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
-      <h1 class="brand-title">MyVPN</h1>
+      <h1 class="brand-title">Locus</h1>
       <p class="brand-subtitle">Secure School VPN</p>
     </div>
 
@@ -144,19 +144,19 @@ async function submitActivation(): Promise<void> {
 .brand-title {
   font-size: 28px;
   font-weight: 700;
-  color: #F5F5F7;
+  color: #EAF2EC;
   letter-spacing: -0.5px;
 }
 
 .brand-subtitle {
   font-size: 14px;
-  color: #8E8E96;
+  color: #8CA596;
   margin-top: 4px;
 }
 
 .card {
-  background: #1A1A1E;
-  border: 1px solid #2E2E35;
+  background: #0C1711;
+  border: 1px solid #1F3629;
   border-radius: 12px;
   padding: 24px;
   width: 100%;
@@ -171,7 +171,7 @@ async function submitActivation(): Promise<void> {
 
 .card-desc {
   font-size: 13px;
-  color: #8E8E96;
+  color: #8CA596;
   margin-bottom: 16px;
 }
 
@@ -182,10 +182,10 @@ async function submitActivation(): Promise<void> {
 .code-input {
   width: 100%;
   padding: 12px 16px;
-  background: #0D0D0F;
-  border: 1px solid #2E2E35;
+  background: #06130C;
+  border: 1px solid #1F3629;
   border-radius: 8px;
-  color: #F5F5F7;
+  color: #EAF2EC;
   font-size: 16px;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   letter-spacing: 1px;
@@ -194,11 +194,11 @@ async function submitActivation(): Promise<void> {
 }
 
 .code-input:focus {
-  border-color: #A855F7;
+  border-color: #2EA86A;
 }
 
 .code-input::placeholder {
-  color: #4A4A52;
+  color: #3A5344;
   font-size: 13px;
   letter-spacing: 0.5px;
 }
@@ -233,12 +233,12 @@ async function submitActivation(): Promise<void> {
 }
 
 .btn-primary {
-  background: #A855F7;
+  background: #2EA86A;
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #C084FC;
+  background: #46C186;
 }
 
 .btn:disabled {
@@ -261,13 +261,13 @@ async function submitActivation(): Promise<void> {
   flex-direction: column;
   gap: 8px;
   padding: 16px;
-  background: #1A1A1E;
-  border: 1px solid #2E2E35;
+  background: #0C1711;
+  border: 1px solid #1F3629;
   border-radius: 12px;
   width: 100%;
   max-width: 380px;
   font-size: 13px;
-  color: #8E8E96;
+  color: #8CA596;
 }
 
 .tier-row {
@@ -282,8 +282,8 @@ async function submitActivation(): Promise<void> {
   border-radius: 50%;
 }
 
-.tier-dot.eco    { background: #6B7280; }
-.tier-dot.stealth { background: #A855F7; }
+.tier-dot.eco    { background: #5E6E63; }
+.tier-dot.stealth { background: #2EA86A; }
 .tier-dot.strike  { background: #EAB308; }
 
 .spinner {

@@ -24,9 +24,7 @@
 
       <!-- Tunnel degraded warning (watchdog flagged no traffic passing) -->
       <div v-if="connected && !tunnelOk" class="degraded-warning">
-        ⚠ Connection is being repaired — the tunnel stopped passing traffic and
-        is recovering automatically. If this persists, open Diagnostics and copy
-        the report.
+        ⚠ {{ repairNote }} If this persists, open Diagnostics and copy the report.
       </div>
 
       <!-- Grace period warning -->
@@ -88,7 +86,7 @@
 
     <!-- Version footer (helps with support diagnostics in the field) -->
     <div class="version-footer" aria-label="App version">
-      MyVPN{{ version ? ' v' + version : '' }}
+      Locus{{ version ? ' v' + version : '' }}
     </div>
 
     <!-- Diagnostics modal -->
@@ -126,6 +124,7 @@ const props = defineProps<{
   graceDays: number
   failures: number
   tunnelOk: boolean
+  repairStage: string
   connecting: boolean
   loading: boolean
   version: string
@@ -175,6 +174,18 @@ const stateLabel = computed(() => {
 const tierDisplay = computed(() => {
   if (!props.tier) return ''
   return props.tier.charAt(0).toUpperCase() + props.tier.slice(1)
+})
+
+// repairNote explains the specific recovery action the watchdog is taking so
+// the degraded banner is not a one-size-fits-all "being repaired". Maps the
+// backend repairStage to a short human phrase.
+const repairNote = computed(() => {
+  switch (props.repairStage) {
+    case 'restart': return 'Restarting the tunnel engine…'
+    case 'full-reset': return 'Full tunnel reset in progress…'
+    case 'degraded': return 'Tunnel could not be recovered — Disconnect, then reconnect to retry.'
+    default: return 'Tunnel stopped passing traffic; recovering automatically.'
+  }
 })
 
 // NOTE: Vue 3 emits are fire-and-forget — emit() returns void, it does NOT
@@ -248,8 +259,8 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 .card {
-  background: #1A1A1E;
-  border: 1px solid #2E2E35;
+  background: #0C1711;
+  border: 1px solid #1F3629;
   border-radius: 12px;
   padding: 24px;
 }
@@ -277,8 +288,8 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 .status-circle.disconnected {
-  background: rgba(142, 142, 150, 0.15);
-  color: #8E8E96;
+  background: rgba(140, 165, 150, 0.15);
+  color: #8CA596;
 }
 
 .status-circle.error {
@@ -298,7 +309,7 @@ async function copyDiagnostics(): Promise<void> {
 
 .tier-label {
   font-size: 13px;
-  color: #8E8E96;
+  color: #8CA596;
 }
 
 .grace-warning {
@@ -340,10 +351,10 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 .btn-primary {
-  background: #A855F7;
+  background: #2EA86A;
   color: white;
 }
-.btn-primary:hover:not(:disabled) { background: #C084FC; }
+.btn-primary:hover:not(:disabled) { background: #46C186; }
 
 .btn-danger {
   background: #EF4444;
@@ -352,14 +363,14 @@ async function copyDiagnostics(): Promise<void> {
 .btn-danger:hover:not(:disabled) { background: #DC2626; }
 
 .btn-secondary {
-  background: #2E2E35;
-  color: #F5F5F7;
+  background: #1F3629;
+  color: #EAF2EC;
 }
-.btn-secondary:hover { background: #3E3E45; }
+.btn-secondary:hover { background: #2B4636; }
 
 .btn-accent {
   background: #F59E0B;
-  color: #0D0D0F;
+  color: #06130C;
 }
 .btn-accent:hover { background: #D97706; }
 
@@ -382,7 +393,7 @@ async function copyDiagnostics(): Promise<void> {
 
 .stat-label {
   font-size: 13px;
-  color: #8E8E96;
+  color: #8CA596;
 }
 
 .stat-value {
@@ -408,7 +419,7 @@ async function copyDiagnostics(): Promise<void> {
   margin-top: 4px;
   text-align: center;
   font-size: 11px;
-  color: #4A4A52;
+  color: #3A5344;
   user-select: text;
 }
 
@@ -425,8 +436,8 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 .modal {
-  background: #1A1A1E;
-  border: 1px solid #2E2E35;
+  background: #0C1711;
+  border: 1px solid #1F3629;
   border-radius: 12px;
   padding: 24px;
   width: 90%;
@@ -452,8 +463,8 @@ async function copyDiagnostics(): Promise<void> {
 }
 
 .diagnostics-text {
-  background: #0D0D0F;
-  border: 1px solid #2E2E35;
+  background: #06130C;
+  border: 1px solid #1F3629;
   border-radius: 8px;
   padding: 12px;
   font-family: 'SF Mono', 'Fira Code', monospace;
@@ -463,7 +474,7 @@ async function copyDiagnostics(): Promise<void> {
   overflow: auto;
   flex: 1;
   min-height: 80px;
-  color: #8E8E96;
+  color: #8CA596;
 }
 
 .modal-actions {

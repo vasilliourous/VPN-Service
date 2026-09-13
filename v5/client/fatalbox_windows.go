@@ -12,7 +12,7 @@ import (
 func showFatalError(message string) {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	messageBox := user32.NewProc("MessageBoxW")
-	title, _ := syscall.UTF16PtrFromString("MyVPN — Startup Error")
+	title, _ := syscall.UTF16PtrFromString("Locus — Startup Error")
 	text, _ := syscall.UTF16PtrFromString(message)
 	// MB_OK | MB_ICONERROR
 	messageBox.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x00000010)

@@ -28,8 +28,8 @@ Changed (live code + docs):
   codes + the doc example, and rejects legacy MYVPN codes.
 
 NOT changed (intentional): `v4/` and `v5/docs/history/` are historical records
-and keep the old format; `MYVPN_DEBUG`/`MYVPN_LOG_LEVEL`/`MYVPN_AGE_KEY` are
-app-infra env/secret names, not code prefixes; app name remains "MyVPN".
+and keep the old format; `LOCUS_DEBUG`/`LOCUS_LOG_LEVEL`/`MYVPN_AGE_KEY` are
+app-infra env/secret names, not code prefixes; app name remains "Locus".
 
 **Deploy (REQUIRED, breaks old codes):**
 1. The live PocketBase `codes` collection still holds the MYVPN codes — update
@@ -578,7 +578,7 @@ dies.
    failures fall back to the OS temp dir. A bad JSON file can no longer brick
    startup.
 2. `main.go` — `os.Stderr` and the standard logger are redirected to
-   `%APPDATA%\myvpn\myvpn.log` (rotated at 1MB). Panics, `log.Fatal` and
+   `%APPDATA%\locus\myvpn.log` (rotated at 1MB). Panics, `log.Fatal` and
    `log.Printf` output are now captured on GUI builds with no console.
 3. `app.go` — `Startup` wraps its body in `recover()` (logs the panic to
    `myvpn.log` and keeps the window alive) and the storage failure path uses
@@ -587,7 +587,7 @@ dies.
    `myvpn.log` instead of a null console.
 
 **Diagnosis path for future Windows issues:** run the exe, then read
-`%APPDATA%\myvpn\myvpn.log` — any panic stack or startup error will be there.
+`%APPDATA%\locus\myvpn.log` — any panic stack or startup error will be there.
 
 ### Follow-up (2026-07-31) — exit-path instrumentation
 
@@ -674,14 +674,14 @@ forcibly closed by the remote host` (both upload and download) to
   fix runs).
 - Client (`v5/client/internal/manager/process.go`): sing-box stderr captured
   and surfaced in Connect errors ("TUN interface creation was denied — run
-  MyVPN as administrator: ... Access is denied.").
+  Locus as administrator: ... Access is denied.").
 
 **Live-VPS actions performed (2026-07-31, authorized):** deployed both hooks
 to `/opt/pocketbase/pb_hooks/` (+ `/root/server/pb_hooks/`), restarted
 PocketBase, verified the heartbeat route serves the correct `server_config`
 (end-to-end test with a real code: eco → `networkingguides.duckdns.org:8443`
 + matching password). Client unblock: run the new build (heartbeat refresh)
-or delete `%APPDATA%\myvpn\storage.json` and re-enter the activation code.
+or delete `%APPDATA%\locus\storage.json` and re-enter the activation code.
 
 ---
 
@@ -736,7 +736,7 @@ So the server is NOT the problem.
 **Most likely cause — stale host state, not config:** the same sing-box config
 reached the server in an earlier session (RST after connect = connection
 established). The sessions in between (old builds with the broken shutdown)
-**orphaned sing-box.exe processes and left the `myvpn0` TUN adapter with
+**orphaned sing-box.exe processes and left the `locus0` TUN adapter with
 stale routes/WFP filters**; a fresh sing-box then routes its own dial into the
 dead TUN state → timeout. (The config already sets
 `route.auto_detect_interface: true`, which binds the outbound to the physical
@@ -750,9 +750,9 @@ server from the app (before/without the tunnel). This distinguishes:
   (cleanup below).
 
 **User-side cleanup (one-time, after the old builds):**
-1. Close MyVPN; in Task Manager end ALL `sing-box.exe` processes.
-2. As admin: `netsh interface show interface` → find `myvpn0` →
-   `netsh interface delete interface myvpn0` (if present).
+1. Close Locus; in Task Manager end ALL `sing-box.exe` processes.
+2. As admin: `netsh interface show interface` → find `locus0` →
+   `netsh interface delete interface locus0` (if present).
 3. Reboot (clears routes + WFP filters), then Connect again.
 4. Check Diagnostics: `Server: … reachable` + `Engine: running`.
 
@@ -769,7 +769,7 @@ a misfiring filter also blocks sing-box's own outbound and DNS, which matches
 
 **Fix:** `generateConfig` now sets `strict_route: false` (omitted from JSON;
 `auto_route` + `auto_detect_interface` remain — still a full tunnel). If the
-tunnel still fails after the cleanup+reboot, set `MYVPN_DEBUG=1` before
+tunnel still fails after the cleanup+reboot, set `LOCUS_DEBUG=1` before
 launching (switches sing-box to debug logging) and send the log — it shows the
 dial's interface binding and route decisions.
 
@@ -986,12 +986,12 @@ issues"). The log showed TWO engine startups in one session:
 ```
 23:55:42 sing-box log level: debug          ← leftover sing-box.exe (orphaned
 23:55:45 sing-box log level: debug          ← fresh Connect spawn
-         inbound/tun[tun-in]: started at myvpn0   ← ×2 — two instances, one TUN
+         inbound/tun[tun-in]: started at locus0   ← ×2 — two instances, one TUN
 ```
 
 **Root cause:** orphaned `sing-box.exe` processes from earlier broken builds
 (and/or other VPN apps like Hiddify) survive on Windows. A fresh Connect then
-spawns a second engine; both instances share the `myvpn0` wintun adapter —
+spawns a second engine; both instances share the `locus0` wintun adapter —
 packets are delivered to both, routes fight, and failures look random.
 
 **Fix (`v5/client/internal/manager/`):**
@@ -1006,8 +1006,8 @@ packets are delivered to both, routes fight, and failures look random.
 
 **One-time user cleanup (still required for machines with orphaned engines):**
 1. Task Manager → end ALL `sing-box.exe`.
-2. `netsh interface show interface` → if `myvpn0` exists:
-   `netsh interface delete interface myvpn0` (admin).
+2. `netsh interface show interface` → if `locus0` exists:
+   `netsh interface delete interface locus0` (admin).
 3. Reboot (clears stale routes/WFP filters).
 
 ---

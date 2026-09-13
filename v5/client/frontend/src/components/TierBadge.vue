@@ -39,13 +39,13 @@ const label = computed(() => {
 }
 
 .eco {
-  background: rgba(107, 114, 128, 0.2);
-  color: #9CA3AF;
+  background: rgba(92, 133, 112, 0.18);
+  color: #7FB48F;
 }
 
 .stealth {
-  background: rgba(168, 85, 247, 0.2);
-  color: #A855F7;
+  background: rgba(46, 168, 106, 0.18);
+  color: #46C186;
 }
 
 .strike {

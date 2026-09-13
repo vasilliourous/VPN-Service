@@ -25,7 +25,7 @@
 
 ## 1. Goal
 
-Make **UDP gaming (SCP:Secret Laboratory etc.) work through the MyVPN tunnel**
+Make **UDP gaming (SCP:Secret Laboratory etc.) work through the Locus tunnel**
 on networks where UDP is hostile. The school network's UDP policy is
 stateful/DPI-based, observed as: tiny flows pass (48B NTP round-trips),
 QUIC is explicitly killed, game-sized flows get dropped or silence.
@@ -177,7 +177,7 @@ native option.
   that engine churn already caused twice (1.10→1.12).
 - **Third-party client loss:** with UoT on the server, Hiddify/Clash testing
   flows (used in the diag toolkit and `hiddify.pb.js` ss:// links) lose UDP.
-  Acceptable for the shipped product (MyVPN client is sing-box) but kills a
+  Acceptable for the shipped product (Locus client is sing-box) but kills a
   useful test path.
 - **UoT latency:** TCP head-of-line blocking can add latency for UDP games
   under packet loss. Acceptable for school WiFi; product targets N4L schools,

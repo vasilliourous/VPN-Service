@@ -1,4 +1,4 @@
-# MyVPN Client — Implementation Plan
+# Locus Client — Implementation Plan
 
 > **⚠️ HISTORICAL PLAN (Fyne era).** This is the original phased implementation
 > plan that produced the pre-Wails client. The current client (`v5/client/`) is
@@ -12,7 +12,7 @@
 > can be tested independently. Follow them in order — each phase builds on the
 > previous one.
 >
-> **Target:** ~1,600 lines of Go, 2 binaries (myvpn + sing-box), 3 platforms.
+> **Target:** ~1,600 lines of Go, 2 binaries (locus + sing-box), 3 platforms.
 > **Time:** 1–2 weekends for a competent Go developer.
 
 ---
@@ -83,7 +83,7 @@ v5-client/
 ### What to Build
 
 1. **`internal/storage/storage.go`** — Thread-safe JSON persistence
-   - Single JSON file at `~/.config/myvpn/storage.json`
+   - Single JSON file at `~/.config/locus/storage.json`
    - Atomic writes: write to `.tmp` → `rename()` over target
    - RWMutex for concurrent access
    - Methods: `GetData()`, `SetActivation()`, `SetHeartbeat()`, `SetUpdatePending()`, `Reset()`
@@ -171,7 +171,7 @@ v5-client/
      {
        "log": { "level": "warn" },
        "dns": { "final": "1.1.1.1", ... },
-       "inbounds": [{ "type": "tun", "interface_name": "myvpn0", ... }],
+       "inbounds": [{ "type": "tun", "interface_name": "locus0", ... }],
        "outbounds": [{ "type": "shadowsocks", "server": "...", ... }],
        "route": { "rules": [...], "final": "proxy" }
      }
@@ -442,7 +442,7 @@ Jobs:
 3. **Storage corruption:** If JSON is unparseable, start fresh (not crash).
 4. **Clock skew:** If system clock is wrong, grace period calculations break.
    Document as known limitation.
-5. **Multiple instances:** Prevent second myvpn process from starting
+5. **Multiple instances:** Prevent second locus process from starting
    (lock file in app data directory).
 6. **Uninstall:** Remove storage file, sentinel files, backups directory.
 

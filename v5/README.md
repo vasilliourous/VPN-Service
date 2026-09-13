@@ -1,6 +1,6 @@
-# MyVPN V5 — The Definitive Edition
+# Locus V5 — The Definitive Edition
 
-> **V5 is the consolidated, production-hardened version of MyVPN.**  
+> **V5 is the consolidated, production-hardened version of Locus.**  
 > It folds everything learned from V1–V4 and real-world VPS testing into one
 > directory: hardened client code, clean server modules, comprehensive documentation,
 > fixed issues, and full agent/developer context.
@@ -127,7 +127,7 @@ cd v5/client && make build-all
 ## Architecture at a Glance
 
 ```
-Student Laptop (myvpn client)
+Student Laptop (locus client)
 ├── Wails + Vue 3 GUI (activation, status, tray)
 ├── Manager → spawns sing-box → TUN tunnel
 └── Heartbeat → server health + staged updates
@@ -160,11 +160,11 @@ The client is built and released via **GitHub Actions**.
 ### Build Artifacts
 
 Each release produces 2 platform bundles:
-- `myvpn-Linux-amd64.zip` — Linux x86_64
-- `myvpn-Windows-amd64.zip` — Windows x86_64
+- `locus-Linux-amd64.zip` — Linux x86_64
+- `locus-Windows-amd64.zip` — Windows x86_64
 
 Each bundle contains:
-- `myvpn` — Desktop client (Wails + Vue 3, single binary)
+- `locus` — Desktop client (Wails + Vue 3, single binary)
 - `sing-box` — Tunnel engine (Shadowsocks + TUN)
 
 ### Local Development (no CI)
@@ -210,4 +210,10 @@ cd v5/client && make build
 
 ## Version
 
-**Current:** MyVPN Client v2.0.0 / Server v1.0.0
+**Current:** Locus Client v2.0.0 / Server v1.0.0
+
+The **client version (single source of truth)** is the one-line `v5/VERSION`
+file — bump that one file; the Makefile and CI (`v*` git tag) read and inject it.
+Server/engine versions are pinned at build/deploy time in `v5/server/`
+modules (e.g. `02-shadowsocks.sh`: `SING_BOX_VERSION`, `SS_VERSION`;
+`05-caddy.sh`: `CADDY_VERSION`; `06-pocketbase.sh`: `PB_VERSION`).

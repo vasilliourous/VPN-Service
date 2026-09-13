@@ -11,7 +11,7 @@
 //     This is the mode used by the Wails app on ALL platforms — app.go calls
 //     SetHelperMode(false) after construction.
 //  2. Helper mode: sends config to the privileged TUN helper via IPC.
-//     Legacy — the myvpn-helper binary is no longer shipped (removed in the
+//     Legacy — the locus-helper binary is no longer shipped (removed in the
 //     Wails migration; pre-migration client retained in v4/).
 //     NewManager still defaults to helper mode on Windows, so the app must
 //     explicitly disable it.
@@ -38,9 +38,9 @@ import (
 
 const (
 	// Default socket path for IPC with TUN helper.
-	defaultSocketPath = "/var/run/myvpn-helper.sock"
+	defaultSocketPath = "/var/run/locus-helper.sock"
 	// Windows named pipe path for TUN helper IPC.
-	windowsPipePath = `\\.\pipe\MyVPNHelper`
+	windowsPipePath = `\\.\pipe\LocusHelper`
 
 	// Process health check interval.
 	healthCheckInterval = 10 * time.Second
@@ -64,7 +64,7 @@ var (
 	ErrInvalidConfig     = fmt.Errorf("invalid sing-box configuration")
 	ErrMaxRestarts       = fmt.Errorf("maximum restart attempts exceeded")
 	// errEngineAlreadyRunning guards against concurrent double-spawn from the
-	// health loop and the watchdog sharing myvpn0.
+	// health loop and the watchdog sharing locus0.
 	errEngineAlreadyRunning = fmt.Errorf("sing-box engine is already running")
 )
 
@@ -183,6 +183,10 @@ type Manager struct {
 	watchdogStop    chan struct{}
 	watchdogOnProbe ProbeCallback // notified on each probe outcome (nil = no-op)
 	tunnelHealthy   bool
+
+	// probeStage is the latest watchdog recovery stage reported to the UI
+	// (healthy / restart / full-reset / degraded / ...). Guarded by mu.
+	probeStage ProbeStage
 }
 
 // Config holds the parameters needed to start the tunnel.
@@ -260,7 +264,7 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 
 	// Auto-clean before connecting. Previously this hard-failed with "close it
 	// in Task Manager" — a manual dead-end for students. A leftover sing-box
-	// (orphaned after a crash) or a stale myvpn0 TUN will corrupt routing if we
+	// (orphaned after a crash) or a stale locus0 TUN will corrupt routing if we
 	// stack a fresh engine on top, so we clear both first, then start clean.
 	if foreignSingBoxRunning() {
 		log.Printf("Leftover sing-box detected before connect; killing it and clearing stale TUN")
@@ -374,22 +378,22 @@ func (m *Manager) processAlive() bool {
 	}
 }
 
-// autoStartHelper attempts to start the myvpn-helper as an elevated process.
+// autoStartHelper attempts to start the locus-helper as an elevated process.
 // On Windows, this uses "runas" to trigger a UAC elevation prompt.
 // On Unix, it tries to start the helper via sudo if available.
 func (m *Manager) autoStartHelper() error {
 	if m.helperPath == "" {
 		// Try to find helper in likely locations
-		log.Println("myvpn-helper path not set, searching...")
+		log.Println("locus-helper path not set, searching...")
 		execDir, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 		singDir := filepath.Dir(m.singBoxPath)
 		candidates := []string{
-			filepath.Join(execDir, "myvpn-helper"),
-			filepath.Join(execDir, "myvpn-helper.exe"),
-			filepath.Join(singDir, "myvpn-helper"),
-			filepath.Join(singDir, "myvpn-helper.exe"),
-			"./myvpn-helper",
-			"./myvpn-helper.exe",
+			filepath.Join(execDir, "locus-helper"),
+			filepath.Join(execDir, "locus-helper.exe"),
+			filepath.Join(singDir, "locus-helper"),
+			filepath.Join(singDir, "locus-helper.exe"),
+			"./locus-helper",
+			"./locus-helper.exe",
 		}
 		for _, p := range candidates {
 			if _, err := os.Stat(p); err == nil {
@@ -399,7 +403,7 @@ func (m *Manager) autoStartHelper() error {
 		}
 	}
 	if m.helperPath == "" {
-		return fmt.Errorf("myvpn-helper binary not found alongside sing-box")
+		return fmt.Errorf("locus-helper binary not found alongside sing-box")
 	}
 
 	switch runtime.GOOS {
@@ -465,7 +469,7 @@ func (m *Manager) startWithHelper(configJSON []byte) error {
 func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	// Guard against concurrent double-spawn (e.g. the health loop and the
 	// watchdog both trying to recover at once): two sing-box instances sharing
-	// myvpn0 corrupt routing. Prefer the running instance over spawning a second.
+	// locus0 corrupt routing. Prefer the running instance over spawning a second.
 	if m.processAlive() {
 		return errEngineAlreadyRunning
 	}
@@ -520,7 +524,7 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 			detail = "no error output"
 		}
 		if strings.Contains(detail, "Access is denied") {
-			return fmt.Errorf("TUN interface creation was denied — run MyVPN as administrator: %s", detail)
+			return fmt.Errorf("TUN interface creation was denied — run Locus as administrator: %s", detail)
 		}
 		return fmt.Errorf("sing-box exited immediately: %s", detail)
 	case <-time.After(500 * time.Millisecond):
@@ -640,14 +644,14 @@ func (m *Manager) State() string {
 // `sing-box check` clean on both 1.12.1 and 1.13.x.
 func generateConfig(cfg Config) ([]byte, error) {
 	// Debug is the DEFAULT level while the tunnel data path is under active
-	// investigation (2026-08-01): with it, myvpn.log shows sing-box's dial
+	// investigation (2026-08-01): with it, locus.log shows sing-box's dial
 	// lines (target IP/port, error) which are required to diagnose
-	// "connects but no internet". Override with MYVPN_LOG_LEVEL=warn or
-	// MYVPN_DEBUG=0 for quieter logs in production builds.
+	// "connects but no internet". Override with LOCUS_LOG_LEVEL=warn or
+	// LOCUS_DEBUG=0 for quieter logs in production builds.
 	logLevel := "debug"
-	if lvl := os.Getenv("MYVPN_LOG_LEVEL"); lvl != "" {
+	if lvl := os.Getenv("LOCUS_LOG_LEVEL"); lvl != "" {
 		logLevel = lvl
-	} else if os.Getenv("MYVPN_DEBUG") == "0" {
+	} else if os.Getenv("LOCUS_DEBUG") == "0" {
 		logLevel = "warn"
 	}
 	log.Printf("sing-box log level: %s", logLevel)
@@ -689,7 +693,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 			{
 				Type:          "tun",
 				Tag:           "tun-in",
-				InterfaceName: "myvpn0",
+				InterfaceName: "locus0",
 				Address:       []string{"10.0.0.1/30"},
 				MTU:           1500,
 				AutoRoute:     true,

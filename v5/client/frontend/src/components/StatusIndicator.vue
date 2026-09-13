@@ -45,7 +45,7 @@ const statusText = computed(() => {
 }
 
 .disconnected .dot {
-  background: #6B7280;
+  background: #5E6E63;
 }
 
 .degraded .dot {

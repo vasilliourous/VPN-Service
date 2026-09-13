@@ -17,6 +17,7 @@
       :grace-days="vpn.state.graceDays"
       :failures="vpn.state.failures"
       :tunnel-ok="vpn.state.tunnelOk"
+      :repair-stage="vpn.state.repairStage"
       :connecting="vpn.state.connecting"
       :loading="vpn.state.loading"
       :version="vpn.state.version"
@@ -104,8 +105,8 @@ function clearError(): void {
 }
 
 body {
-  background-color: #0D0D0F;
-  color: #F5F5F7;
+  background-color: #06130C;
+  color: #EAF2EC;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -115,7 +116,7 @@ body {
   flex-direction: column;
   height: 100vh;
   padding: 24px;
-  background: linear-gradient(180deg, #0D0D0F 0%, #111114 100%);
+  background: linear-gradient(180deg, #06130C 0%, #0C1A12 100%);
 }
 
 .toast {

@@ -1,6 +1,6 @@
-# MyVPN Operations Manual
+# Locus Operations Manual
 
-> Day-to-day management of the MyVPN server.
+> Day-to-day management of the Locus server.
 
 ---
 
@@ -189,6 +189,64 @@ Day 3:  rollout_percent = 25  (early adopters)
 Day 7:  rollout_percent = 100 (everyone)
 Day 8:  rollout_percent = 0   (mark complete; set active=false)
 ```
+
+---
+
+## #7 Gaming UDP (Strike) — enable & verify
+
+> The product is Locus; deployed server artifacts keep the legacy `myvpn` names
+> until redeploy. This runbook enables the **sing-box UDP-over-TCP (UoT)**
+> endpoint so Strike's raw-UDP-blocked school networks can carry game/voice UDP
+> inside an allowed TCP flow.
+
+**There is no sandbox — the live VPS is production.** Sequence below is
+reversible and stepwise, so validate each gate before the next.
+
+### 0. Baseline first (do this BEFORE enabling)
+
+```bash
+# From a device on the same school/restricted network, WITHOUT locus connected,
+# see if raw UDP to the VPS is actually blocked (this is the whole point):
+timeout 3 bash -c 'echo -n > /dev/udp/<DOMAIN>/8445' ; echo "exit=$?"
+# Expected: blocked/fails on restricted nets (exit nonzero or hang).
+```
+
+Also note the VPS raw-UDP egress forwards fine over the open internet; the block
+is the *ingress school LAN*, so raw UDP must be tunneled.
+
+### 1. Install + start the UoT endpoint (idempotent)
+
+```bash
+# On the VPS, from the repo copy:
+UOT_PORT="${UOT_PORT:-8446}" bash v5/server/scripts/enable-uot.sh
+systemctl is-active sing-box-uot   # -> active
+```
+
+### 2. Advertise UoT to Strike clients
+
+```bash
+# On the VPS, from the repo copy (reads passwords, patches tier_configs):
+cd v5/server && ENABLE_UOT=1 UOT_PORT=8446 python3 scripts/seed-live.py
+# Tactically: PocketBase admin -> tier_configs -> Strike ->
+#   config JSON add "uot_port": 8446    and    udp_relay=true
+```
+
+### 3. Compare (client probe builds AFTER the endpoint is up)
+
+Point a Locus client at Strike on the restricted net, connect, then:
+
+- **TCP**: `curl -sf https://<DOMAIN>/api/health` still works (unchanged TCP path).
+- **UDP through tunnel**: run a UDP query that must traverse the UoT outbound,
+  e.g. `ping` a game/voice flow or a DNS-over-UoT check to a public resolver
+  (`8.8.8.8:53` / `1.1.1.1:53`) while connected. Expect an answer.
+- A 5-minute real game/voice check is the acceptance gate (this was never run —
+  see GAMING-UDP.md). Record latency vs. the Section 0 baseline.
+
+### 4. Healthy? Grow rollout; else rollback
+
+Rollback (seconds): `systemctl disable --now sing-box-uot && rm -f /etc/sing-box/config.json`,
+then re-run the seed WITHOUT `ENABLE_UOT` (or flip Strike `udp_relay=false` /
+drop `uot_port`) — TCP tiers (8443/44/45) are never touched by the enable script.
 
 ---
 

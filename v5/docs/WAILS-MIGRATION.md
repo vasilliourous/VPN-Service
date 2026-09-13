@@ -1,4 +1,4 @@
-# MyVPN Wails Migration Plan
+# Locus Wails Migration Plan
 
 > **Replacing the Fyne GUI with a Wails (Go + Vue 3) desktop app.**
 > All `internal/` packages remain untouched. The Fyne code is retired.
@@ -17,7 +17,7 @@
 | **System tray** | Buggy per-platform | Native, reliable |
 | **Resizing/scaling** | Poor | CSS handles it perfectly |
 | **Question marks** | Font/rune issues in Fyne | Unicode in web = trivial |
-| **3 binaries** | myvpn + helper + sing-box | **2 binaries** — myvpn + sing-box (helper removed; sing-box stays a separate bundled binary) |
+| **3 binaries** | locus + helper + sing-box | **2 binaries** — locus + sing-box (helper removed; sing-box stays a separate bundled binary) |
 | **Elevation** | Separate helper binary + IPC | Wails handles via native dialogs |
 
 ---
@@ -359,7 +359,7 @@ v5/client/
 | `internal/gui/` (Fyne) | Removed — outside the Go module so builds stay Fyne-free (pre-migration copy in `v4/`) |
 | `internal/helper/` (separate binary) | Removed — Wails handles elevation; no more helper IPC |
 | `cmd/myvpn/main.go` (old) | Removed — replaced by `main.go` at root |
-| `myvpn-helper` binary | No longer needed |
+| `locus-helper` binary | No longer needed |
 | Fyne dependency | Removed from `go.mod` — `go mod tidy` never re-adds it (legacy code was outside the module) |
 | 3-binary bundle | Down to 1 binary (`myvpn`) + `sing-box` (still separate but bundled in zip) |
 

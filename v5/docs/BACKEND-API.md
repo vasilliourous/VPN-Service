@@ -1,4 +1,4 @@
-# MyVPN Backend API Reference
+# Locus Backend API Reference
 
 > **Complete public API surface of all `internal/` packages.**
 > If the GUI layer is rewritten or replaced, this document tells you exactly how to
@@ -23,13 +23,13 @@
 ## 1. Package: `storage`
 
 **File:** `internal/storage/storage.go`
-**Import:** `"myvpn/internal/storage"`
+**Import:** `"locus/internal/storage"`
 **Purpose:** Persistent JSON state management. Thread-safe, atomic writes, backup rotation.
 
 ### Types
 
 ```go
-// Data represents the persisted state of the MyVPN client.
+// Data represents the persisted state of the Locus client.
 type Data struct {
     Code              string        `json:"code,omitempty"`
     Tier              string        `json:"tier,omitempty"`
@@ -60,7 +60,7 @@ type ServerConfig struct {
 
 ```go
 // New creates or loads a Store in the platform-specific app data directory.
-// appName is used as the subdirectory name (e.g. "myvpn").
+// appName is used as the subdirectory name (e.g. "locus").
 // File locations:
 //   Linux:   ~/.config/<appName>/storage.json
 //   Windows: %APPDATA%\<appName>\storage.json
@@ -132,7 +132,7 @@ func SanitizePath(name string) string
 ## 2. Package: `activation`
 
 **Files:** `internal/activation/activation.go`, `luhn.go`, `fingerprint_linux.go`, `fingerprint_windows.go`
-**Import:** `"myvpn/internal/activation"`
+**Import:** `"locus/internal/activation"`
 **Purpose:** Code validation (Luhn-mod-N), device fingerprinting, server activation API.
 
 ### Types
@@ -244,7 +244,7 @@ func ValidateFingerprint(fp string) bool
 ## 3. Package: `manager`
 
 **Files:** `internal/manager/process.go`, `process_{unix,windows}.go`
-**Import:** `"myvpn/internal/manager"`
+**Import:** `"locus/internal/manager"`
 **Purpose:** Sing-box process lifecycle, JSON config generation, health monitoring.
 
 ### Types
@@ -277,7 +277,7 @@ func (c *Config) Validate() error
 // NewManager creates a new Manager.
 //   singBoxPath: path to the sing-box binary
 //   configPath:  where to write the generated JSON config (temp file recommended)
-//   helperPath:  path to myvpn-helper binary (empty = direct mode, no helper)
+//   helperPath:  path to locus-helper binary (empty = direct mode, no helper)
 func NewManager(singBoxPath, configPath, helperPath string) *Manager
 ```
 
@@ -309,7 +309,7 @@ func (m *Manager) State() string
 
 ```go
 // generateConfig creates a sing-box JSON config with:
-//   - TUN inbound (myvpn0, 10.0.0.1/30, auto_route, strict_route)
+//   - TUN inbound (locus0, 10.0.0.1/30, auto_route, strict_route)
 //   - Shadowsocks outbound to the VPS
 //   - DNS via 1.1.1.1 through tunnel
 //   - Direct outbound for private IPs
@@ -350,7 +350,7 @@ Stop() →
 ## 4. Package: `heartbeat`
 
 **File:** `internal/heartbeat/heartbeat.go`
-**Import:** `"myvpn/internal/heartbeat"`
+**Import:** `"locus/internal/heartbeat"`
 **Purpose:** Periodic communication with the hub server for suspension checks, staged rollouts, and grace period tracking.
 
 ### Constants
@@ -463,7 +463,7 @@ Grace period:
 ## 5. Package: `updater`
 
 **Files:** `internal/updater/updater.go`, `recover.go`, `update_{unix,windows}.go`
-**Import:** `"myvpn/internal/updater"`
+**Import:** `"locus/internal/updater"`
 **Purpose:** Two-phase crash-safe update system with staged rollout support.
 
 ### Sentinel Files
@@ -472,7 +472,7 @@ Grace period:
 const SentinelPending   = ".update-pending"    // Created before swap → indicates update in progress
 const SentinelConfirmed = ".update-confirmed"  // Created by new binary → confirms update succeeded
 const SentinelReverted  = ".reverted"          // Created after auto-revert → marks rollback
-const BackupDir         = ".myvpn-backups"     // Directory containing previous binary backups
+const BackupDir         = ".locus-backups"     // Directory containing previous binary backups
 
 const DownloadTimeout = 5 * time.Minute
 const MaxDownloadSize  = 500 * 1024 * 1024  // 500MB
@@ -505,8 +505,8 @@ type RecoveryState struct {
 
 ```go
 // New creates an Updater.
-//   appDir:      directory containing the myvpn binary
-//   binaryName:  "myvpn" (or "myvpn.exe" on Windows)
+//   appDir:      directory containing the locus binary
+//   binaryName:  "locus" (or "locus.exe" on Windows)
 //   currentVersion: e.g. "2.0.0"
 func New(appDir, binaryName, currentVersion string) *Updater
 ```
@@ -568,7 +568,7 @@ func DiagnoseRecovery(appDir string) *RecoveryState
 ```
 Heartbeat detects update available →
   1. PerformUpdate(ctx, info):
-     a. Backup current binary → .myvpn-backups/
+     a. Backup current binary → .locus-backups/
      b. Download new binary (platform URL from UpdateInfo.PlatformDownloadURL())
      c. Verify SHA256
      d. Create .update-pending sentinel
@@ -590,14 +590,14 @@ Heartbeat detects update available →
 ## 6. Package: `tunnel`
 
 **File:** `internal/tunnel/tunnel.go`
-**Import:** `"myvpn/internal/tunnel"`
+**Import:** `"locus/internal/tunnel"`
 **Purpose:** Direct TUN interface management (fallback — primary tunnel is via sing-box through the manager).
 
 ### Types
 
 ```go
 type Config struct {
-    Name       string   // Interface name, default "myvpn0"
+    Name       string   // Interface name, default "locus0"
     MTU        int      // Default 1500
     VirtualIP  string   // Default "10.0.0.2"
     DNSServers []string // Default ["1.1.1.1", "1.0.0.1"]
@@ -637,8 +637,8 @@ func KillSwitch(enable bool, tunInterfaceName string) error
 
 | Platform | Type | TUN Creation | Routes |
 |----------|------|-------------|--------|
-| Linux | `linuxTUN` | `ip tuntap add` + `ip addr add <vip>/24` + `ip link set mtu` + `ip link set up` | `ip route add 0.0.0.0/1 dev myvpn0`, `ip route add 128.0.0.0/1 dev myvpn0` |
-| Windows | `windowsTUN` | Requires myvpn-helper service | Not directly implemented |
+| Linux | `linuxTUN` | `ip tuntap add` + `ip addr add <vip>/24` + `ip link set mtu` + `ip link set up` | `ip route add 0.0.0.0/1 dev locus0`, `ip route add 128.0.0.0/1 dev locus0` |
+| Windows | `windowsTUN` | Requires locus-helper service | Not directly implemented |
 
 > **Note:** In normal operation, TUN is managed by sing-box (via the manager package).
 > This package is a fallback for edge cases where sing-box TUN doesn't work.

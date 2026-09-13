@@ -1,4 +1,4 @@
-# MyVPN PocketBase Setup Guide
+# Locus PocketBase Setup Guide
 
 > After the server modules run, PocketBase is installed and running — but it
 > has no admin account, no collections, and no data. This guide walks through

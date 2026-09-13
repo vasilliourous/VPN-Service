@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-const tunInterfaceName = "myvpn0"
+const tunInterfaceName = "locus0"
 
 // tunInterfaceUp reports whether the TUN interface is present and up.
 // Returns (up, available). On Windows sing-box uses a Wintun adapter whose
-// name is myvpn0; we query netsh to see it. If netsh is unavailable we report
+// name is locus0; we query netsh to see it. If netsh is unavailable we report
 // (false, false) so the caller does not block on an unverifiable check.
 func tunInterfaceUp() (up bool, available bool) {
 	out, err := exec.Command("netsh", "interface", "show", "interface").Output()
@@ -38,7 +38,7 @@ func killForeignEngines() {
 	_ = exec.Command("taskkill", "/F", "/IM", "sing-box.exe", "/T").Run()
 }
 
-// removeStaleTUN deletes a leftover myvpn0 Wintun adapter so a fresh engine can
+// removeStaleTUN deletes a leftover locus0 Wintun adapter so a fresh engine can
 // create a clean one. Requires admin (the client already runs elevated via the
 // TUN helper path on Windows). Best-effort.
 func removeStaleTUN() error {

@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"locus/internal/pinned"
 )
 
 // Common errors.
@@ -147,6 +149,7 @@ func NewClient(hubURL string, opts ...ClientOption) *Client {
 				MaxIdleConns:       2,
 				IdleConnTimeout:    30 * time.Second,
 				DisableCompression: false,
+				TLSClientConfig:    pinned.TLSClientConfig(),
 			},
 		},
 	}
@@ -249,7 +252,7 @@ func (c *Client) attemptActivate(ctx context.Context, code, fingerprint string) 
 		return nil, fmt.Errorf("cannot create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "MyVPN-Client/2.0")
+	httpReq.Header.Set("User-Agent", "Locus-Client/2.0")
 	httpReq.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)

@@ -1,4 +1,4 @@
-// Package main — MyVPN Wails Desktop App.
+// Package main — Locus Wails Desktop App.
 //
 // The App struct wraps all internal/ packages and exposes a clean API
 // to the Vue frontend via Wails Bind. No business logic lives here —
@@ -19,11 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"myvpn/internal/activation"
-	"myvpn/internal/heartbeat"
-	"myvpn/internal/manager"
-	"myvpn/internal/storage"
-	"myvpn/internal/updater"
+	"locus/internal/activation"
+	"locus/internal/heartbeat"
+	"locus/internal/manager"
+	"locus/internal/pinned"
+	"locus/internal/storage"
+	"locus/internal/tray"
+	"locus/internal/updater"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -34,6 +36,12 @@ import (
 // ──────────────────────────────────────────
 //  App struct — exposed to Vue frontend
 // ──────────────────────────────────────────
+
+// degradedStreakMax is how many consecutive unrecovered watchdog cycles before
+// the app stops auto-churning the engine and drops to "Disconnected" (tap to
+// retry). Watchdog probes run roughly every 10s, so ~5 cycles <=> ~50s of a
+// stubbornly broken tunnel before we give the control back to the student.
+const degradedStreakMax = 5
 
 // App is the main application object. Its exported methods are automatically
 // bound by Wails and callable from the Vue frontend.
@@ -52,9 +60,21 @@ type App struct {
 	tier      string
 	fp        string
 
+	// degradedStreak counts consecutive watchdog cycles where the tunnel failed
+	// to recover (the backend watchdog already auto-restarts a few times). When
+	// it crosses degradedStreakMax we stop churning and drop to the
+	// "Disconnected — tap to retry" state. Reset on each healthy probe.
+	degradedStreak int
+	autoDisconnect bool
+
 	// lastUpdate is the most recent update signal from the hub (heartbeat or
 	// manual check). ApplyUpdate consumes it.
 	lastUpdate *updater.UpdateInfo
+
+	// trayCtrl, when non-nil, is the optional system-tray controller started in
+	// Startup when LOCUS_TRAY=1 (see internal/tray). It is kept here so lifecycle
+	// and state updates can reach it.
+	trayCtrl *tray.Controller
 
 	// upMu serializes ApplyUpdate calls (UI double-clicks, heartbeat races).
 	upMu     sync.Mutex
@@ -74,7 +94,7 @@ func (a *App) notReady() string {
 		return a.startupErr.Error()
 	}
 	if a.store == nil || a.mgr == nil {
-		return "application is not ready — restart MyVPN"
+		return "application is not ready — restart Locus"
 	}
 	return ""
 }
@@ -104,6 +124,11 @@ type StatusResult struct {
 	Failures  int    `json:"failures"`  // heartbeat failures
 	GraceDays int    `json:"graceDays"` // remaining grace period in days
 	TunnelOK  bool   `json:"tunnelOk"`  // watchdog: is the tunnel passing traffic?
+	// RepairStage names the current watchdog recovery action when the tunnel is
+	// unhealthy but still being recovered: "" | "restart" | "full-reset" |
+	// "degraded". Lets the UI distinguish "recovering (retrying engine)" from
+	// "tunnel down". See Manager.WatchdogStage().
+	RepairStage string `json:"repairStage,omitempty"`
 }
 
 // OpResult is returned by Connect / Disconnect.
@@ -138,9 +163,15 @@ func NewApp() *App {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// Configure hub TLS pinning before any HTTP client connects. Pins come from
+	// LOCUS_HUB_PINS (comma separated base64 SHA-256 SPKI hashes); unset = the
+	// additive pin check stays off (fail-open) but normal TLS is still enforced.
+	// LOCUS_SKIP_PINNING=1 disables the extra check. See internal/pinned.
+	pinned.Load(os.Getenv("LOCUS_HUB_PINS"), os.Getenv("LOCUS_SKIP_PINNING") != "")
+
 	// Wails runs OnStartup in a goroutine — a panic would kill the whole
 	// process with no visible error (GUI builds have no console). Recover,
-	// log it to myvpn.log, and keep the window alive for diagnosis.
+	// log it to locus.log, and keep the window alive for diagnosis.
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -153,7 +184,7 @@ func (a *App) Startup(ctx context.Context) {
 	// storage.New is self-healing (corrupt files are moved aside) and falls
 	// back to the OS temp dir, so this only fails in catastrophic cases.
 	// Never call LogFatal here — it exits the process silently on GUI builds.
-	store, err := storage.New("myvpn")
+	store, err := storage.New("locus")
 	if err != nil {
 		a.startupErr = fmt.Errorf("cannot initialize storage: %w", err)
 		wailsruntime.LogError(a.ctx, "Cannot initialize storage: "+err.Error())
@@ -174,7 +205,7 @@ func (a *App) Startup(ctx context.Context) {
 	}
 
 	// ── Manager (direct mode — no helper binary) ──
-	tmpDir := filepath.Join(os.TempDir(), "myvpn")
+	tmpDir := filepath.Join(os.TempDir(), "locus")
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		wailsruntime.LogWarning(a.ctx, "Cannot create temp dir: "+err.Error())
 	}
@@ -182,7 +213,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.mgr = manager.NewManager(singBoxPath, configPath, "")
 	// IMPORTANT: force direct mode. NewManager defaults to helper mode on
 	// Windows, but the helper binary no longer exists — helper mode would
-	// fail with "myvpn-helper binary not found".
+	// fail with "locus-helper binary not found".
 	a.mgr.SetHelperMode(false)
 
 	// ── Updater (crash recovery) ──
@@ -247,7 +278,7 @@ func (a *App) Startup(ctx context.Context) {
 		}()
 	}
 
-	wailsruntime.LogInfo(a.ctx, "MyVPN started (version "+a.version+")")
+	wailsruntime.LogInfo(a.ctx, "Locus started (version "+a.version+")")
 	log.Printf("Startup complete (activated=%v)", state.Activated)
 }
 
@@ -264,7 +295,7 @@ func flagAutoConnect() bool {
 
 // Shutdown is called by Wails when the application is quitting.
 func (a *App) Shutdown(ctx context.Context) {
-	log.Println("Shutting down MyVPN...")
+	log.Println("Shutting down Locus...")
 	a.disconnect()
 	if a.hb != nil {
 		a.hb.Stop()
@@ -440,7 +471,7 @@ func (a *App) Connect() OpResult {
 			log.Printf("Already relaunched for elevation but still not elevated — refusing to loop")
 			return OpResult{
 				Success: false,
-				Message: "MyVPN needs administrator permission to connect, but the elevated copy did not have permission. Close it and relaunch as Administrator, or run it from an administrator account.",
+				Message: "Locus needs administrator permission to connect, but the elevated copy did not have permission. Close it and relaunch as Administrator, or run it from an administrator account.",
 			}
 		}
 		log.Printf("Not elevated — requesting elevation before connecting")
@@ -448,7 +479,7 @@ func (a *App) Connect() OpResult {
 			log.Printf("Elevation request returned: %v", err)
 			return OpResult{
 				Success: false,
-				Message: "Administrator permission was required to connect. The elevation prompt was declined or could not be shown — please relaunch MyVPN and allow the administrator prompt.",
+				Message: "Administrator permission was required to connect. The elevation prompt was declined or could not be shown — please relaunch Locus and allow the administrator prompt.",
 			}
 		}
 		// The elevated instance is starting; end this one. The original window
@@ -484,20 +515,34 @@ func (a *App) Connect() OpResult {
 	// connected state honest instead of showing "Connected" while the tunnel is
 	// silently broken.
 	a.mgr.SetProbeCallback(func(healthy bool, stage string, err error) {
-		if !healthy && a.connected {
-			// Tunnel degraded — reflect it immediately in the UI, then let the
-			// watchdog's recovery ladder keep trying before we give up.
-			wailsruntime.LogWarning(a.ctx, "Tunnel degraded ("+stage+": "+err.Error()+") — recovering")
+		// healthy probes reset the degraded streak.
+		if !a.connected {
+			return
+		}
+		if healthy {
+			if a.degradedStreak > 0 {
+				a.degradedStreak = 0
+			}
 			wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 			return
 		}
-		if a.connected {
-			wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
+		// Degraded — reflect it in the UI, then keep counting. If it stays
+		// unrecovered past the cap, stop auto-churning and surface
+		// "Disconnected" so the student taps to retry when the network allows.
+		a.degradedStreak++
+		wailsruntime.LogWarning(a.ctx, "Tunnel degraded ("+stage+": "+err.Error()+") — recovering")
+		wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
+		if a.degradedStreak >= degradedStreakMax && !a.autoDisconnect {
+			a.autoDisconnect = true
+			log.Printf("watchdog: tunnel unrecovered after %d tries — disconnecting; tap Connect to retry", a.degradedStreak)
+			go a.disconnectNow()
 		}
 	})
 	a.mgr.StartWatchdog()
 
 	a.connected = true
+	a.degradedStreak = 0
+	a.autoDisconnect = false
 
 	// Notify frontend
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
@@ -523,10 +568,22 @@ func (a *App) disconnect() OpResult {
 	a.mgr.StopWatchdog()
 	_ = a.mgr.Stop()
 	a.connected = false
+	a.autoDisconnect = false
 
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 
 	return OpResult{Success: true, Message: "Disconnected"}
+}
+
+// disconnectNow is invoked (guarded, on its own goroutine) by the watchdog once
+// the tunnel has stayed unrecovered past degradedStreakMax probes. It stops the
+// watchdog cleanly and drops to the Disconnected state, so the app stops
+// churning the engine and the student can tap Connect when the network allows.
+func (a *App) disconnectNow() {
+	result := a.disconnect()
+	if !result.Success {
+		log.Printf("watchdog: auto-disconnect failed: %s", result.Message)
+	}
 }
 
 // GetStatus returns the current connection state.
@@ -539,14 +596,38 @@ func (a *App) buildStatus() StatusResult {
 		return StatusResult{}
 	}
 	state := a.store.GetData()
-	return StatusResult{
+	res := StatusResult{
 		Connected: a.connected,
 		Tier:      a.tier,
 		State:     a.mgr.State(),
 		Failures:  a.heartbeatFailures(),
 		GraceDays: a.graceDays(state.LastHeartbeatOK),
 		TunnelOK:  a.mgr.TunnelHealthy(),
+		// Expose the live watchdog recovery stage only while we're still
+		// attempting to recover a degraded tunnel, so the UI can show an honest
+		// "recovering (restarting engine)" vs "tunnel down" distinction.
+		RepairStage: repairStageWhen(a.mgr),
 	}
+	// Keep the optional tray's status line in sync with app state.
+	if a.trayCtrl != nil {
+		a.trayCtrl.SetTier(a.tier)
+		a.trayCtrl.SetConnected(a.connected)
+	}
+	return res
+}
+
+// repairStageWhen returns the current watchdog recovery stage when the tunnel is
+// unhealthy (and we are therefore recovering); "" when the tunnel is healthy or
+// no watchdog recovery is in progress. Centralizing this keeps the JSON shape
+// stable (empty/'healthy' never set while healthy).
+func repairStageWhen(m *manager.Manager) string {
+	if m == nil {
+		return ""
+	}
+	if m.TunnelHealthy() {
+		return ""
+	}
+	return m.WatchdogStage()
 }
 
 // heartbeatFailures returns the heartbeat failure count (0 if heartbeat not running).
@@ -750,12 +831,12 @@ func (a *App) ApplyUpdate() OpResult {
 // GetDiagnostics returns a plain-text support report with no PII.
 func (a *App) GetDiagnostics() string {
 	if msg := a.notReady(); msg != "" {
-		return fmt.Sprintf("MyVPN Diagnostics\n===================\nVersion: %s\n\nApp not ready: %s\n", a.version, msg)
+		return fmt.Sprintf("Locus Diagnostics\n===================\nVersion: %s\n\nApp not ready: %s\n", a.version, msg)
 	}
 	state := a.store.GetData()
 	mgrState := a.mgr.State()
 
-	report := fmt.Sprintf(`MyVPN Diagnostics
+	report := fmt.Sprintf(`Locus Diagnostics
 ===================
 Version:     %s
 OS:          %s/%s
@@ -871,27 +952,49 @@ func findSingBox() string {
 	return ""
 }
 
-// setupSystemTray configures window behaviour and (future) system tray hooks.
+// setupSystemTray configures window behaviour and starts the optional tray.
 //
-// NOTE: Wails v2.9 has NO system tray API and this app does not create a tray
-// icon — the "tray:show" / "tray:quit" listeners below are dormant hooks for a
-// future tray implementation. The window is shown on launch (StartHidden is
-// off) and closing the window quits the app (Wails v2.9 has no close-to-hide
-// interception either).
+// NOTE: Wails v2 has NO system tray API and cannot intercept "close -> hide",
+// so closing the window still quits the app (no minimize-to-tray). A real tray
+// icon (live status + Connect/Disconnect/Open/Quit) is provided by internal/tray
+// but is OPT-IN via LOCUS_TRAY=1 and OFF by default (see internal/tray for why).
 func (a *App) setupSystemTray() {
-	// Dark background matches the UI theme (#0D0D0F)
-	wailsruntime.WindowSetBackgroundColour(a.ctx, 13, 13, 15, 255)
+	// Dark background matches the UI theme (#06130C)
+	wailsruntime.WindowSetBackgroundColour(a.ctx, 6, 19, 12, 255)
 
-	// Dormant hooks — nothing emits these events yet (no tray icon exists).
-	// Listen for "show" event triggered from the tray or dock
-	wailsruntime.EventsOn(a.ctx, "tray:show", func(optionalData ...interface{}) {
+	// Dormant hooks — frontend/bridge can emit these to show/quit the window.
+	wailsruntime.EventsOn(a.ctx, "tray:show", func(data ...interface{}) {
 		wailsruntime.WindowShow(a.ctx)
 	})
-
-	// Listen for "quit" event from tray menu
-	wailsruntime.EventsOn(a.ctx, "tray:quit", func(optionalData ...interface{}) {
+	wailsruntime.EventsOn(a.ctx, "tray:quit", func(data ...interface{}) {
 		wailsruntime.Quit(a.ctx)
 	})
 
-	wailsruntime.LogInfo(a.ctx, "Window background set; tray hooks registered (no tray icon yet)")
+	wailsruntime.LogInfo(a.ctx, "Window background set; tray hooks registered")
+
+	// Optional system tray: only when the operator opts in. Off by default so an
+	// unvalidated native tray can never regress a normal release. Runs its own
+	// goroutine; any panic there is recovered inside internal/tray.
+	if loc, ok := os.LookupEnv("LOCUS_TRAY"); ok && loc != "" && loc != "0" && loc != "false" {
+		a.trayCtrl = tray.Start(tray.Actions{
+			Toggle: func() string {
+				if a.connected {
+					return a.disconnect().Message
+				}
+				res := a.Connect()
+				return res.Message
+			},
+			OpenWindow: func() {
+				wailsruntime.WindowShow(a.ctx)
+			},
+			Quit: func() {
+				wailsruntime.Quit(a.ctx)
+			},
+		})
+		if a.trayCtrl != nil {
+			a.trayCtrl.SetTier(a.tier)
+			a.trayCtrl.SetConnected(a.connected)
+		}
+		wailsruntime.LogInfo(a.ctx, "System tray enabled (LOCUS_TRAY). Validate on this OS before shipping.")
+	}
 }

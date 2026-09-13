@@ -1,7 +1,7 @@
-# MyVPN Client App — Developer Guide
+# Locus Client App — Developer Guide
 
 > This document tells a Go developer exactly how to build, run, and understand
-> the current MyVPN client (Wails v2 + Vue 3, `v5/client/`).
+> the current Locus client (Wails v2 + Vue 3, `v5/client/`).
 > The old Fyne-based guide was superseded by the Wails migration — see
 > [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the migration history and
 > rollback plan, and [`BACKEND-API.md`](BACKEND-API.md) for the exact
@@ -20,7 +20,7 @@
   - Windows: WebView2 (included in Windows 10+); CI builds Windows with
     `CGO_ENABLED=0` (pure Go, WebView2 COM)
 - **sing-box binary** in `v5/client/engines/` or alongside the built app
-  (version 1.10.0, Shadowsocks AEAD-256-GCM over TCP)
+  (version 1.12.1, Shadowsocks AEAD-256-GCM over TCP)
 - **VPS already deployed** (see `DEPLOY.md`) with:
   - `ssserver` × 3 instances running
   - PocketBase with activation/heartbeat hooks
@@ -35,7 +35,7 @@
 ```bash
 cd v5/client
 go mod tidy          # First time only — generates go.sum
-make build           # wails build -tags frontend → dist/myvpn
+make build           # wails build -tags frontend → dist/locus
 ```
 
 The frontend must be built **before** Go compiles — `//go:embed all:frontend/dist`
@@ -52,6 +52,19 @@ go build -tags "frontend desktop production" .
 desktop implementation. Without them the binary compiles but is the stub app
 that shows the "Wails applications will not build without the correct build
 tags" error dialog at runtime.
+
+### Versioning (single source of truth)
+
+The runtime client version comes from **`v5/VERSION`** (one line, e.g. `2.0.1`).
+
+- `make build` reads `v5/VERSION` and injects it via
+  `-ldflags "-X main.version=$(VERSION)"`.
+- CI (`.github/workflows/build.yml`) injects the same file's value, or — on a
+  `v*` tag push — the tag with its leading `v` stripped (so `git tag v2.0.1`
+  produces a binary reporting `2.0.1`).
+- To release: **bump `v5/VERSION`**, commit, then `git tag v<same>` + push.
+  `wails.json` and `package.json` "version" fields are build metadata and are
+  not the runtime source.
 
 ### Development (Hot-Reload)
 
@@ -77,7 +90,7 @@ The `.github/workflows/build.yml` workflow (repo root):
 2. Builds the Vue frontend, then the client with `-tags frontend`
 3. Builds for Linux, macOS (Intel + ARM), and Windows in parallel
 4. Downloads the matching sing-box binary (1.10.0) for each platform
-5. Bundles 2 binaries (`myvpn` + `sing-box`) into platform ZIPs
+5. Bundles 2 binaries (`locus` + `sing-box`) into platform ZIPs
 6. Creates a GitHub Release with a `checksums.sha256` file
 
 **Trigger:** Push a tag starting with `v` (e.g., `v2.0.0`).
@@ -90,7 +103,7 @@ The `.github/workflows/build.yml` workflow (repo root):
 v5/client/
 ├── main.go               # Wails entry point: NewApp() → wails.Run() (binds App)
 ├── app.go                # App struct — wraps internal/ for the Vue UI, events
-├── wails.json            # Wails project config (name, frontend build, version 2.0.0)
+├── wails.json            # Wails project config (name, frontend build; version = build metadata only)
 ├── assets_embed.go       # //go:embed all:frontend/dist (build tag: frontend)
 ├── assets_stub.go        # Empty asset FS without the frontend tag
 ├── internal/
@@ -116,11 +129,11 @@ v5/client/
 │       ├── lib/bridge.ts       # Typed wrapper around window.runtime.Call
 │       └── types/index.ts      # TypeScript mirrors of the Go API types
 ├── engines/               # sing-box binary placeholder (for local dev)
-├── go.mod                 # module myvpn, go 1.22, wails v2.9.1
+├── go.mod                 # module locus, go 1.22, wails v2.9.1
 └── Makefile               # dev / build / build-all / test / vet targets
 ```
 
-There is no `cmd/myvpn/`, `internal/gui/`, or `internal/helper/` — those were
+There is no `cmd/locus/`, `internal/gui/`, or `internal/helper/` — those were
 removed in the Wails migration. The pre-migration Fyne client lives in `v4/`
 (reference only, outside the Go module).
 
@@ -132,13 +145,13 @@ removed in the Wails migration. The pre-migration Fyne client lives in `v4/`
 
 ```
 Wails App.Startup():
-  1. storage.New("myvpn") — load or create state
+  1. storage.New("locus") — load or create state
   2. activation.NewClient(hubURL) — hub = https://networkingguides.duckdns.org
   3. GenerateFingerprint()
   4. findSingBox() — alongside the executable, then system paths
   5. manager.NewManager(singBoxPath, tmpConfigPath, "") + SetHelperMode(false)
   6. updater.CleanStaleMarkers(48h) + CheckOnStartup(false) + ConfirmIfPending()
-   7. setupSystemTray() — dark background + dormant tray hooks (Wails v2.9 has no tray API; window is shown at launch)
+   7. setupSystemTray() — dark background; if `LOCUS_TRAY=1`, starts the optional systray (live status + Connect/Disconnect/Open/Quit). OFF by default because Wails v2 has no tray API and it must be validated per OS. Closing the window still quits (no close-to-hide).
   8. If already activated → startHeartbeatLoop(code)
 
 Frontend:
@@ -165,7 +178,7 @@ POST /api/activate {code, fingerprint}
 On connect:
   1. Manager generates sing-box JSON config from saved serverConfig
   2. Manager.Start() spawns sing-box as a subprocess (direct mode)
-  3. sing-box creates TUN interface (myvpn0, 10.0.0.1/30)
+  3. sing-box creates TUN interface (locus0, 10.0.0.1/30)
   4. All traffic routed through TUN → Shadowsocks → VPS
   5. Health loop: signal-0 check every 10s, auto-restart up to
      3 times within a 5-minute window
@@ -192,7 +205,7 @@ Loop:
 Heartbeat says update_available for this device:
   1. Download binary to temp file (.new)
   2. Verify SHA256 checksum
-  3. Save backup of current binary (.myvpn-backups/)
+  3. Save backup of current binary (.locus-backups/)
   4. Create .update-pending sentinel
   5. Swap binary (platform-specific: rename / .old trick)
   6. Fork new process with same args
@@ -256,8 +269,8 @@ Content-Type: application/json
 
 ## 6. Storage Format
 
-**File:** `os.UserConfigDir()/myvpn/storage.json`
-(`~/.config/myvpn/storage.json` on Linux, `%APPDATA%\myvpn\` on Windows).
+**File:** `os.UserConfigDir()/locus/storage.json`
+(`~/.config/locus/storage.json` on Linux, `%APPDATA%\locus\` on Windows).
 
 ```json
 {
@@ -306,7 +319,7 @@ The manager generates a config like this (`generateConfig` in
   },
   "inbounds": [
     { "type": "tun", "tag": "tun-in",
-      "interface_name": "myvpn0",
+      "interface_name": "locus0",
       "address": ["10.0.0.1/30"],
       "mtu": 1500,
       "auto_route": true,
@@ -329,7 +342,7 @@ The manager generates a config like this (`generateConfig` in
 }
 ```
 
-Set `MYVPN_DEBUG=1` to switch the log level to `debug`. UDP is sent raw
+Set `LOCUS_DEBUG=1` to switch the log level to `debug`. UDP is sent raw
 (standard ss UDP): sing-box's `udp_over_tcp` is proprietary to sing-box and
 shadowsocks-rust rejects it with RST (see FIXES.md Follow-up 9), so it is
 never emitted for any tier.
@@ -339,7 +352,7 @@ never emitted for any tier.
 ## 8. Platform-Specific Notes
 
 ### Linux
-- **TUN:** sing-box creates `myvpn0` directly (user has admin rights on BYOD)
+- **TUN:** sing-box creates `locus0` directly (user has admin rights on BYOD)
 - **Fingerprint:** Reads `/sys/class/net/*/address`, `/sys/block/*/device/serial`,
   `/sys/class/dmi/id/product_uuid`, `/etc/machine-id`
 - **WebView deps:** `libgtk-3-dev` + `libwebkit2gtk-4.0-dev` (22.04) or `4.1` (24.04+)
@@ -361,7 +374,7 @@ never emitted for any tier.
 - **WebView:** WKWebView; needs `darwin_link.go` (the `UTType` cgo shim) — see FIXES.md
 - **Signing:** the build is **UNSIGNED** (no Apple Developer account). Gatekeeper will
   block it on first launch. Workaround: right-click the app → **Open**, or run
-  `xattr -cr /Applications/MyVPN.app` (or `chmod +x` is not needed). Full user-facing
+  `xattr -cr /Applications/Locus.app` (or `chmod +x` is not needed). Full user-facing
   instructions are planned for the download site (built separately).
 
 ---
@@ -375,7 +388,7 @@ never emitted for any tier.
 | Traffic fingerprinting | Shadowsocks AEAD (no TLS, no JA3 fingerprint) |
 | Update subversion | SHA256 checksum verification before install |
 | Crash on update | Two-phase sentinel with auto-revert |
-| Hub compromise | HTTPS to the hub; no client-side certificate pinning in the current build |
+| Hub compromise | HTTPS to the hub + **SPKI pinning** of the hub TLS cert (additive; `internal/pinned`). Set the operator-provided pin via `LOCUS_HUB_PINS`; `LOCUS_SKIP_PINNING=1` disables it. See capture command in `internal/pinned/pinned.go`. |
 | Data exposure | Storage is at-rest encrypted by the OS only |
 | Reverse engineering | No protocol names in the UI; engine is a separate binary |
 
@@ -402,7 +415,8 @@ Before releasing a new client build:
 - [ ] Update: SHA256 mismatch → download rejected
 - [ ] Update: successful update → new binary runs, confirmed sentinel created
 - [ ] Update: crash new binary → auto-revert on next start
-- [ ] Connection: TUN interface created (`myvpn0`, 10.0.0.1/30)
+- [ ] Connection: TUN interface created (`locus0`, 10.0.0.1/30)
 - [ ] Connection: disconnect stops sing-box and removes the config file
 - [ ] Diagnostics: report includes all fields without PII leaks
-- [ ] Window: appears on launch; closing it quits the app (no tray icon yet)
+- [ ] Window: appears on launch; closing it quits the app (no minimize-to-tray in Wails v2)
+- [ ] System tray (Linux/Windows/macOS): run with `LOCUS_TRAY=1` and verify the icon, Connect/Disconnect, Open, and Quit menu items (this MUST be validated per OS; it is off by default) — note closing the window still quits (no close-to-hide until a Wails v3 migration)

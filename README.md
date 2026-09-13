@@ -1,4 +1,4 @@
-# MyVPN — Secure School VPN
+# Locus — Secure School VPN
 
 A commercial VPN service for students at N4L-managed NZ schools (Macleans College).
 Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, no UDP blocks).
@@ -21,7 +21,7 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │              STUDENT'S LAPTOP                     │
 │                                                   │
 │  ┌───────────────────────────────────────────┐   │
-│  │        MyVPN Desktop App (Go + Wails)      │   │
+│  │        Locus Desktop App (Go + Wails)      │   │
 │  │         (Vue 3 UI embedded in binary)       │   │
 │  │                                             │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
@@ -37,7 +37,7 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 │                       │                            │
 │              ┌────────┴────────┐                   │
 │              │  sing-box TUN   │  (no SOCKS5 —     │
-│              │  device (myvpn0)│   TUN routes all  │
+│              │  device (locus0)│   TUN routes all  │
 │              │                 │   device traffic) │
 │              └─────────────────┘                   │
 └───────────────────────┼────────────────────────────┘
@@ -64,7 +64,7 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 └─────────────────────────────────────────────────┘
 ```
 
-Only two binaries ship on the client: `myvpn` (desktop app, Wails + Vue 3) and
+Only two binaries ship on the client: `locus` (desktop app, Wails + Vue 3) and
 `sing-box` (tunnel engine). There is no SOCKS5 proxy layer, no separate TUN
 helper service — sing-box creates the TUN interface directly (BYOD machines
 give users admin rights).
@@ -115,7 +115,7 @@ VPN-Service/
 
 The VPN uses **Shadowsocks TCP** — a simple, fast tunnel protocol that encrypts traffic with AES-256-GCM. Unlike TLS-based proxies (Trojan, Xray VLESS), Shadowsocks has no TLS handshake or certificate exchange, so it bypasses N4L's JA3 fingerprinting.
 
-All traffic goes through a single TCP connection per tier. The client runs **sing-box**, which creates a **TUN interface** (`myvpn0`, `10.0.0.1/30`) and routes all device traffic through it. sing-box encrypts everything with Shadowsocks and sends it to the VPS. No SOCKS5 proxy layer, no per-app configuration.
+All traffic goes through a single TCP connection per tier. The client runs **sing-box**, which creates a **TUN interface** (`locus0`, `10.0.0.1/30`) and routes all device traffic through it. sing-box encrypts everything with Shadowsocks and sends it to the VPS. No SOCKS5 proxy layer, no per-app configuration.
 
 ### Tiers & Congestion Control
 
@@ -160,7 +160,7 @@ Updates are delivered gradually:
 ```
 Normal:     .update-pending → .update-confirmed → done
 Crash:      .update-pending → (no .update-confirmed) → auto-revert
-Manual:     --revert flag → restore from .myvpn-backups/
+Manual:     --revert flag → restore from .locus-backups/
 ```
 
 The `.update-pending` sentinel is written before swapping the binary. On first successful launch of the new version, `.update-confirmed` is written. If the new version crashes before writing confirmation, the next start detects the orphaned `.update-pending` and auto-reverts.
@@ -218,12 +218,12 @@ make build-all      # Linux + Windows + macOS
 ```
 
 Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds, bundles, and releases
-both platform zips automatically (`myvpn` + `sing-box` per platform).
+both platform zips automatically (`locus` + `sing-box` per platform).
 
 ### Step 5: Install & Test
 
 1. Extract the platform zip
-2. Launch `myvpn` (Windows: `myvpn.exe`)
+2. Launch `locus` (Windows: `locus.exe`)
 3. Test activation, connection, heartbeat, update
 
 No admin install step is needed — the app runs as a normal user and sing-box
@@ -248,7 +248,7 @@ ssh root@your-vps "
 
 ```bash
 # Manual backup
-/usr/local/bin/myvpn-backup.sh
+/usr/local/bin/locus-backup.sh
 
 # Full VPS restore
 DOMAIN=networkingguides.duckdns.org \

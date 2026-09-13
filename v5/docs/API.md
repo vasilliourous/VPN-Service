@@ -1,6 +1,6 @@
-# MyVPN API Reference
+# Locus API Reference
 
-> Complete API contracts for the MyVPN server, as implemented by the
+> Complete API contracts for the Locus server, as implemented by the
 > PocketBase JS hooks and Caddy reverse proxy.
 
 ---

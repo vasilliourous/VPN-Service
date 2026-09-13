@@ -1,11 +1,11 @@
-# MyVPN V5 CI/CD Pipeline — Wails Edition
+# Locus V5 CI/CD Pipeline — Wails Edition
 #
 # CANONICAL WORKFLOW — this is the ONLY workflow file.
 # GitHub Actions only executes workflows from .github/workflows/ at the
 # repository ROOT. The old Fyne workflow previously lived here; the Wails
 # rewrite was accidentally placed in v5/.github/workflows/ and never ran.
 #
-# Builds and releases the MyVPN desktop client (Wails v2 + Vue 3).
+# Builds and releases the Locus desktop client (Wails v2 + Vue 3).
 #
 # IMPORTANT: The UI is embedded via the `frontend` build tag (see
 # v5/client/assets_embed.go — //go:embed all:frontend/dist). The frontend MUST
@@ -23,7 +23,7 @@
 #
 # Working directory: v5/client/
 
-name: Build MyVPN V5
+name: Build Locus V5
 
 on:
   push:
@@ -178,7 +178,7 @@ jobs:
           ls -la
           echo "--- main.go present? ---"
           test -f main.go && echo "YES: main.go exists (build target .)" || echo "NO main.go"
-          test -d cmd/myvpn && echo "YES: cmd/myvpn exists (legacy layout)" || echo "NO cmd/myvpn (expected — Wails layout)"
+          test -d cmd/locus && echo "YES: cmd/locus exists (legacy layout)" || echo "NO cmd/locus (expected — Wails layout)"
 
       # ── Frontend MUST be built before Go compiles (//go:embed) ──
       - name: Build frontend (required for //go:embed)
@@ -193,9 +193,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.cgo }}
         run: |
-          VERSION="${{ github.ref_name }}"
+          # Single source for runtime version: prefer <repo>/v5/VERSION when on
+          # main/PR (so non-tag builds already reflect the in-flight version);
+          # on a tag push, override with the tag with its leading "v" stripped
+          # (e.g. tag v2.0.1 -> version 2.0.1) so the updater's numeric compare
+          # against the server's update_config version is exact.
+          VERSION="$(cat "${{ github.workspace }}/v5/VERSION" 2>/dev/null || echo dev)"
+          CASE_TAG="${{ github.ref_name }}"
+          case "${CASE_TAG}" in v*) VERSION="${CASE_TAG#v}";; esac
           [ -z "$VERSION" ] && VERSION="dev"
           LDFLAGS="-s -w -X main.version=${VERSION}"
+          echo "Injecting runtime version: ${VERSION}"
           # On Windows, build as a GUI app (no console window)
           if [ "${{ matrix.goos }}" = "windows" ]; then
             LDFLAGS="$LDFLAGS -H windowsgui"
@@ -206,7 +214,7 @@ jobs:
           # desktop+production are REQUIRED Wails tags — without them the
           # binary is the stub app that errors at runtime
           go build -tags "${{ matrix.tags }}" -ldflags="$LDFLAGS" \
-            -o myvpn-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
+            -o locus-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
 
       - name: Download sing-box engine
         env:
@@ -235,19 +243,19 @@ jobs:
       - name: Bundle into platform ZIP
         run: |
           mkdir -p dist
-          BUNDLE="myvpn-${{ matrix.label }}"
+          BUNDLE="locus-${{ matrix.label }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            powershell -Command "Compress-Archive -Path 'myvpn-${{ matrix.goos }}-${{ matrix.goarch }}.exe','sing-box.exe' -DestinationPath 'dist\\${BUNDLE}.zip' -Force"
+            powershell -Command "Compress-Archive -Path 'locus-${{ matrix.goos }}-${{ matrix.goarch }}.exe','sing-box.exe' -DestinationPath 'dist\\${BUNDLE}.zip' -Force"
           else
             zip -j "dist/${BUNDLE}.zip" \
-              myvpn-${{ matrix.goos }}-${{ matrix.goarch }} \
+              locus-${{ matrix.goos }}-${{ matrix.goarch }} \
               sing-box
           fi
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: myvpn-${{ matrix.label }}
+          name: locus-${{ matrix.label }}
           path: ${{ env.CLIENT_DIR }}/dist/*.zip
 
   # ── Release (tag pushes only) ──
@@ -260,7 +268,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: myvpn-*
+          pattern: locus-*
           merge-multiple: true
 
       - name: Generate release checksums
@@ -276,32 +284,32 @@ jobs:
             checksums.sha256
           generate_release_notes: true
           body: |
-            ## MyVPN ${{ github.ref_name }}
+            ## Locus ${{ github.ref_name }}
 
             ### Bundles
 
             | Platform | File |
             |----------|------|
-            | Windows | `myvpn-Windows-amd64.zip` |
-            | macOS Intel | `myvpn-macOS-amd64.zip` |
-            | macOS Apple Silicon | `myvpn-macOS-arm64.zip` |
-            | Linux | `myvpn-Linux-amd64.zip` |
+            | Windows | `locus-Windows-amd64.zip` |
+            | macOS Intel | `locus-macOS-amd64.zip` |
+            | macOS Apple Silicon | `locus-macOS-arm64.zip` |
+            | Linux | `locus-Linux-amd64.zip` |
 
             ### macOS note (unsigned build)
             macOS Gatekeeper will block the unsigned app on first launch.
-            Right-click the app → **Open** (or run `xattr -cr /Applications/MyVPN.app`)
+            Right-click the app → **Open** (or run `xattr -cr /Applications/Locus.app`)
             before first run. Full instructions will live on the download site.
 
             ### What's Included
 
-            - `myvpn` — Desktop client (single binary, Wails + Vue 3)
+            - `locus` — Desktop client (single binary, Wails + Vue 3)
             - `sing-box` — Tunnel engine (Shadowsocks + TUN)
 
             ### Quick Install
 
             1. Download the bundle for your platform
             2. Extract the zip
-            3. Launch `myvpn`
+            3. Launch `locus`
             4. Enter your activation code
 
             See `v5/docs/WAILS-MIGRATION.md` for architecture details and

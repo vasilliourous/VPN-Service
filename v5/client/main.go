@@ -1,4 +1,4 @@
-// MyVPN Desktop App — Wails Edition
+// Locus Desktop App — Wails Edition
 //
 // A single-binary desktop VPN client for school networks.
 // All backend logic (activation, heartbeat, storage, updater) lives in
@@ -34,11 +34,25 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+
+	"locus/internal/updater"
 )
 
-// version is set at build time via:
+// version is the runtime version reported to the UI and the updater.
 //
-//	go build -ldflags "-X main.version=2.0.0"
+// The canonical value lives in <repo>/v5/VERSION (single source of truth).
+// Official builds inject it exactly once via -ldflags (see the Makefile, which
+// reads v5/VERSION and passes "-X main.version=$(VERSION)" to every target):
+//
+//	make build
+//
+// or, for a scratch build / CI:
+//
+//	go build -ldflags "-X main.version=<VERSION from v5/VERSION>" .
+//
+// The fallback below is deliberately kept in sync with v5/VERSION so an
+// uninstrumented `go build` reports something meaningful — bump v5/VERSION
+// (not this literal) before a release.
 var version = "2.0.0"
 
 // Windows executables carry an embedded manifest (rsrc_windows_amd64.syso /
@@ -53,7 +67,7 @@ var version = "2.0.0"
 // If the .syso files are missing, Go builds a Windows exe with the default
 // asInvoker manifest and Connect() falls back to a runtime UAC relaunch.
 //
-//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name MyVPN --file-description "MyVPN secure school VPN" --product-version 2.0.0 --file-version 2.0.0
+//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name Locus --file-description "Locus secure school VPN" --product-version 2.0.0 --file-version 2.0.0
 
 func main() {
 	// Route Go's stderr (panic traces) and the standard logger to a file so
@@ -63,13 +77,32 @@ func main() {
 		defer func() { _ = logFile.Close() }()
 		os.Stderr = logFile
 		log.SetOutput(logFile)
-		log.Printf("MyVPN starting (version %s)", version)
+		log.Printf("Locus starting (version %s)", version)
+	}
+
+	// ── `--revert`: manual rollback to the pre-update binary ──
+	// Only useful immediately after a bad self-update. Performed before the
+	// GUI is launched / any engine starts. See updater.CheckOnStartup(true).
+	if hasArg("--revert") {
+		exe, err := os.Executable()
+		if err == nil {
+			reverted, rerr := updater.CheckOnStartup(true)
+			switch {
+			case rerr != nil:
+				log.Printf("Revert failed: %v", rerr)
+			case !reverted:
+				log.Printf("Revert: no backup to restore (nothing to do)")
+			default:
+				log.Printf("Revert: reinstated previous Locus binary")
+			}
+		}
+		return // never launch the interactive GUI for a --revert invocation
 	}
 
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:     "MyVPN",
+		Title:     "Locus",
 		Width:     480,
 		Height:    700,
 		MinWidth:  380,
@@ -86,7 +119,7 @@ func main() {
 		OnShutdown: app.Shutdown,
 		OnDomReady: func(ctx context.Context) {
 			// Proves the WebView2 loaded the embedded page — if this line is
-			// missing from myvpn.log, the webview never finished loading.
+			// missing from locus.log, the webview never finished loading.
 			log.Printf("DOM ready — webview loaded the UI")
 		},
 		Bind: []interface{}{
@@ -110,11 +143,21 @@ func main() {
 	})
 
 	if err != nil {
-		// Never die invisibly — the error is written to myvpn.log (see
+		// Never die invisibly — the error is written to locus.log (see
 		// openLogFile) AND shown in a native message box on Windows.
-		showFatalError("MyVPN failed to start: " + err.Error())
-		log.Fatalf("MyVPN failed to start: %v", err)
+		showFatalError("Locus failed to start: " + err.Error())
+		log.Fatalf("Locus failed to start: %v", err)
 	}
+}
+
+// hasArg reports whether any os.Arg equals want (exact match, no value).
+func hasArg(want string) bool {
+	for _, a := range os.Args[1:] {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }
 
 // openLogFile opens (appends to) a log file in the platform config dir so
@@ -125,11 +168,11 @@ func openLogFile() (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	appDir := filepath.Join(dir, "myvpn")
+	appDir := filepath.Join(dir, "locus")
 	if err := os.MkdirAll(appDir, 0700); err != nil {
 		return nil, err
 	}
-	logPath := filepath.Join(appDir, "myvpn.log")
+	logPath := filepath.Join(appDir, "locus.log")
 	if info, err := os.Stat(logPath); err == nil && info.Size() > 1<<20 {
 		_ = os.Remove(logPath) // rotate: keep the log small
 	}

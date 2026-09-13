@@ -1,35 +1,35 @@
-/* ── MyVPN Dark Theme ──
-   Based on the UI-AESTHETICS.md spec.
+/* ── Locus Dark-Green Theme ──
+   Based on the UI-AESTHETICS.md spec (re-themed from purple → green).
    Tokens:
-     Background    #0D0D0F
-     Surface       #1A1A1E
-     SurfaceHover  #252529
-     Border        #2E2E35
-     TextPrimary   #F5F5F7
-     TextSecondary #8E8E96
-     Accent        #A855F7
-     AccentHover   #C084FC
+     Background    #06130C   (green-tinted black)
+     Surface       #0C1711
+     SurfaceHover  #13241A
+     Border        #1F3629
+     TextPrimary   #EAF2EC
+     TextSecondary #8CA596
+     Accent        #2EA86A   (Locus green)
+     AccentHover   #46C186
      Success       #22C55E
      Error         #EF4444
      Warning       #F59E0B
-     TierStrike    #EAB308
-     TierStealth   #A855F7
+     TierStrike    #EAB308   (gold)
+     TierStealth   #46C186
 */
 
 :root {
-  --bg: #0D0D0F;
-  --surface: #1A1A1E;
-  --surface-hover: #252529;
-  --border: #2E2E35;
-  --text: #F5F5F7;
-  --text-secondary: #8E8E96;
-  --accent: #A855F7;
-  --accent-hover: #C084FC;
+  --bg: #06130C;
+  --surface: #0C1711;
+  --surface-hover: #13241A;
+  --border: #1F3629;
+  --text: #EAF2EC;
+  --text-secondary: #8CA596;
+  --accent: #2EA86A;
+  --accent-hover: #46C186;
   --success: #22C55E;
   --error: #EF4444;
   --warning: #F59E0B;
   --strike: #EAB308;
-  --stealth: #A855F7;
+  --stealth: #46C186;
 }
 
 /* ── Typography ── */
@@ -42,13 +42,13 @@ body {
 
 /* ── Accessibility: visible focus for keyboard users ── */
 :focus-visible {
-  outline: 2px solid #A855F7;
+  outline: 2px solid #2EA86A;
   outline-offset: 2px;
 }
 
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid #C084FC;
+  outline: 2px solid #46C186;
   outline-offset: 2px;
 }
 
@@ -75,12 +75,12 @@ code, pre, .mono {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2E2E35;
+  background: #1F3629;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3E3E45;
+  background: #2B4636;
 }
 
 /* ── Animations ── */

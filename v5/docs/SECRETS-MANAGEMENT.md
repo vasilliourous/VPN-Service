@@ -1,4 +1,4 @@
-# MyVPN Secrets Management
+# Locus Secrets Management
 
 > How credentials are securely deployed with the server — encrypted in the repo,
 > decrypted at deploy time.
@@ -7,7 +7,7 @@
 
 ## Problem
 
-The MyVPN server needs several credentials to run:
+The Locus server needs several credentials to run:
 
 | Credential | Used by |
 |---|---|

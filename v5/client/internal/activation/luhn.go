@@ -21,7 +21,7 @@ const (
 	// codeBase is the length of the charset (32 characters).
 	codeBase = len(CodeCharset)
 
-	// CodePrefix is the MyVPN code prefix.
+	// CodePrefix is the Locus code prefix.
 	CodePrefix = "RQ"
 
 	// CodeSegments is the number of random segments.

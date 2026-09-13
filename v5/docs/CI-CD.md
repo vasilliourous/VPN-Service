@@ -1,6 +1,6 @@
-# MyVPN V5 — CI/CD Pipeline Reference
+# Locus V5 — CI/CD Pipeline Reference
 
-> The MyVPN client is built and released via GitHub Actions.
+> The Locus client is built and released via GitHub Actions.
 > This document describes the pipeline, how to trigger releases,
 > and how to interpret build artifacts.
 
@@ -72,8 +72,8 @@ Each release produces 2 platform bundles:
 
 | File | Platform | Contents |
 |------|----------|----------|
-| `myvpn-Linux-amd64.zip` | Linux x86_64 | `myvpn` + `sing-box` |
-| `myvpn-Windows-amd64.zip` | Windows x86_64 | `myvpn.exe` + `sing-box.exe` |
+| `locus-Linux-amd64.zip` | Linux x86_64 | `locus` + `sing-box` |
+| `locus-Windows-amd64.zip` | Windows x86_64 | `locus.exe` + `sing-box.exe` |
 
 The zips contain only the two binaries; the release job generates a separate
 `checksums.sha256` file (SHA256 of each zip) attached to the GitHub Release.

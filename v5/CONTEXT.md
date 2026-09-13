@@ -1,4 +1,4 @@
-# MyVPN — Project Context (V5 Reference)
+# Locus — Project Context (V5 Reference)
 
 > **Purpose:** Everything a future agent needs to understand this project without
 > searching across the entire repository. Read this first before touching any code
@@ -9,6 +9,15 @@
 >
 > **Not covered here:** build steps (see `docs/`), API contracts (see `docs/API.md`),
 > server deployment (see `docs/DEPLOY.md`).
+
+> **Rebrand (2026-08):** This product was renamed **MyVPN → Locus** and re-themed
+> from dark-purple to **dark green**. All client code, identifiers, the module path,
+> binary/output names, the `locus0` TUN interface, app/log/code-prefix tokens, the
+> GUI, and this documentation now use **Locus / locus**. The **deployed server
+> keeps legacy `myvpn-*` artifact/path names** (`/etc/myvpn`, `myvpn-*.sh`,
+> `myvpn-*.log`, `networkingguides.duckdns.org/…/myvpn-*`) because it has not been
+> redeployed — treat those literal server paths as still-current until a fresh
+> `setup.sh`/`restore.sh` run renames them.
 
 ---
 
@@ -90,7 +99,7 @@ from real-world testing, with comprehensive documentation.
 
 ### Principles
 
-1. **Only 2 binaries on the client** — myvpn (GUI + manager) + sing-box (engine).
+1. **Only 2 binaries on the client** — locus (GUI + manager) + sing-box (engine).
    No TUN helper service, no tun2socks, no sslocal, **no SOCKS5 proxy layer**.
    BYOD means every user has admin rights, so sing-box creates TUN directly.
 
@@ -206,8 +215,8 @@ client in `v4/`; removed files recoverable from git history)
 | Metric | Value |
 |--------|-------|
 | Total lines (Go) | ~4,200 across 19 files |
-| Client version | 2.0.0 |
-| Engine | sing-box 1.10.0 |
+| Client version | `v5/VERSION` (single source; injected by Makefile/CI) |
+| Engine | sing-box 1.12.1 (client bundle + optional server UoT both pin 1.12.1) |
 | Min Go version | 1.22 |
 | Platforms | Linux, macOS (Intel+ARM, unsigned), Windows |
 | Dependencies | Wails v2 + Vue 3 (Fyne removed) |
@@ -221,7 +230,7 @@ client in `v4/`; removed files recoverable from git history)
 │                   CLIENT DEVICE                        │
 │                                                        │
 │  ┌────────────────────────────────────────────────┐   │
-│  │              myvpn (Go + Wails / Vue 3)            │   │
+│  │              locus (Go + Wails / Vue 3)            │   │
 │  │                                                  │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
 │  │  │Activation│  │ Heartbeat │  │   Updater    │   │   │

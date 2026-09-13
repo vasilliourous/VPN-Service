@@ -1,4 +1,4 @@
-# MyVPN UI / Aesthetics — Visual Design Spec
+# Locus UI / Aesthetics — Visual Design Spec
 
 > **This spec describes the implemented UI.** The client uses a **Wails v2 +
 > Vue 3** frontend (`v5/client/frontend/`) — the design tokens below are the
@@ -25,51 +25,51 @@
 ```
 Token              Hex       Purpose
 ─────────────────────────────────────────────
-Background         #0D0D0F   Main window background
-Surface            #1A1A1E   Card backgrounds, panels
-SurfaceHover       #252529   Hover states on interactive elements
-Border             #2E2E35   Dividers, input borders
-TextPrimary        #F5F5F7   Main body text
-TextSecondary      #8E8E96   Labels, hints, secondary info
-Accent             #A855F7   Primary buttons, active indicators
-AccentHover        #C084FC   Button hover
+Background         #06130C   Main window background (green-black)
+Surface            #0C1711   Card backgrounds, panels
+SurfaceHover       #13241A   Hover states on interactive elements
+Border             #1F3629   Dividers, input borders
+TextPrimary        #EAF2EC   Main body text
+TextSecondary      #8CA596   Labels, hints, secondary info
+Accent             #2EA86A   Primary buttons, active indicators (Locus green)
+AccentHover        #46C186   Button hover
 Success            #22C55E   Connected status
 Error              #EF4444   Disconnected, errors
 Warning            #F59E0B   Connecting, degraded
 TierStrike         #EAB308   Strike tier badge (gold)
-TierStealth        #A855F7   Stealth tier badge (purple)
-TierEco            #8E8E96   Eco tier badge (grey)
+TierStealth        #46C186   Stealth tier badge (green)
+TierEco            #7FB48F   Eco tier badge (muted green)
 ```
 
 ### Implementation (Vue 3 + CSS)
 
-The window background is also set natively (`WindowSetBackgroundColour(13, 13, 15, 255)`
+The window background is also set natively (`WindowSetBackgroundColour(6, 19, 12, 255)`
 in `app.go`) so there is no white flash while the WebView loads.
 
 ```css
 body {
-  background-color: #0D0D0F;
-  color: #F5F5F7;
+  background-color: #06130C;
+  color: #EAF2EC;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
 
 .app-container {
-  background: linear-gradient(180deg, #0D0D0F 0%, #111114 100%);
+  background: linear-gradient(180deg, #06130C 0%, #0C1A12 100%);
   padding: 24px;
 }
 
 .card {
-  background: #1A1A1E;
-  border: 1px solid #2E2E35;
+  background: #0C1711;
+  border: 1px solid #1F3629;
   border-radius: 12px;
 }
 
-.btn-primary { background: #A855F7; }        /* hover: #C084FC */
+.btn-primary { background: #2EA86A; }        /* hover: #46C186 */
 .btn-danger  { background: #EF4444; }
-.btn-secondary { background: #2E2E35; }
-.btn-accent   { background: #A855F7; }
+.btn-secondary { background: #1F3629; }
+.btn-accent   { background: #2EA86A; }
 ```
 
 ---
@@ -99,9 +99,9 @@ when the device is not activated (`App.vue` → `v-if="!activated"`).
 ```
 ┌──────────────────────────────────────┐
 │                                      │
-│            [shield logo SVG]         │  brand icon, 48×48, purple #A855F7
-│                 MyVPN                │  brand title, 28px bold
-│          Secure School VPN           │  subtitle, 14px, #8E8E96
+│            [shield logo SVG]         │  brand icon, 48×48, green #2EA86A
+│                 Locus                │  brand title, 28px bold
+│          Secure School VPN           │  subtitle, 14px, #8CA596
 │                                      │
 │  ┌────────────────────────────────┐  │
 │  │  Activate                      │  │  card (max-width 380px)
@@ -112,7 +112,7 @@ when the device is not activated (`App.vue` → `v-if="!activated"`).
 │  │  └──────────────────────────┘  │  │
 │  │  ✓ Valid code / ✗ error hint   │  │  live Luhn validation (green/red)
 │  │  ┌──────────────────────────┐  │  │
-│  │  │        Activate          │  │  │  button, #A855F7, spinner while loading
+│  │  │        Activate          │  │  │  button, #2EA86A, spinner while loading
 │  │  └──────────────────────────┘  │  │
 │  └────────────────────────────────┘  │
 │                                      │
@@ -125,7 +125,7 @@ when the device is not activated (`App.vue` → `v-if="!activated"`).
 ```
 
 **Implementation notes (ActivationScreen.vue):**
-- Logo: inline SVG shield with checkmark, `#A855F7` fill
+- Logo: inline SVG shield with checkmark, `#2EA86A` fill
 - Input: auto-inserts hyphens as the user types (max 23 chars), uppercases,
   and calls `ValidateCode` when complete — the hint turns green ("✓ Valid code")
   or red with the error message
@@ -189,7 +189,7 @@ heartbeat stats, grace days), Copy + Close buttons.
 
 | State | Label | Style |
 |-------|-------|-------|
-| Disconnected | "Connect" | `btn-primary` (#A855F7) |
+| Disconnected | "Connect" | `btn-primary` (#2EA86A) |
 | Connecting | spinner replaces label | disabled |
 | Connected | "Disconnect" | `btn-danger` (#EF4444) |
 | Loading | CSS spinner (16px ring) | disabled |
@@ -203,8 +203,8 @@ Implemented in `TierBadge.vue`:
 | Tier | Icon | Color | Background |
 |------|:----:|-------|------------|
 | `strike` | ⚡ | `#EAB308` gold | `rgba(234, 179, 8, 0.2)` |
-| `stealth` | ◉ | `#A855F7` purple | `rgba(168, 85, 247, 0.2)` |
-| `eco` (default) | ○ | `#9CA3AF` grey | `rgba(107, 114, 128, 0.2)` |
+| `stealth` | ◉ | `#46C186` green | `rgba(70, 193, 134, 0.18)` |
+| `eco` (default) | ○ | `#7FB48F` muted green | `rgba(127, 180, 143, 0.18)` |
 
 Rendered as a 12px bold pill (`border-radius: 20px`, padding 4px 10px) next to
 the status label in the main-screen header.
@@ -230,9 +230,9 @@ real tray with Show/Quit is a future enhancement.
 
 | Test | Expected |
 |------|----------|
-| App launches | Window appears immediately (dark background, purple accents). |
-| Open from tray/dock | Window appears. Dark background, purple accents. |
-| Activation screen | Brand icon, centered input, purple button, tier info. |
+| App launches | Window appears immediately (dark-green background, green accents). |
+| Open from tray/dock | Window appears. Dark-green background, green accents. |
+| Activation screen | Brand icon, centered input, green button, tier info. |
 | Code typing | Auto-formats with hyphens, uppercases. |
 | Invalid code | Red error hint below input (instant — no server call). |
 | Valid code | Green "✓ Valid code". |
@@ -244,8 +244,8 @@ real tray with Show/Quit is a future enhancement.
 | Diagnostics | Modal opens with the full report; Copy works. |
 | Update available | "Update X available" button appears. |
 | Close window | App quits (no close-to-tray in Wails v2.9). |
-| Eco badge | Grey pill + ○ icon. |
-| Stealth badge | Purple pill + ◉ icon. |
+| Eco badge | Muted-green pill + ○ icon. |
+| Stealth badge | Green pill + ◉ icon. |
 | Strike badge | Gold pill + ⚡ icon. |
 | High DPI | Everything renders crisp (WebView handles this). |
 

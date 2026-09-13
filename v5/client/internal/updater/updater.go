@@ -34,6 +34,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"locus/internal/pinned"
 )
 
 const (
@@ -43,7 +45,7 @@ const (
 	SentinelReverted  = ".reverted"
 
 	// BackupDir is where the previous binary is saved during update.
-	BackupDir = ".myvpn-backups"
+	BackupDir = ".locus-backups"
 
 	// DownloadTimeout is the max time for downloading an update.
 	DownloadTimeout = 5 * time.Minute
@@ -108,6 +110,7 @@ func New(appDir, binaryName, currentVer string) *Updater {
 			Transport: &http.Transport{
 				MaxIdleConns:    2,
 				IdleConnTimeout: 30 * time.Second,
+				TLSClientConfig: pinned.TLSClientConfig(),
 			},
 		},
 	}
@@ -207,7 +210,7 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	if err != nil {
 		return fmt.Errorf("cannot create download request: %w", err)
 	}
-	req.Header.Set("User-Agent", "MyVPN-Client/2.0")
+	req.Header.Set("User-Agent", "Locus-Client/2.0")
 
 	resp, err := u.client.Do(req)
 	if err != nil {

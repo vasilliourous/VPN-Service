@@ -1,10 +1,12 @@
-module myvpn
+module locus
 
 go 1.22.0
 
 toolchain go1.22.12
 
 require github.com/wailsapp/wails/v2 v2.12.0
+
+require github.com/getlantern/systray v1.2.2
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect

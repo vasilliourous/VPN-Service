@@ -4,7 +4,7 @@ import "testing"
 
 // TestCodeFormatRQ locks in the RQ code format: RQ-XXXX-XXXX-XXXX-C
 // (2-char prefix + 3×4 segments + Luhn-mod-N checksum over the whole body).
-// Migrated from MYVPN-XXXX-XXXX-XXXX-C on 2026-08-17 — the checksum covers
+// Migrated from LOCUS-XXXX-XXXX-XXXX-C on 2026-08-17 — the checksum covers
 // the prefix, so every code's check digit changed with the prefix.
 func TestCodeFormatRQ(t *testing.T) {
 	if CodePrefix != "RQ" {
@@ -17,7 +17,7 @@ func TestCodeFormatRQ(t *testing.T) {
 
 // TestValidateRQExamples validates representative codes in the new format,
 // including the doc example and migrated codes.json entries (random segments
-// preserved from the old MYVPN codes, checksum recomputed over the RQ body).
+// preserved from the old LOCUS codes, checksum recomputed over the RQ body).
 func TestValidateRQExamples(t *testing.T) {
 	valid := []string{
 		"RQ-ABCD-EFGH-JKMN-T", // doc example (used in README/API docs)
@@ -34,11 +34,11 @@ func TestValidateRQExamples(t *testing.T) {
 	}
 }
 
-// TestOldMYVPNPrefixRejected ensures legacy-format codes fail client-side
+// TestOldLOCUSPrefixRejected ensures legacy-format codes fail client-side
 // validation (prefix check) instead of reaching the server.
-func TestOldMYVPNPrefixRejected(t *testing.T) {
-	if err := ValidateCodeFormat("MYVPN-AAAA-BBBB-CCCC-D"); err == nil {
-		t.Error("legacy MYVPN-format code must fail validation with RQ prefix")
+func TestOldLOCUSPrefixRejected(t *testing.T) {
+	if err := ValidateCodeFormat("LOCUS-AAAA-BBBB-CCCC-D"); err == nil {
+		t.Error("legacy LOCUS-format code must fail validation with RQ prefix")
 	}
 }
 

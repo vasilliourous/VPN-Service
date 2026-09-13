@@ -1,4 +1,4 @@
-// MyVPN reactive state store (composable).
+// Locus reactive state store (composable).
 // Manages all shared state between Vue components.
 
 import { reactive, readonly } from 'vue'
@@ -13,6 +13,7 @@ interface State {
   failures: number
   graceDays: number
   tunnelOk: boolean // watchdog tunnel health
+  repairStage: string // watchdog recovery stage: '' | 'restart' | 'full-reset' | 'degraded'
 
   // Activation
   activated: boolean
@@ -42,6 +43,7 @@ const state = reactive<State>({
   failures: 0,
   graceDays: 7,
   tunnelOk: false,
+  repairStage: '',
   activated: false,
   activationError: '',
   loading: false,
@@ -74,6 +76,7 @@ async function refreshStatus(): Promise<void> {
     state.failures = s.failures
     state.graceDays = s.graceDays
     state.tunnelOk = s.tunnelOk
+    state.repairStage = (s as StatusResult).repairStage || ''
   } catch (err: any) {
     setError(err?.message || 'Failed to get status')
   }

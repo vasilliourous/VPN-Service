@@ -1,6 +1,12 @@
-# MyVPN Server Deployment Guide
+# Locus Server Deployment Guide
 
-> Deploy the complete MyVPN server infrastructure on a blank Ubuntu 22.04 VPS.
+> Deploy the complete Locus server infrastructure on a blank Ubuntu 22.04 VPS.
+
+> **Rebrand note:** The product is now **Locus**, but the live VPS and every
+> deployment script under `v5/server/` still name their installed artifacts
+> **`myvpn-*`** (`/etc/myvpn`, `/usr/local/bin/myvpn-*.sh`, `/var/log/myvpn-*.log`,
+> `/root/…`, systemd units). Those literal `myvpn` paths remain **correct as
+> written** until the server is redeployed/renamed — do not "fix" them to `locus`.
 
 ---
 

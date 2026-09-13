@@ -1,4 +1,4 @@
-# MyVPN Architecture Guide
+# Locus Architecture Guide
 
 > This document describes the current client architecture. The GUI layer is
 > **Wails + Vue 3** (see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the
@@ -7,7 +7,7 @@
 > are accurate against the code in `v5/client/`; see [`BACKEND-API.md`](BACKEND-API.md)
 > for their exact API surface.
 
-> **How to architect a compatible MyVPN client.** This document describes the
+> **How to architect a compatible Locus client.** This document describes the
 > key components, their responsibilities, and how they fit together — from an
 > implementation perspective. Use it alongside `CLIENT-GUIDE.md` (build steps),
 > `API.md` (server contracts), and `CONTEXT.md` (background reasoning).
@@ -21,7 +21,7 @@
 │                   CLIENT DEVICE                        │
 │                                                        │
 │  ┌────────────────────────────────────────────────┐   │
-│  │              myvpn (Go + Wails / Vue 3)            │   │
+│  │              locus (Go + Wails / Vue 3)            │   │
 │  │                                                  │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
 │  │  │Activation│  │ Heartbeat │  │   Updater    │   │   │
@@ -73,7 +73,7 @@
 >
 > The only elevated privilege needed is TUN device creation. On BYOD machines
 > the user has admin rights, so sing-box creates the TUN interface directly —
-> no privileged helper service is shipped (the legacy `myvpn-helper` binary
+> no privileged helper service is shipped (the legacy `locus-helper` binary
 > was removed in the Wails migration).
 >
 > See [§2.4 Manager](#24-manager-internalmanager) for the exact sing-box
@@ -121,7 +121,7 @@ Persistent state management. Single JSON file, thread-safe, atomic writes.
 }
 ```
 
-**File location:** `os.UserConfigDir()/myvpn/storage.json` — `~/.config/myvpn/storage.json` (Linux), `%APPDATA%\myvpn\storage.json` (Windows).
+**File location:** `os.UserConfigDir()/locus/storage.json` — `~/.config/locus/storage.json` (Linux), `%APPDATA%\locus\storage.json` (Windows).
 
 **Atomic write strategy:** Write to `.tmp` file, then `rename()` over target. This prevents corruption from crashes during write.
 
@@ -175,7 +175,7 @@ The generated config looks like this:
              { "type": "https", "tag": "dns-tunnel", "server": "1.1.1.1", "server_port": 443, "detour": "proxy" },
              { "type": "https", "tag": "dns-direct", "server": "1.1.1.1", "server_port": 443, "detour": "direct" }
            ] },
-  "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "myvpn0",
+  "inbounds": [{ "type": "tun", "tag": "tun-in", "interface_name": "locus0",
                  "address": ["10.0.0.1/30"], "mtu": 1500, "auto_route": true, "strict_route": false,
                  "sniff": true }],
   "outbounds": [
@@ -189,7 +189,7 @@ The generated config looks like this:
 }
 ```
 
-(`MYVPN_DEBUG=1` switches the log level to `debug`. UDP is NOT wrapped in
+(`LOCUS_DEBUG=1` switches the log level to `debug`. UDP is NOT wrapped in
 UDP-over-TCP: sing-box's `udp_over_tcp` is a proprietary SagerNet protocol
 (magic domains `sp.udp-over-tcp.arpa` / `sp.v2.udp-over-tcp.arpa`) that
 shadowsocks-rust rejects with RST (observed 2026-08-01 — see FIXES.md
@@ -264,7 +264,7 @@ On new process start:
 
 On crash before step 7:
   Next start sees .update-pending (no .update-confirmed)
-  → Auto-revert to backup binary from .myvpn-backups/
+  → Auto-revert to backup binary from .locus-backups/
   → Place .reverted sentinel
 ```
 
@@ -275,7 +275,7 @@ Server sets `rollout_percent` in PocketBase `update_config` collection.
 - `.update-pending` — binary was swapped, new version hasn't confirmed yet
 - `.update-confirmed` — new version started successfully
 - `.reverted` — auto-revert happened (diagnostic)
-- `.myvpn-backups/` — previous binary kept for rollback
+- `.locus-backups/` — previous binary kept for rollback
 
 ### 2.7 GUI (`frontend/` — Wails + Vue 3)
 
@@ -285,13 +285,15 @@ in a Wails WebView. Two screens (switched by `App.vue`):
 1. **Activation screen** — code input with auto-formatting + live Luhn validation, tier info, activate button
 2. **Main screen** — status indicator + tier badge, status circle, connect/disconnect button, stats (engine state, heartbeat failures, grace days), diagnostics modal
 
-**Window behaviour:** the window is shown on launch (Wails v2.9 has no system
-tray API, so a `StartHidden` app would be permanently invisible). Closing the
-window quits the app — the `tray:show` / `tray:quit` hooks in `setupSystemTray`
-are dormant (no tray icon exists yet). The background colour is set natively to
-avoid a white flash while the WebView loads.
+**Window behaviour:** the window is shown on launch. Wails v2 has no system
+tray API, so a visible window is required (a `StartHidden` app would be
+permanently invisible). Closing the window quits the app (Wails v2 cannot
+intercept close → hide). An **optional** tray icon is available behind
+`LOCUS_TRAY=1` (`internal/tray`: live status + Connect/Disconnect/Open/Quit);
+it is off by default because it runs native code that must be validated per OS.
+The background colour is set natively to avoid a white flash while the WebView loads.
 
-**Black + purple theme** (`#0D0D0F` background, `#A855F7` accent — see
+**Dark-green theme** (`#06130C` background, Locus green `#2EA86A` accent — see
 `UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
 "Disconnected" with a tier badge (Eco/Stealth/Strike).
 
@@ -304,14 +306,14 @@ Downloaded separately (bundled with installer or downloaded at runtime).
 Platform-specific binary.
 
 **Responsibilities:**
-- Create TUN device (`myvpn0`, `10.0.0.1/30`)
+- Create TUN device (`locus0`, `10.0.0.1/30`)
 - Route all IPv4 traffic through TUN
 - Shadowsocks TCP outbound to VPS
 - DNS through tunnel (1.1.1.1 DoH)
 - Handle reconnection internally (sing-box has built-in retry)
 
 **Distribution:** the sing-box binary is downloaded during CI and bundled
-alongside `myvpn` in each release ZIP (`engines/` is a local placeholder).
+alongside `locus` in each release ZIP (`engines/` is a local placeholder).
 The current client does not download engines at runtime.
 
 **No separate SOCKS5 or tun2socks layer** — sing-box does everything in one process.
@@ -322,7 +324,7 @@ The current client does not download engines at runtime.
 
 ```
 Wails App.Startup():
-  1. storage.New("myvpn") — load or create state
+  1. storage.New("locus") — load or create state
   2. activation.NewClient(hubURL)
   3. GenerateFingerprint()
   4. findSingBox() — alongside the executable, then system paths
@@ -421,7 +423,7 @@ Update:
   ↓
   Two-phase swap: pending → fork → confirmed
   ↓
-  Old binary in .myvpn-backups/ (can revert with --revert or auto-revert on crash)
+  Old binary in .locus-backups/ (can revert with --revert or auto-revert on crash)
 ```
 
 ---
@@ -448,7 +450,7 @@ user must right-click → Open or run `xattr -cr` (see `CLIENT-GUIDE.md`).
 
 | Rule | Why |
 |------|-----|
-| **Only 2 binaries** (myvpn + sing-box) | Less breakage surface area. No helper, no tun2socks, no sslocal. |
+| **Only 2 binaries** (locus + sing-box) | Less breakage surface area. No helper, no tun2socks, no sslocal. |
 | **No TLS in the tunnel** | JA3 fingerprinting is the #1 detection method. Shadowsocks AEAD has no TLS fingerprint. |
 | **UDP attempted raw, TCP fallback** | N4L drops all UDP, so UDP (incl. Strike's relay) only works on permissive networks; browsers fall back to TCP. sing-box's UoT is proprietary — never enabled (see FIXES.md Follow-up 9). |
 | **Server-enforced caps** | Client can't bypass its tier cap. tc caps (5/100/200 Mbps) are on the VPS. |

@@ -40,7 +40,7 @@ type Config struct {
 // DefaultConfig returns a default TUN configuration.
 func DefaultConfig() Config {
 	return Config{
-		Name:       "myvpn0",
+		Name:       "locus0",
 		MTU:        1500,
 		VirtualIP:  "10.0.0.2",
 		DNSServers: []string{"1.1.1.1", "1.0.0.1"},
@@ -170,14 +170,14 @@ func killSwitchWindows(enable bool, iface string) error {
 	if enable {
 		// Use Windows Filtering Platform via netsh
 		if err := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
-			"name=MyVPN_KillSwitch", "dir=out", "action=block",
+			"name=Locus_KillSwitch", "dir=out", "action=block",
 			"interfacetype=!\"Tunnel\"", "enable=yes",
 		).Run(); err != nil {
 			return fmt.Errorf("kill switch enable failed: %w", err)
 		}
 	} else {
 		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
-			"name=MyVPN_KillSwitch").Run()
+			"name=Locus_KillSwitch").Run()
 	}
 	return nil
 }
@@ -226,7 +226,7 @@ func setDNSWindows(servers []string) error {
 	// Use netsh to set DNS
 	for _, s := range servers {
 		if err := exec.Command("netsh", "interface", "ip", "set", "dns",
-			"name=MyVPN", "source=static", fmt.Sprintf("addr=%s", s),
+			"name=Locus", "source=static", fmt.Sprintf("addr=%s", s),
 		).Run(); err != nil {
 			return fmt.Errorf("cannot set Windows DNS: %w", err)
 		}
@@ -316,7 +316,7 @@ func (t *windowsTUN) Name() string { return t.cfg.Name }
 
 func (t *windowsTUN) Start() error {
 	// Windows TUN setup requires the TUN helper service
-	return fmt.Errorf("windows TUN requires myvpn-helper service")
+	return fmt.Errorf("windows TUN requires locus-helper service")
 }
 
 func (t *windowsTUN) Stop() error {

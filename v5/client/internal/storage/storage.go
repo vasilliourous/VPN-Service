@@ -1,14 +1,14 @@
-// Package storage provides local persistent storage for the MyVPN client.
+// Package storage provides local persistent storage for the Locus client.
 //
 // All data is stored as a single JSON file in the platform-specific app data
 // directory. The file is encrypted at rest only by the OS (no app-level
 // encryption — the activation code is the only secret, and it's short enough
 // that disk encryption is assumed).
 //
-// File location by platform (appName = "myvpn"):
+// File location by platform (appName = "locus"):
 //
-//	Linux:   ~/.config/myvpn/storage.json
-//	Windows: %APPDATA%\myvpn\storage.json
+//	Linux:   ~/.config/locus/storage.json
+//	Windows: %APPDATA%\locus\storage.json
 //
 // Hardening: atomic writes with temp file + rename, backup rotation (keep last 3),
 // file permission validation, thread-safe reads/writes, input validation.
@@ -35,7 +35,7 @@ const (
 	filePerm = 0600
 )
 
-// Data represents the persisted state of the MyVPN client.
+// Data represents the persisted state of the Locus client.
 type Data struct {
 	// Activation state
 	Code              string `json:"code,omitempty"`

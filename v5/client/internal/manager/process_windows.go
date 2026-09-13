@@ -22,7 +22,7 @@ func newProcAttr() *syscall.SysProcAttr {
 // foreignSingBoxRunning reports whether an untracked sing-box process is
 // already running (we have not spawned one yet when Start calls this).
 // Used to refuse stacking a second engine on the same TUN — two instances
-// sharing myvpn0 corrupt routing (see Start in process.go).
+// sharing locus0 corrupt routing (see Start in process.go).
 func foreignSingBoxRunning() bool {
 	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq sing-box.exe", "/NH").Output()
 	if err != nil {

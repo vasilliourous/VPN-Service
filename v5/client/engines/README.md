@@ -1,4 +1,4 @@
-# MyVPN Engine Binaries
+# Locus Engine Binaries
 
 Place sing-box binaries here for local development builds.
 
