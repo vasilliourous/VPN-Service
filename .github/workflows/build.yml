@@ -65,11 +65,13 @@ jobs:
         with:
           node-version: '20'
 
-      # Wails needs WebKitGTK headers on Linux (CGO)
+      # Wails needs WebKitGTK headers on Linux (CGO).
+      # libayatana-appindicator3-dev provides the ayatana-appindicator3-0.1
+      # pkg-config file that getlantern/systray (internal/tray) compiles against.
       - name: Install Linux webview deps (Wails)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
 
       # ── Frontend MUST be built before Go compiles (//go:embed) ──
       - name: Build frontend (required for //go:embed)
@@ -163,12 +165,14 @@ jobs:
         with:
           node-version: '20'
 
-      # Wails needs WebKitGTK headers on Linux (CGO)
+      # Wails needs WebKitGTK headers on Linux (CGO).
+      # libayatana-appindicator3-dev provides the ayatana-appindicator3-0.1
+      # pkg-config file that getlantern/systray (internal/tray) compiles against.
       - name: Install Linux webview deps (Wails)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
 
       # Diagnostic: show the repo layout so future path issues are obvious
       - name: "Debug: show client dir"
