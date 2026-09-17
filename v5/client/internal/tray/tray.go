@@ -42,7 +42,6 @@ type Controller struct {
 	ready     chan struct{}
 	startOnce sync.Once
 	stopOnce  sync.Once
-	exitFunc  func() // run when systray has exited
 }
 
 // Start launches systray in the background and returns a *Controller.
