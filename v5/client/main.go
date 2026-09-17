@@ -84,17 +84,16 @@ func main() {
 	// Only useful immediately after a bad self-update. Performed before the
 	// GUI is launched / any engine starts. See updater.CheckOnStartup(true).
 	if hasArg("--revert") {
-		exe, err := os.Executable()
-		if err == nil {
-			reverted, rerr := updater.CheckOnStartup(true)
-			switch {
-			case rerr != nil:
-				log.Printf("Revert failed: %v", rerr)
-			case !reverted:
-				log.Printf("Revert: no backup to restore (nothing to do)")
-			default:
-				log.Printf("Revert: reinstated previous Locus binary")
-			}
+		// CheckOnStartup locates the current executable internally, so no
+		// os.Executable() call is needed here.
+		reverted, err := updater.CheckOnStartup(true)
+		switch {
+		case err != nil:
+			log.Printf("Revert failed: %v", err)
+		case !reverted:
+			log.Printf("Revert: no backup to restore (nothing to do)")
+		default:
+			log.Printf("Revert: reinstated previous Locus binary")
 		}
 		return // never launch the interactive GUI for a --revert invocation
 	}
