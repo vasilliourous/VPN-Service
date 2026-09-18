@@ -19,7 +19,7 @@
       <p class="lead">
         Most VPNs sell you a device count. We publish a speed cap and tell you what each tier
         is actually good for. Every tier has the same no-logs policy and the same
-        {{network.countries}}-country network.
+        112-country network.
       </p>
 
       <div class="billing mt-3" role="group" aria-label="Billing period">
@@ -43,16 +43,16 @@
             <span class="tier__badge">○ Basic</span>
           </div>
           <div class="tier__price">
-            <span class="tier__amount">$<span data-price-amount>{{tiers.basic.price}}</span></span>
+            <span class="tier__amount">$<span data-price-amount>3.99</span></span>
             <span class="tier__period">/ month</span>
           </div>
           <p class="tier__note" data-price-note>billed monthly, cancel any time</p>
-          <p class="tier__tagline">{{tiers.basic.tagline}}</p>
+          <p class="tier__tagline">Browsing and messaging</p>
           <ul class="tier__specs">
-            <li><span data-icon="speed"></span><span><b>{{tiers.basic.cap}} Mbps</b> speed cap</span></li>
-            <li><span data-icon="devices"></span><span><b>{{tiers.basic.devices}} devices</b> at once</span></li>
+            <li><span data-icon="speed"></span><span><b>5 Mbps</b> speed cap</span></li>
+            <li><span data-icon="devices"></span><span><b>3 devices</b> at once</span></li>
             <li><span data-icon="noTrace"></span><span>TCP tunnel, no UDP relay</span></li>
-            <li><span data-icon="globe"></span><span>{{network.countries}} countries</span></li>
+            <li><span data-icon="globe"></span><span>112 countries</span></li>
           </ul>
           <div class="tier__cta">
             <a class="btn btn--ghost btn--block" data-plan-cta href="signup.html?plan=basic">Choose Basic</a>
@@ -65,16 +65,16 @@
             <span class="tier__badge">◉ Stream</span>
           </div>
           <div class="tier__price">
-            <span class="tier__amount">$<span data-price-amount>{{tiers.stream.price}}</span></span>
+            <span class="tier__amount">$<span data-price-amount>7.99</span></span>
             <span class="tier__period">/ month</span>
           </div>
           <p class="tier__note" data-price-note>billed monthly, cancel any time</p>
-          <p class="tier__tagline">{{tiers.stream.tagline}}</p>
+          <p class="tier__tagline">Video and large transfers</p>
           <ul class="tier__specs">
-            <li><span data-icon="speed"></span><span><b>{{tiers.stream.cap}} Mbps</b> speed cap</span></li>
-            <li><span data-icon="devices"></span><span><b>{{tiers.stream.devices}} devices</b> at once</span></li>
+            <li><span data-icon="speed"></span><span><b>100 Mbps</b> speed cap</span></li>
+            <li><span data-icon="devices"></span><span><b>8 devices</b> at once</span></li>
             <li><span data-icon="noTrace"></span><span>TCP tunnel, no UDP relay</span></li>
-            <li><span data-icon="globe"></span><span>{{network.countries}} countries</span></li>
+            <li><span data-icon="globe"></span><span>112 countries</span></li>
           </ul>
           <div class="tier__cta">
             <a class="btn btn--primary btn--block" data-plan-cta href="signup.html?plan=stream">Choose Stream</a>
@@ -86,16 +86,16 @@
             <span class="tier__badge">⚡ Gaming</span>
           </div>
           <div class="tier__price">
-            <span class="tier__amount">$<span data-price-amount>{{tiers.gaming.price}}</span></span>
+            <span class="tier__amount">$<span data-price-amount>14.99</span></span>
             <span class="tier__period">/ month</span>
           </div>
           <p class="tier__note" data-price-note>billed monthly, cancel any time</p>
-          <p class="tier__tagline">{{tiers.gaming.tagline}}</p>
+          <p class="tier__tagline">Low-latency and UDP relay</p>
           <ul class="tier__specs">
-            <li><span data-icon="speed"></span><span><b>{{tiers.gaming.cap}} Mbps</b> speed cap</span></li>
-            <li><span data-icon="devices"></span><span><b>{{tiers.gaming.devices}} devices</b> at once</span></li>
+            <li><span data-icon="speed"></span><span><b>200 Mbps</b> speed cap</span></li>
+            <li><span data-icon="devices"></span><span><b>Unlimited devices</b> at once</span></li>
             <li><span data-icon="bolt"></span><span><b>UDP relay</b> for games and voice</span></li>
-            <li><span data-icon="globe"></span><span>{{network.countries}} countries</span></li>
+            <li><span data-icon="globe"></span><span>112 countries</span></li>
           </ul>
           <div class="tier__cta">
             <a class="btn btn--ghost btn--block" data-plan-cta href="signup.html?plan=gaming">Choose Gaming</a>
@@ -131,27 +131,27 @@
           <tbody>
             <tr>
               <th scope="row">Monthly price</th>
-              <td>${{tiers.basic.price}}</td>
-              <td>${{tiers.stream.price}}</td>
-              <td>${{tiers.gaming.price}}</td>
+              <td>$3.99</td>
+              <td>$7.99</td>
+              <td>$14.99</td>
             </tr>
             <tr>
               <th scope="row">Annual price, per month</th>
-              <td>${{tiers.basic.annual}}</td>
-              <td>${{tiers.stream.annual}}</td>
-              <td>${{tiers.gaming.annual}}</td>
+              <td>$2.99</td>
+              <td>$5.99</td>
+              <td>$11.99</td>
             </tr>
             <tr>
               <th scope="row">Speed cap</th>
-              <td>{{tiers.basic.cap}} Mbps</td>
-              <td>{{tiers.stream.cap}} Mbps</td>
-              <td>{{tiers.gaming.cap}} Mbps</td>
+              <td>5 Mbps</td>
+              <td>100 Mbps</td>
+              <td>200 Mbps</td>
             </tr>
             <tr>
               <th scope="row">Devices at once</th>
-              <td>{{tiers.basic.devices}}</td>
-              <td>{{tiers.stream.devices}}</td>
-              <td>{{tiers.gaming.devices}}</td>
+              <td>3</td>
+              <td>8</td>
+              <td>Unlimited</td>
             </tr>
             <tr>
               <th scope="row">UDP relay</th>
@@ -161,9 +161,9 @@
             </tr>
             <tr>
               <th scope="row">Countries</th>
-              <td>{{network.countries}}</td>
-              <td>{{network.countries}}</td>
-              <td>{{network.countries}}</td>
+              <td>112</td>
+              <td>112</td>
+              <td>112</td>
             </tr>
             <tr>
               <th scope="row">No-logs policy</th>
@@ -179,15 +179,15 @@
             </tr>
             <tr>
               <th scope="row">Refund window</th>
-              <td>{{policy.refundDays}} days</td>
-              <td>{{policy.refundDays}} days</td>
-              <td>{{policy.refundDays}} days</td>
+              <td>30 days</td>
+              <td>30 days</td>
+              <td>30 days</td>
             </tr>
             <tr>
               <th scope="row">Grace period on a lapsed payment</th>
-              <td>{{policy.graceDays}} days</td>
-              <td>{{policy.graceDays}} days</td>
-              <td>{{policy.graceDays}} days</td>
+              <td>7 days</td>
+              <td>7 days</td>
+              <td>7 days</td>
             </tr>
           </tbody>
         </table>
@@ -214,11 +214,11 @@
           </div>
           <div class="card card--quiet">
             <h3>What if a payment fails?</h3>
-            <p>Your connection keeps working for {{policy.graceDays}} days and the client shows the days remaining, so a lapsed card does not mean losing connectivity mid-task.</p>
+            <p>Your connection keeps working for 7 days and the client shows the days remaining, so a lapsed card does not mean losing connectivity mid-task.</p>
           </div>
           <div class="card card--quiet">
             <h3>Is the refund real?</h3>
-            <p>Full refund within {{policy.refundDays}} days of your first payment, no reason required, once per account. The <a href="refunds.html">refund policy</a> has the detail.</p>
+            <p>Full refund within 30 days of your first payment, no reason required, once per account. The <a href="refunds.html">refund policy</a> has the detail.</p>
           </div>
           <div class="card card--quiet">
             <h3>Do prices change at renewal?</h3>
@@ -230,7 +230,7 @@
       <div class="cta-band mt-4">
         <h2>Start with any tier, leave whenever</h2>
         <p>
-          Every plan carries the {{policy.refundDays}}-day refund and the same no-logs policy.
+          Every plan carries the 30-day refund and the same no-logs policy.
           Nothing here is designed to be hard to get out of.
         </p>
         <div class="row-inline mt-3 center-cta">
@@ -243,6 +243,14 @@
 
 </main>
 
+<!-- LOCUS_CONTENT_START -->
+<script>
+  /* Generated by build-content.js from content.json — do not edit by hand.
+     Inlined so the pages render and behave correctly from file:// as well
+     as over HTTP, where fetch() is available. */
+  window.LOCUS_CONTENT = {"tiers":{"basic":{"name":"Basic","tagline":"Browsing and messaging","price":"3.99","annual":"2.99","annualTotal":"35.88","cap":"5","devices":"3","udp":false,"accent":"#7FB48F","glyph":"○","blurb":"A slow, steady connection for text, mail and reading. Everything on the network works; it simply moves at 5 Mbps."},"stream":{"name":"Stream","tagline":"Video and large transfers","price":"7.99","annual":"5.99","annualTotal":"71.88","cap":"100","devices":"8","udp":false,"accent":"#46C186","glyph":"◉","blurb":"Enough throughput for full-resolution video on several devices at once, with the same network underneath."},"gaming":{"name":"Gaming","tagline":"Low-latency and UDP relay","price":"14.99","annual":"11.99","annualTotal":"143.88","cap":"200","devices":"Unlimited","udp":true,"accent":"#EAB308","glyph":"⚡","blurb":"The fastest cap on the network, unlimited devices, and the UDP relay that real-time games and voice chat need."}},"network":{"countries":"112","cities":"142","servers":"3,000+","uptime":"99.9%"},"policy":{"refundDays":"30","graceDays":"7","auditCadence":"once a year"},"brand":{"company":"Locus Networks Ltd.","jurisdiction":"the Netherlands","domain":"locus.example"}};
+</script>
+<!-- LOCUS_CONTENT_END -->
 <script src="components.js"></script>
 <script src="site.js"></script>
 </body>

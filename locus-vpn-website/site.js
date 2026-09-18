@@ -23,6 +23,15 @@
     });
   }
 
+  /* Both sources resolve to the same structured shape — the full
+     content.json object — so callers never need to know which one was used. */
+  function resolveContent() {
+    if (window.LOCUS_CONTENT) {
+      return Promise.resolve(window.LOCUS_CONTENT);
+    }
+    return fetchContent();
+  }
+
   /* Replace {{token}} placeholders throughout the document with
      values from content.json. This keeps prose prices, caps and
      counts single-sourced instead of hand-copied per page.
@@ -108,45 +117,52 @@
     var toggle = document.getElementById("billToggle");
     if (!toggle) return Promise.resolve(null);
 
-    return fetchContent().then(function (content) {
-      var monthLbl = document.getElementById("monthLbl");
-      var yearLbl = document.getElementById("yearLbl");
+    var monthLbl = document.getElementById("monthLbl");
+    var yearLbl = document.getElementById("yearLbl");
+    var content = null;
 
-      function render() {
-        var annual = toggle.checked;
+    function render() {
+      // Until content arrives the markup already holds the monthly figures,
+      // so there is nothing to update yet.
+      if (!content) return;
 
-        monthLbl.classList.toggle("is-active", !annual);
-        yearLbl.classList.toggle("is-active", annual);
+      var annual = toggle.checked;
 
-        document.querySelectorAll("[data-tier]").forEach(function (el) {
-          var tier = content.tiers[el.getAttribute("data-tier")];
-          if (!tier) return;
+      monthLbl.classList.toggle("is-active", !annual);
+      yearLbl.classList.toggle("is-active", annual);
 
-          var amount = el.querySelector("[data-price-amount]");
-          var note = el.querySelector("[data-price-note]");
-          var cta = el.querySelector("[data-plan-cta]");
+      document.querySelectorAll("[data-tier]").forEach(function (el) {
+        var tier = content.tiers[el.getAttribute("data-tier")];
+        if (!tier) return;
 
-          if (amount) {
-            amount.textContent = annual ? Number(tier.annual).toFixed(2) : tier.price;
-          }
+        var amount = el.querySelector("[data-price-amount]");
+        var note = el.querySelector("[data-price-note]");
+        var cta = el.querySelector("[data-plan-cta]");
 
-          if (note) {
-            note.textContent = annual
-              ? money(tier.annualTotal) + " billed once a year"
-              : "billed monthly, cancel any time";
-          }
+        if (amount) {
+          amount.textContent = annual ? Number(tier.annual).toFixed(2) : tier.price;
+        }
 
-          if (cta) {
-            cta.setAttribute("href", "signup.html?plan=" + el.getAttribute("data-tier") +
-              (annual ? "&billing=annual" : ""));
-          }
-        });
-      }
+        if (note) {
+          note.textContent = annual
+            ? money(tier.annualTotal) + " billed once a year"
+            : "billed monthly, cancel any time";
+        }
 
-      toggle.addEventListener("change", render);
-      render();
-      return content;
-    });
+        if (cta) {
+          cta.setAttribute("href", "signup.html?plan=" + el.getAttribute("data-tier") +
+            (annual ? "&billing=annual" : ""));
+        }
+      });
+    }
+
+    // Bind immediately: the toggle must work even if content never resolves
+    // (for example on file:// where fetch is blocked).
+    toggle.addEventListener("change", render);
+
+    return resolveContent()
+      .then(function (c) { content = c; render(); return c; })
+      .catch(function () { return null; });
   }
 
   /* ---------------------------------------------------------- *
@@ -230,14 +246,44 @@
 
     // mountBilling resolves with the content it already fetched on the
     // pricing page, and with null everywhere else. Chain onto it so
-    // content.json is fetched exactly once per page.
+    // content.json is resolved at most once per page.
     Promise.resolve(mountBilling())
-      .then(function (c) { return c || fetchContent(); })
+      .then(function (c) { return c || resolveContent(); })
       .then(function (c) { if (c) applyTokens(c); })
-      .catch(function () { /* tokens stay literal if content.json is unavailable */ });
+      .catch(function () { /* leave literal text only if there is nothing to substitute */ });
+  }
+
+  /* Tokens are substituted as early as possible. The baked map is available
+     synchronously, so on a normal page load this runs before the copy is
+     painted. It only falls back to a deferred network fetch if the page has
+     not been built yet by build-content.js. */
+  function applyTokensEarly() {
+    if (window.LOCUS_CONTENT) {
+      try {
+        applyTokens(window.LOCUS_CONTENT);
+        return;
+      } catch (e) {
+        /* fall through to the network path below */
+      }
+    }
+
+    resolveContent()
+      .then(function (c) {
+        if (!c) return;
+        // Only substitute what has not already been handled; re-running is
+        // harmless because substituted text contains no tokens.
+        applyTokens(c);
+        document.addEventListener("DOMContentLoaded", function () { applyTokens(c); });
+      })
+      .catch(function () { /* nothing to substitute */ });
   }
 
   if (document.readyState === "loading") {
+    // Substitute content before the document finishes parsing, so no raw
+    // {{token}} is ever painted. mountFaq/mountToc need the parsed DOM and
+    // so are safe to run here too: their queries simply find nothing yet
+    // and the DOMContentLoaded pass picks them up.
+    applyTokensEarly();
     document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
@@ -246,6 +292,7 @@
   // Shared helpers for page-level scripts (signup checkout).
   window.locusSite = {
     fetchContent: fetchContent,
+    resolveContent: resolveContent,
     money: money,
     iconOk: ICON_OK,
     iconNo: ICON_NO,

@@ -37,8 +37,11 @@ files next to `_tools/` without extra configuration.
 - **Do not move these back into the site root.** `edit.js` serves raw file
   contents when it sees an `x-raw: 1` header and writes to disk on request — it
   is a development tool, not part of the product.
-- The site no longer needs the editor to change shared values. Prices, caps,
-  counts and policy figures now live in `content.json` and are substituted at
-  load time by `site.js`, so they can be edited directly in that one file.
+- Shared values (prices, caps, counts) live in `content.json` and are baked
+  into the pages by `../build-content.js`. **After editing `content.json`, run
+  that script** or the pages will not reflect the change:
+  ```sh
+  node build-content.js
+  ```
 - If you use the editor, delete the `.edits/` directory it creates before
   committing. That directory is intentionally not tracked.

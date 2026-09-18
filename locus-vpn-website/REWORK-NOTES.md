@@ -58,17 +58,36 @@ and reveal-on-scroll — all disabled under `prefers-reduced-motion`.
 
 ### Single-sourced content
 
-`content.json` was extended and is now consumed at runtime by `site.js`:
+`content.json` is the single source of truth for tier prices, caps, device
+counts, network figures, policy windows and brand details. Pages reference
+these as `{{tokens}}`.
 
-- Tier names, prices, annual prices, caps, device counts, taglines, accents.
-- Network figures (countries, cities, servers, uptime).
-- Policy figures (refund window, grace period, audit cadence) and brand
-  details.
+**Tokens are substituted at build time by `build-content.js`.** That script
+writes two things into every page:
 
-Pages reference these as `{{tokens}}`, substituted on load. Prices and counts
-are no longer hand-copied into each page, which is what allowed the drift that
-corrupted `index.html` in the first place. The substitution covers text nodes,
-attributes, `<title>` and `meta[description]`.
+1. The tokens are replaced in the markup itself, so the copy is correct with
+   **no JavaScript at all**.
+2. The full `content.json` object is inlined as `window.LOCUS_CONTENT`, so the
+   interactive code (billing toggle, tier switching, signup summary) has the
+   structured data it needs without a request.
+
+`site.js` prefers `window.LOCUS_CONTENT` and only falls back to fetching
+`content.json` if the inline copy is absent (a page edited but not yet
+rebuilt).
+
+#### After editing content.json
+
+```sh
+node build-content.js          # bake into all pages
+node build-content.js --check  # verify pages are up to date
+```
+
+**Why this is not done at runtime with fetch().** An earlier version fetched
+`content.json` in the browser. That works over HTTP but fails on `file://`,
+where the browser blocks the request — leaving literal `{{tokens}}` visible in
+the copy. Baking at build time makes the pages correct standalone, which is
+also what lets them be opened directly from disk or dropped on any static host
+with no server-side step.
 
 ### Pages rebuilt
 
@@ -146,9 +165,17 @@ files are still recoverable from git history once this work is committed.
 
 Re-run any of these after further changes:
 
+- **Build** — `node build-content.js --check` confirms every page is in sync
+  with `content.json`.
+- **No tokens in markup** — `grep -o '{{[a-zA-Z0-9._]*}}' *.html` returns
+  nothing, and the same holds when the pages are parsed with scripting
+  disabled entirely.
+- **Works from file://** — pages were rendered and screenshotted directly from
+  `file://` with `fetch` unavailable, confirming the copy and the interactive
+  controls (billing toggle, signup summary) work without a server.
 - **Structure** — all pages parse, tag balance matches, exactly one `<h1>` per
-  page, no leftover `{{tokens}}` in the rendered DOM, `<title>` and meta
-  descriptions fully substituted, nav `aria-current` correct on every page.
+  page, `<title>` and meta descriptions fully substituted, nav `aria-current`
+  correct on every page.
 - **Links** — 108 internal links and anchors resolve across all 11 pages.
 - **Accessibility** — `lang`, labels on every input, accessible names on every
   button and link, no `img` without `alt`, tab/dialog ARIA wiring intact.
