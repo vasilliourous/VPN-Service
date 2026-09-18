@@ -3,7 +3,11 @@
 
 import { reactive, readonly } from 'vue'
 import * as bridge from '@/lib/bridge'
-import type { StatusResult, UpdateCheckResult, UpdatePhase } from '@/types'
+import type { StatusResult, UpdateCheckResult, UpdatePhase, FailureKind } from '@/types'
+
+// offlineMessage mirrors the constant in lib/bridge (re-exported there for the
+// components); kept as a single source via import so wording never drifts.
+import { classifyFailure, offlineMessage } from '@/lib/bridge'
 
 interface State {
   // Connection
@@ -22,7 +26,23 @@ interface State {
   // UI
   loading: boolean
   connecting: boolean
+  // reconnectRequested is true while we are waiting for the backend to bring the
+  // tunnel up after the watchdog gave up (or after a manual Retry). It keeps the
+  // adaptive button reading "Reconnecting…" instead of looking idle.
+  reconnectRequested: boolean
+  // connectStage drives staged progress text while connecting:
+  // 'idle' | 'starting' (engine launching) | 'waiting' (engine up, awaiting the
+  // watchdog's first traffic probe).
+  connectStage: string
   error: string
+  // lastErrorKind classifies the most recent failure so the UI can show the
+  // student an actionable step (e.g. "check your wi-fi") rather than a
+  // transient toast that has already dismissed itself.
+  lastErrorKind: FailureKind
+  // lastActionable is the persistent, non-dismissed explanation of the last
+  // failure. Unlike `error` (auto-dismissed toast) it survives until the next
+  // successful action, so a student who looked away still sees why it failed.
+  lastActionable: string
   diagnostics: string
   version: string
 
@@ -48,7 +68,11 @@ const state = reactive<State>({
   activationError: '',
   loading: false,
   connecting: false,
+  reconnectRequested: false,
+  connectStage: 'idle',
   error: '',
+  lastErrorKind: 'unknown',
+  lastActionable: '',
   diagnostics: '',
   version: '',
   updateAvailable: false,
@@ -59,26 +83,63 @@ const state = reactive<State>({
   updateMessage: '',
 })
 
-function setError(msg: string): void {
-  state.error = msg
+// setFailure records a failure in both places the UI needs it: the transient
+// toast (`error`, auto-dismissed by App.vue) and the persistent explanation
+// (`lastActionable`) that stays put until the next successful action. Offline
+// failures get the student-facing wording instead of the raw dial error.
+function setFailure(msg: string): void {
+  const kind = classifyFailure(msg)
+  state.lastErrorKind = kind
+  const friendly = kind === 'offline' ? offlineMessage : msg
+  state.error = friendly
+  state.lastActionable = friendly
+}
+
+// clearFailure is called when an action succeeds — it retires the persistent
+// explanation so a stale "check your wi-fi" banner cannot linger after a later
+// successful connect.
+function clearFailure(): void {
+  state.lastActionable = ''
+  state.lastErrorKind = 'unknown'
 }
 
 function clearError(): void {
   state.error = ''
 }
 
+// refreshSeq guards against a slow in-flight refreshStatus() resolving AFTER a
+// newer event-driven status update and clobbering it with stale data. Each call
+// takes a ticket; only the newest ticket is allowed to commit.
+let refreshSeq = 0
+
 async function refreshStatus(): Promise<void> {
+  const ticket = ++refreshSeq
   try {
     const s: StatusResult = await bridge.getStatus()
-    state.connected = s.connected
-    state.tier = s.tier
-    state.state = s.state
-    state.failures = s.failures
-    state.graceDays = s.graceDays
-    state.tunnelOk = s.tunnelOk
-    state.repairStage = (s as StatusResult).repairStage || ''
+    if (ticket !== refreshSeq) return // a newer refresh already won — drop stale
+    applyStatus(s)
   } catch (err: any) {
-    setError(err?.message || 'Failed to get status')
+    if (ticket !== refreshSeq) return
+    setFailure(err?.message || 'Failed to get status')
+  }
+}
+
+// applyStatus copies a StatusResult into reactive state. Single place so the
+// polling path and the event path can never drift (previously the event handler
+// forgot repairStage, freezing the "Repairing…" label).
+function applyStatus(s: StatusResult): void {
+  state.connected = s.connected
+  state.tier = s.tier
+  state.state = s.state
+  state.failures = s.failures
+  state.graceDays = s.graceDays
+  state.tunnelOk = s.tunnelOk
+  state.repairStage = s.repairStage || ''
+  // Once the backend reports a healthy tunnel, any pending reconnect request
+  // has been fulfilled — stop showing "Reconnecting…".
+  if (state.connected && state.tunnelOk) {
+    state.reconnectRequested = false
+    state.connectStage = 'idle'
   }
 }
 
@@ -99,23 +160,65 @@ async function connect(): Promise<string | null> {
   state.connecting = true
   state.loading = true
   state.error = ''
+  state.connectStage = 'starting'
   try {
     const result = await bridge.connect()
     if (result.success) {
       state.connected = true
+      // A fresh connect invalidates any previous degraded/repair state — clear
+      // it so a stale "Repairing…" banner cannot survive a user-initiated
+      // reconnect.
+      state.repairStage = ''
+      state.tunnelOk = false
+      // NOTE: reconnectRequested is deliberately NOT cleared here. connect()
+      // returning success only means the engine started — the tunnel is not
+      // proven healthy until the watchdog's first probe lands (which arrives as
+      // a status:changed event and clears the flag in applyStatus). Leaving it
+      // set keeps the button on "Reconnecting…" until we actually are connected,
+      // instead of briefly claiming success and then falling back to Repairing.
+      state.connectStage = 'waiting'
+      clearFailure()
       await refreshStatus()
       return null
     }
-    setError(result.message)
+    setFailure(result.message)
     return result.message
   } catch (err: any) {
     const msg = err?.message || 'Connection failed'
-    setError(msg)
+    setFailure(msg)
     return msg
   } finally {
     state.connecting = false
     state.loading = false
+    state.connectStage = 'idle'
   }
+}
+
+// retryConnect is the adaptive-button path used once the watchdog has given up
+// (degraded) or a previous attempt failed. It forces a clean reconnect and
+// flags reconnectRequested so the button reads "Reconnecting…" until the
+// backend reports a healthy tunnel.
+async function retryConnect(): Promise<string | null> {
+  if (state.connecting) return null
+  // If the backend still believes it is connected (e.g. wedged), tear it down
+  // first so Connect() starts from a clean engine rather than no-op'ing on
+  // "Already connected".
+  if (state.connected) {
+    try {
+      await bridge.disconnect()
+    } catch {
+      // best effort — fall through to connect, which auto-cleans leftovers
+    }
+    state.connected = false
+  }
+  state.reconnectRequested = true
+  const err = await connect()
+  if (err) {
+    // connect() already recorded the failure; make sure we are not stuck
+    // showing "Reconnecting…" after a hard failure.
+    state.reconnectRequested = false
+  }
+  return err
 }
 
 async function disconnect(): Promise<void> {
@@ -125,9 +228,13 @@ async function disconnect(): Promise<void> {
     await bridge.disconnect()
     state.connected = false
     state.tunnelOk = false
+    // A deliberate disconnect ends any recovery-in-progress or pending retry.
+    state.repairStage = ''
+    state.reconnectRequested = false
+    clearFailure()
     await refreshStatus()
   } catch (err: any) {
-    setError(err?.message || 'Disconnect failed')
+    setFailure(err?.message || 'Disconnect failed')
   } finally {
     state.loading = false
   }
@@ -183,14 +290,14 @@ async function applyUpdate(): Promise<string | null> {
   try {
     const result = await bridge.applyUpdate()
     if (!result.success) {
-      setError(result.message)
+      setFailure(result.message)
       return result.message
     }
     // The backend drives progress via update:status from here on.
     return null
   } catch (err: any) {
     const msg = err?.message || 'Update failed to start'
-    setError(msg)
+    setFailure(msg)
     return msg
   }
 }
@@ -215,12 +322,10 @@ async function loadVersion(): Promise<void> {
 
 export function setupEventListeners(): void {
   bridge.onStatusChanged((status: StatusResult) => {
-    state.connected = status.connected
-    state.tier = status.tier
-    state.state = status.state
-    state.failures = status.failures
-    state.graceDays = status.graceDays
-    state.tunnelOk = status.tunnelOk
+    // A pushed status is newer than any in-flight poll — bump the sequence so a
+    // slow refreshStatus() resolving later cannot roll us back to stale data.
+    refreshSeq++
+    applyStatus(status)
   })
 
   bridge.onUpdateAvailable((event) => {
@@ -239,7 +344,7 @@ export function setupEventListeners(): void {
       // the restart window doesn't offer the update again.
       state.updateAvailable = false
     } else if (event.phase === 'failed') {
-      setError(event.message || 'Update failed')
+      setFailure(event.message || 'Update failed')
     }
   })
 
@@ -270,6 +375,7 @@ export function useVPN() {
     refreshNow,
     checkActivated,
     connect,
+    retryConnect,
     disconnect,
     activate,
     checkUpdate,

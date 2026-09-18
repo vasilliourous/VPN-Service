@@ -245,7 +245,7 @@ func (m *Manager) restartEngine() error {
 		return err
 	}
 	for i := 0; i < 3; i++ {
-		if err := m.startDirect(context.Background(), b); err == nil || err == errEngineAlreadyRunning {
+		if err := m.startDirect(context.Background(), m.procCtxValue(), b); err == nil || err == errEngineAlreadyRunning {
 			return nil
 		}
 		time.Sleep(time.Second)
@@ -271,7 +271,7 @@ func (m *Manager) fullReset() error {
 		return err
 	}
 	for i := 0; i < 3; i++ {
-		if err := m.startDirect(context.Background(), b); err == nil || err == errEngineAlreadyRunning {
+		if err := m.startDirect(context.Background(), m.procCtxValue(), b); err == nil || err == errEngineAlreadyRunning {
 			return nil
 		}
 		time.Sleep(time.Second)
@@ -281,22 +281,32 @@ func (m *Manager) fullReset() error {
 
 // killProcess stops the currently tracked engine process, waiting for it to
 // exit. No-op when nothing is tracked.
+// killProcess kills the tracked engine process and waits for it to exit.
+//
+// Like Stop(), the wait happens outside m.mu so the watchdog's recovery work
+// cannot freeze the UI's status polling. It is a hard kill (Kill, not a
+// graceful signal) because it is only used on the recovery path where the
+// engine is already misbehaving.
 func (m *Manager) killProcess() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.cmd == nil || m.cmd.Process == nil {
-		return nil
-	}
-	if err := m.cmd.Process.Kill(); err != nil {
-		return err
-	}
-	if m.exited != nil {
-		select {
-		case <-m.exited:
-		case <-time.After(shutdownTimeout):
-		}
-	}
+	cmd := m.cmd
+	exited := m.exited
 	m.cmd = nil
 	m.exited = nil
+	m.mu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if err := killProcessGroup(cmd.Process); err != nil {
+		return err
+	}
+	if exited != nil {
+		select {
+		case <-exited:
+		case <-time.After(cmdWaitGrace):
+			log.Printf("killProcess: process group killed but Wait did not return within %v; continuing", cmdWaitGrace)
+		}
+	}
 	return nil
 }

@@ -9,12 +9,14 @@
 import type {
   ValidateResult,
   ActivateResult,
+  CodeCheckResult,
   StatusResult,
   OpResult,
   UpdateCheckResult,
   UpdateResult,
   UpdateStatusEvent,
   AppBindings,
+  FailureKind,
 } from '@/types'
 
 // Go bindings are injected by Wails at `window.go.main.App`. The precise
@@ -35,20 +37,30 @@ const runtime = () => {
   return rt
 }
 
-// Wails's own RPC timeout (see wails_options_other). We use a shorter one so
-// the UI can react promptly instead of waiting for the 30s default before
-// showing an error.
-const RPC_TIMEOUT_MS = 10_000
+// RPC timeout floors, per call shape.
+//
+// These MUST exceed the backend's own context deadline for the matching
+// operation, otherwise the frontend rejects a call that is still legitimately
+// running and reports a false "timed out" — which is exactly what happened
+// when a single 10s limit sat under Activate's 30s server round-trip.
+//   quick    — local reads (status, version, diagnostics): fail fast.
+//   standard — Connect / Disconnect (backend startup deadline is 15s; stop has
+//              a 2s graceful + 2s wait grace, so 20s is ample headroom).
+//   long     — Activate (30s server round-trip plus retry/backoff) and the
+//              code lookup (10s) which also retries.
+const RPC_TIMEOUT_QUICK_MS = 8_000
+const RPC_TIMEOUT_STANDARD_MS = 20_000
+const RPC_TIMEOUT_LONG_MS = 40_000
 
-// wrap guards a single Wails call: rejects if it exceeds RPC_TIMEOUT_MS and
-// coerces any rejection to a readable Error.
-async function wrap<T>(run: () => Promise<T>): Promise<T> {
+// wrap guards a single Wails call: rejects if it exceeds the supplied timeout
+// and coerces any rejection to a readable Error.
+async function wrap<T>(run: () => Promise<T>, timeoutMs: number = RPC_TIMEOUT_QUICK_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
         () => reject(new Error('Request timed out — the backend did not respond in time')),
-        RPC_TIMEOUT_MS,
+        timeoutMs,
       )
     })
     return await Promise.race([run(), timeout])
@@ -76,11 +88,19 @@ export async function getCodePrefix(): Promise<string> {
 }
 
 export async function validateCode(code: string): Promise<ValidateResult> {
-  return wrap(() => go().ValidateCode(code))
+  // Local-only Luhn checksum — fast.
+  return wrap(() => go().ValidateCode(code), RPC_TIMEOUT_QUICK_MS)
+}
+
+// checkCode asks the hub whether the code actually exists (read-only).
+export async function checkCode(code: string): Promise<CodeCheckResult> {
+  // Server round-trip with retry/backoff on the Go side.
+  return wrap(() => go().CheckCode(code), RPC_TIMEOUT_LONG_MS)
 }
 
 export async function activate(code: string): Promise<ActivateResult> {
-  return wrap(() => go().Activate(code))
+  // Activate's backend context deadline is 30s plus retry backoff.
+  return wrap(() => go().Activate(code), RPC_TIMEOUT_LONG_MS)
 }
 
 export async function isActivated(): Promise<boolean> {
@@ -88,11 +108,13 @@ export async function isActivated(): Promise<boolean> {
 }
 
 export async function connect(): Promise<OpResult> {
-  return wrap(() => go().Connect())
+  // Backend startup deadline is 15s.
+  return wrap(() => go().Connect(), RPC_TIMEOUT_STANDARD_MS)
 }
 
 export async function disconnect(): Promise<OpResult> {
-  return wrap(() => go().Disconnect())
+  // Stop is bounded by a 2s graceful window + 2s wait grace.
+  return wrap(() => go().Disconnect(), RPC_TIMEOUT_STANDARD_MS)
 }
 
 export async function getStatus(): Promise<StatusResult> {
@@ -110,6 +132,72 @@ export async function applyUpdate(): Promise<UpdateResult> {
 export async function getDiagnostics(): Promise<string> {
   return wrap(() => go().GetDiagnostics())
 }
+
+// ── Failure classification ──
+
+// classifyFailure maps a raw backend/RPC error string to a coarse kind so the
+// UI can show the student an actionable next step instead of a Go error dump.
+//
+// The patterns mirror the errors that actually reach the UI from the connect
+// path in this repo:
+//   offline  — net.Dial failures from ProbeTunnel/Start when the laptop has no
+//              usable connection ("no such host", "i/o timeout", unreachable…)
+//   elevation— Windows TUN "Access is denied" / admin refusal (app.go Connect)
+//   engine   — sing-box exited / could not start / config generation
+//   server   — the server answered but rejected us (auth/config mismatch)
+// Anything unrecognised falls back to 'unknown' — we never invent a cause.
+export function classifyFailure(message: string): FailureKind {
+  const m = (message || '').toLowerCase()
+
+  if (
+    m.includes('no such host') ||
+    m.includes('no route to host') ||
+    m.includes('network is unreachable') ||
+    m.includes('i/o timeout') ||
+    m.includes('connection timed out') ||
+    m.includes('temporary failure in name resolution') ||
+    m.includes('server misbehaving') ||
+    m.includes('dial tcp') && m.includes('timeout')
+  ) {
+    return 'offline'
+  }
+
+  if (
+    m.includes('access is denied') ||
+    m.includes('administrator') ||
+    m.includes('elevation') ||
+    m.includes('permission')
+  ) {
+    return 'elevation'
+  }
+
+  if (
+    m.includes('sing-box') ||
+    m.includes('cannot generate config') ||
+    m.includes('tun interface') ||
+    m.includes('engine')
+  ) {
+    return 'engine'
+  }
+
+  if (
+    m.includes('timed out — the backend') ||
+    m.includes('connection refused') ||
+    m.includes('rejected') ||
+    m.includes('authentication') ||
+    m.includes('not activated')
+  ) {
+    return 'server'
+  }
+
+  return 'unknown'
+}
+
+// offlineMessage is the student-facing wording for a local connectivity
+// failure. Kept here so the phrasing is consistent between the store and any
+// component that classifies a failure.
+export const offlineMessage =
+  "Couldn't reach the secure server — check your internet connection or school wi-fi, then try again."
 
 // ── Event listeners (Go → frontend notifications) ──
 

@@ -116,6 +116,27 @@ type ActivateResult struct {
 	Tier    string `json:"tier,omitempty"`
 }
 
+// CodeCheckResult is returned by CheckCode — a READ-ONLY pre-check of whether a
+// code is recognised by the hub, so the activation screen can answer "is this
+// code real?" before the student commits to activating.
+type CodeCheckResult struct {
+	// Recognised is true only when the hub confirmed the code EXISTS and is
+	// usable (unbound, or already bound to this device).
+	Recognised bool `json:"recognised"`
+	// Status is the raw lookup status: ok | unbound | bound_this_device |
+	// bound_other | suspended | expired | not_found | unknown.
+	Status string `json:"status"`
+	// Known is true when the server gave a definitive answer. When the hub is
+	// unreachable (or predates this endpoint) Known is false and the UI must
+	// fall back to "we'll confirm when you activate" rather than claiming the
+	// code is bad.
+	Known   bool   `json:"known"`
+	Message string `json:"message,omitempty"`
+	Tier    string `json:"tier,omitempty"`
+	// ExpiresAt is an ISO-8601 timestamp when the hub reported an expiry.
+	ExpiresAt string `json:"expiresAt,omitempty"`
+}
+
 // StatusResult is returned by GetStatus.
 type StatusResult struct {
 	Connected bool   `json:"connected"`
@@ -328,12 +349,63 @@ func (a *App) GetCodePrefix() string {
 
 // ── Code Validation (client-side) ──
 
-// ValidateCode checks an activation code format without making a server call.
+// ValidateCode checks an activation code FORMAT without making a server call.
+//
+// IMPORTANT: this validates the Luhn-mod-N checksum only. It says the code is
+// well-formed, NOT that it exists in the database. Use CheckCode for the latter.
 func (a *App) ValidateCode(code string) ValidateResult {
 	if err := activation.ValidateCodeFormat(code); err != nil {
 		return ValidateResult{Valid: false, Message: err.Error()}
 	}
 	return ValidateResult{Valid: true}
+}
+
+// CheckCode asks the hub whether a code is actually recognised (exists, and is
+// not suspended/expired/bound to another device), WITHOUT binding this device.
+//
+// This is a read-only pre-check for the activation screen. It is deliberately
+// best-effort: any transport failure returns Known=false so the UI can say "we
+// will confirm when you activate" instead of wrongly telling the student their
+// code is invalid. A malformed code never reaches the server.
+func (a *App) CheckCode(code string) CodeCheckResult {
+	if msg := a.notReady(); msg != "" {
+		return CodeCheckResult{Status: "unknown", Known: false, Message: msg}
+	}
+
+	// Reject malformed codes locally (and without spending a rate-limit slot).
+	if err := activation.ValidateCodeFormat(code); err != nil {
+		return CodeCheckResult{
+			Status:  string(activation.LookupNotFound),
+			Known:   true,
+			Message: err.Error(),
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := a.activator.LookupCode(ctx, code, a.fp)
+	if err != nil {
+		// Unknown, not invalid — the student may still activate successfully.
+		return CodeCheckResult{
+			Status:  "unknown",
+			Known:   false,
+			Message: "Could not check the code with the server — it will be verified when you activate.",
+		}
+	}
+
+	recognised := resp.Status == activation.LookupOK ||
+		resp.Status == activation.LookupUnbound ||
+		resp.Status == activation.LookupBoundThisDevice
+
+	return CodeCheckResult{
+		Recognised: recognised,
+		Status:     string(resp.Status),
+		Known:      true,
+		Message:    resp.Message,
+		Tier:       resp.Tier,
+		ExpiresAt:  resp.ExpiresAt,
+	}
 }
 
 // ── Activation ──
@@ -565,10 +637,16 @@ func (a *App) disconnect() OpResult {
 		return OpResult{Success: true, Message: "Already disconnected"}
 	}
 
-	a.mgr.StopWatchdog()
-	_ = a.mgr.Stop()
+	// Emit an OPTIMISTIC disconnected status before the (up to ~2s) shutdown
+	// wait, so the UI reflects the tap immediately instead of sitting on a
+	// spinner until Stop() returns. The authoritative status is emitted again
+	// below once the engine has actually gone.
 	a.connected = false
 	a.autoDisconnect = false
+	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
+
+	a.mgr.StopWatchdog()
+	_ = a.mgr.Stop()
 
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 

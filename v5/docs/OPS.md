@@ -312,9 +312,56 @@ ssh $VPS "cd /opt/pocketbase && ./pocketbase admin update admin@networkingguides
 curl -s "$PB_API/api/health"
 # Hooks loaded? Expect 400 {"message":"Missing code"} — a generic 400 means hook load error
 curl -s -X POST "$PB_API/api/activate" -H 'Content-Type: application/json' -d '{}'
+curl -s -X POST "$PB_API/api/activate" -H 'Content-Type: application/json' -d '{}'
 # Backup timer back?
 ssh $VPS "systemctl is-active pocketbase-backup.timer"
 ```
+
+---
+
+## Deploying the Code-Lookup Hook (`/api/code-lookup`)
+
+The client's activation screen calls a READ-ONLY endpoint to tell a student
+whether their code is actually recognised *before* they commit to activating.
+Clients that ship before this hook is deployed degrade gracefully (they fall
+back to "we'll confirm when you activate"), so the client can ship first.
+
+The endpoint **never binds a device** and reuses the existing `activation_attempts`
+table for rate limiting (10 lookups / 10 min per fingerprint), so it cannot be
+used as an unlimited code-enumeration oracle.
+
+```bash
+VPS=root@networkingguides.duckdns.org
+PB_API=https://networkingguides.duckdns.org   # adjust to the hub base URL
+
+# 1. Back up the hooks directory (reversible).
+ssh $VPS "cp -a /opt/pocketbase/pb_hooks /root/pb_hooks.bak.$(date +%s)"
+
+# 2. Deploy just the new hook file (does not touch the existing hooks).
+scp v5/server/pb_hooks/code_lookup.pb.js $VPS:/opt/pocketbase/pb_hooks/
+ssh $VPS "chown pocketbase:pocketbase /opt/pocketbase/pb_hooks/code_lookup.pb.js"
+
+# 3. A NEW hook file only registers on restart (edits to existing files hot-reload).
+ssh $VPS "systemctl restart pocketbase"
+
+# 4. Verify. A malformed code returns 200 with status "not_found" (format was
+#    rejected locally by the hook) — a generic 400/500 means a hook load error.
+curl -s -X POST "$PB_API/api/code-lookup" -H 'Content-Type: application/json' \
+  -d '{"code":"RQ-AAAA-AAAA-AAAA-A","fingerprint":"0123456789abcdef0123456789abcdef"}'
+# Expect: {"status":"not_found","message":"Invalid code format"}
+
+# 5. Confirm a real code is reported correctly (substitute a real seeded code).
+curl -s -X POST "$PB_API/api/code-lookup" -H 'Content-Type: application/json' \
+  -d '{"code":"<REAL-CODE>","fingerprint":"0123456789abcdef0123456789abcdef"}'
+# Expect one of: ok | unbound | bound_this_device | bound_other | suspended | expired
+
+# Rollback (seconds): remove the file and restart.
+ssh $VPS "rm -f /opt/pocketbase/pb_hooks/code_lookup.pb.js && systemctl restart pocketbase"
+```
+
+**Rollback safety:** the hook only *reads* `codes`; the sole writes are to
+`activation_attempts`. Removing the file fully reverts the behaviour, and
+pre-existing clients are unaffected either way.
 
 ---
 

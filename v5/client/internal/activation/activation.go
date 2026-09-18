@@ -301,3 +301,106 @@ func (c *Client) attemptActivate(ctx context.Context, code, fingerprint string) 
 		return nil, fmt.Errorf("%w (%d): %s", ErrServerError, activateResp.Code, activateResp.Message)
 	}
 }
+
+// ── Code lookup (read-only pre-check) ──
+
+// LookupStatus is the outcome of a read-only code lookup.
+type LookupStatus string
+
+const (
+	// LookupOK means the code exists and is ready to activate on this device.
+	LookupOK LookupStatus = "ok"
+	// LookupUnbound means the code exists and is not bound to any device yet.
+	LookupUnbound LookupStatus = "unbound"
+	// LookupBoundThisDevice means the code is already bound to this device.
+	LookupBoundThisDevice LookupStatus = "bound_this_device"
+	// LookupBoundOther means the code is bound to a different device.
+	LookupBoundOther LookupStatus = "bound_other"
+	// LookupSuspended means the code exists but has been suspended.
+	LookupSuspended LookupStatus = "suspended"
+	// LookupExpired means the code exists but has expired.
+	LookupExpired LookupStatus = "expired"
+	// LookupNotFound means no such code exists in the database.
+	LookupNotFound LookupStatus = "not_found"
+)
+
+// LookupResponse is the response from the read-only /api/code-lookup endpoint.
+type LookupResponse struct {
+	Status LookupStatus `json:"status"`
+	// Tier is present when the code was found (so the UI can show what the
+	// student is about to get before they commit to activating).
+	Tier string `json:"tier,omitempty"`
+	// ExpiresAt is an ISO-8601 timestamp when the code has an expiry.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	// Message is an optional human-readable note from the server.
+	Message string `json:"message,omitempty"`
+}
+
+// LookupCode performs a READ-ONLY pre-check of an activation code.
+//
+// This exists so the activation screen can tell a student whether their code is
+// actually recognised (exists in the database, not suspended/expired/bound to
+// someone else) BEFORE they commit to the 30s activation round-trip — the old
+// ValidateCode only checked the Luhn checksum locally, so "✓ Valid" meant
+// "well-formed", not "real".
+//
+// It never binds the device and is safe to call repeatedly. Callers should treat
+// any transport error as "unknown" and fall back to validating on Activate
+// rather than blocking the student.
+func (c *Client) LookupCode(ctx context.Context, code, fingerprint string) (*LookupResponse, error) {
+	cleaned := stripFormatting(code)
+	if len(cleaned) != CodeTotalLen {
+		return nil, ErrInvalidCode
+	}
+	if !luhnModNCheck(cleaned) {
+		return nil, ErrChecksumFailed
+	}
+
+	req := ActivateRequest{
+		Code:        FormatCode(cleaned),
+		Fingerprint: fingerprint,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot marshal lookup request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.hubURL+"/api/code-lookup", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("cannot create lookup request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", "Locus-Client/2.0")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, ErrTimeout
+		}
+		return nil, fmt.Errorf("%w: %v", ErrServerUnreachable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// A hub without the lookup route (older deployment) returns 404 with a
+	// non-JSON body. Treat that as "unknown" rather than an error so the UI
+	// degrades to the activate-time check instead of showing a false failure.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: lookup endpoint not available", ErrServerUnreachable)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrRateLimited
+	}
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read lookup response: %w", err)
+	}
+
+	var lr LookupResponse
+	if err := json.Unmarshal(respBody, &lr); err != nil {
+		return nil, fmt.Errorf("cannot decode lookup response: %w", err)
+	}
+	return &lr, nil
+}

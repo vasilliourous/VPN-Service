@@ -16,6 +16,18 @@ export interface ActivateResult {
   tier?: string
 }
 
+// Result of the read-only hub code lookup (App.CheckCode).
+// `known` is false when the hub could not be reached — the UI must NOT treat
+// that as an invalid code.
+export interface CodeCheckResult {
+  recognised: boolean
+  status: string
+  known: boolean
+  message?: string
+  tier?: string
+  expiresAt?: string
+}
+
 // ── Status ──
 
 export interface StatusResult {
@@ -34,6 +46,15 @@ export interface OpResult {
   success: boolean
   message: string
 }
+
+// ── Failure classification ──
+//
+// The Go connect path returns a raw OpResult.Message. Some failures are local
+// (the laptop has no working network connection — no route/DNS to the VPN
+// server), others are server/engine-side. Students can act on the former
+// ("check your wi-fi") but can only report the latter, so the UI classifies
+// the message to pick the right wording.
+export type FailureKind = 'offline' | 'elevation' | 'engine' | 'server' | 'unknown'
 
 // ── Updates ──
 
@@ -66,6 +87,7 @@ export interface AppBindings {
   GetCodeCharset(): Promise<string>
   GetCodePrefix(): Promise<string>
   ValidateCode(code: string): Promise<ValidateResult>
+  CheckCode(code: string): Promise<CodeCheckResult>
   Activate(code: string): Promise<ActivateResult>
   IsActivated(): Promise<boolean>
   Connect(): Promise<OpResult>

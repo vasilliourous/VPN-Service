@@ -21,12 +21,17 @@
       :connecting="vpn.state.connecting"
       :loading="vpn.state.loading"
       :version="vpn.state.version"
+      :reconnect-requested="vpn.state.reconnectRequested"
+      :connect-stage="vpn.state.connectStage"
+      :last-actionable="vpn.state.lastActionable"
+      :last-error-kind="vpn.state.lastErrorKind"
       :update-available="vpn.state.updateAvailable"
       :update-version="vpn.state.updateVersion"
       :update-phase="vpn.state.updatePhase"
       :update-message="vpn.state.updateMessage"
       @connect="handleConnect"
       @disconnect="handleDisconnect"
+      @retry-connect="handleRetryConnect"
       @show-diagnostics="handleDiagnostics"
       @apply-update="handleApplyUpdate"
     />
@@ -82,6 +87,10 @@ async function handleDisconnect(): Promise<void> {
   await vpn.disconnect()
 }
 
+async function handleRetryConnect(): Promise<string | null> {
+  return await vpn.retryConnect()
+}
+
 async function handleDiagnostics(): Promise<string> {
   await vpn.loadDiagnostics()
   return vpn.state.diagnostics
@@ -117,6 +126,17 @@ body {
   height: 100vh;
   padding: 24px;
   background: linear-gradient(180deg, #06130C 0%, #0C1A12 100%);
+  /* The window can be resized down to 380×500 and laptop display scaling can
+     reduce the effective viewport further, so the content column scrolls
+     rather than clipping the Connect button off-screen. */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Keep the activation/main content vertically centred when there is room, but
+   never let it compress below its natural height (which would clip). */
+.app-container > * {
+  flex-shrink: 0;
 }
 
 .toast {
@@ -131,6 +151,8 @@ body {
   z-index: 100;
   max-width: 90%;
   text-align: center;
+  /* A long backend error must wrap, not run off the edge of the webview. */
+  overflow-wrap: anywhere;
 }
 
 .toast-error {

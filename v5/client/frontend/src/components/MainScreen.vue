@@ -19,12 +19,17 @@
         </svg>
       </div>
 
-      <div class="status-text">{{ statusLabel }}</div>
+      <div class="status-text" aria-live="polite">{{ statusLabel }}</div>
       <div class="tier-label">{{ tierDisplay }}</div>
+
+      <!-- Staged connect progress: tells the student what is happening during
+           the (up to ~15s) engine startup instead of a bare spinner. -->
+      <div v-if="connectNote" class="connect-note" aria-live="polite">{{ connectNote }}</div>
 
       <!-- Tunnel degraded warning (watchdog flagged no traffic passing) -->
       <div v-if="connected && !tunnelOk" class="degraded-warning">
-        ⚠ {{ repairNote }} If this persists, open Diagnostics and copy the report.
+        ⚠ {{ repairNote }}
+        <span v-if="repairStage === 'degraded'">Open Diagnostics and copy the report if you need help.</span>
       </div>
 
       <!-- Grace period warning -->
@@ -32,15 +37,27 @@
         ⚠ {{ graceDays }} day{{ graceDays === 1 ? '' : 's' }} remaining
       </div>
 
-      <!-- Connect / Disconnect button -->
+      <!-- Connect / Disconnect button. Adaptive: its label + colour + action
+           change with state, so a tap is never a silent no-op. -->
       <button
-        :class="['btn', connected ? 'btn-danger' : 'btn-primary', 'btn-large']"
-        :disabled="loading"
+        :class="['btn', primaryActionClass, 'btn-large']"
+        :disabled="primaryDisabled"
         @click="toggleConnection"
       >
-        <span v-if="loading" class="spinner"></span>
-        <span v-else>{{ connected ? 'Disconnect' : 'Connect' }}</span>
+        <span v-if="loading || reconnectRequested" class="spinner"></span>
+        <span v-else>{{ primaryLabel }}</span>
       </button>
+
+      <!-- Persistent, actionable failure explanation. Unlike the auto-dismiss
+           toast this remains until the next successful action, so a student
+           who looked away still sees WHY it failed and what to do. -->
+      <div v-if="lastActionable" class="actionable-error" role="alert">
+        <span class="actionable-icon" aria-hidden="true">⚠</span>
+        <div class="actionable-body">
+          <span>{{ lastActionable }}</span>
+          <span v-if="failureHint" class="actionable-hint">{{ failureHint }}</span>
+        </div>
+      </div>
 
     </div>
 
@@ -113,6 +130,7 @@ import * as bridge from '@/lib/bridge'
 const emit = defineEmits<{
   connect: []
   disconnect: []
+  'retry-connect': []
   'show-diagnostics': []
   'apply-update': []
 }>()
@@ -132,6 +150,15 @@ const props = defineProps<{
   updateVersion: string
   updatePhase: string
   updateMessage: string
+  // reconnectRequested / lastActionable come from the store so the button and
+  // the persistent error banner stay in sync with live engine state.
+  reconnectRequested: boolean
+  // connectStage drives staged progress text while connecting.
+  connectStage: string
+  lastActionable: string
+  // lastErrorKind is the classified failure kind from the store; drives the
+  // actionable hint under the error text.
+  lastErrorKind: string
 }>()
 
 const showDiagnostics = ref(false)
@@ -152,9 +179,72 @@ const statusLabel = computed(() => {
   if (props.connected) {
     return props.tunnelOk ? 'Connected' : 'Repairing…'
   }
-  if (props.connecting) return 'Connecting…'
+  if (props.connecting || props.reconnectRequested) return 'Connecting…'
   if (props.state === 'crashed') return 'Engine Error'
   return 'Disconnected'
+})
+
+// primaryLabel/primaryActionClass/primaryDisabled drive the single adaptive
+// button. States, in priority order:
+//   1. mid-flight connect (connecting/reconnectRequested) → disabled "Connecting…"
+//   2. connected & healthy → "Disconnect" (danger)
+//   3. connected but degraded, watchdog has given up → "Retry" (accent), forces
+//      a clean reconnect rather than a silent no-op
+//   4. connected but degraded, still recovering → disabled "Repairing…"
+//   5. a previous attempt failed (lastActionable set) → "Retry"
+//   6. idle → "Connect"
+const recovering = computed(() => props.connected && !props.tunnelOk)
+
+// connectNote explains which phase of connecting we are in, so the slow part
+// (engine startup, then the first traffic probe) is visible rather than silent.
+const connectNote = computed(() => {
+  if (props.connecting || props.reconnectRequested) {
+    switch (props.connectStage) {
+      case 'starting':
+        return 'Starting the secure tunnel…'
+      case 'waiting':
+        return 'Verifying the tunnel is passing traffic…'
+      default:
+        return 'Connecting…'
+    }
+  }
+  if (recovering.value && props.repairStage !== 'degraded') {
+    return 'Re-establishing the tunnel…'
+  }
+  return ''
+})
+
+const primaryLabel = computed(() => {
+  if (props.connecting || props.reconnectRequested) return 'Reconnecting…'
+  if (props.connected) {
+    if (!props.tunnelOk) {
+      return props.repairStage === 'degraded' ? 'Retry' : 'Repairing…'
+    }
+    return 'Disconnect'
+  }
+  return props.lastActionable ? 'Retry' : 'Connect'
+})
+
+const primaryActionClass = computed(() => {
+  if (props.connecting || props.reconnectRequested) return 'btn-secondary'
+  if (props.connected) {
+    if (!props.tunnelOk) {
+      // Degraded: the watchdog is still trying (disabled, secondary) or has
+      // given up (Retry, accent) — never the red Disconnect, which would
+      // misrepresent the action.
+      return props.repairStage === 'degraded' ? 'btn-accent' : 'btn-secondary'
+    }
+    return 'btn-danger'
+  }
+  return 'btn-primary'
+})
+
+const primaryDisabled = computed(() => {
+  // Block double-taps while a connect is in flight, and while the watchdog is
+  // still actively repairing (the user must wait for Retry to appear).
+  if (props.connecting || props.reconnectRequested) return true
+  if (recovering.value && props.repairStage !== 'degraded') return true
+  return false
 })
 
 const stateColor = computed(() => {
@@ -181,23 +271,56 @@ const tierDisplay = computed(() => {
 // backend repairStage to a short human phrase.
 const repairNote = computed(() => {
   switch (props.repairStage) {
-    case 'restart': return 'Restarting the tunnel engine…'
-    case 'full-reset': return 'Full tunnel reset in progress…'
-    case 'degraded': return 'Tunnel could not be recovered — Disconnect, then reconnect to retry.'
+    case 'restart': return 'Tunnel stopped passing traffic — restarting the engine…'
+    case 'full-reset': return 'Tunnel still down — performing a full reset…'
+    case 'degraded': return 'Tunnel could not be recovered automatically. Use Retry, or check your internet connection.'
     default: return 'Tunnel stopped passing traffic; recovering automatically.'
   }
 })
 
+// failureHint turns the classified failure kind into a concrete next step. The
+// banner already carries the raw explanation (lastActionable); this adds the
+// "so what do I do" half. `unknown` deliberately shows nothing rather than
+// guessing at a cause.
+const failureHint = computed(() => {
+  switch (props.lastErrorKind) {
+    case 'offline':
+      return 'Tip: open Diagnostics to confirm Locus can reach the network, then try again.'
+    case 'elevation':
+      return 'Tip: relaunch Locus and allow the administrator prompt.'
+    case 'engine':
+      return 'Tip: open Diagnostics and copy the report — the tunnel engine failed to start.'
+    case 'server':
+      return 'Tip: if this keeps happening, open Diagnostics and copy the report for support.'
+    default:
+      return ''
+  }
+}) 
+
 // NOTE: Vue 3 emits are fire-and-forget — emit() returns void, it does NOT
 // resolve with the parent handler's return value. Connect failures are
-// surfaced by the global error toast (the parent store sets state.error), so
-// there is no local error path here.
+// surfaced by the parent store (persistent banner + toast), so there is no
+// local error path here.
 async function toggleConnection(): Promise<void> {
-  if (props.connected) {
+  // A degraded tunnel whose watchdog has given up (or a previous failure) is a
+  // RETRY, not a disconnect: force a clean reconnect instead of tearing down.
+  if (props.connected && props.tunnelOk) {
     emit('disconnect')
-  } else {
-    emit('connect')
+    return
   }
+  if (props.connected && props.repairStage === 'degraded') {
+    emit('retry-connect')
+    return
+  }
+  if (!props.connected && props.lastActionable) {
+    emit('retry-connect')
+    return
+  }
+  if (props.connected) {
+    // Still recovering — button is disabled, but guard anyway.
+    return
+  }
+  emit('connect')
 }
 
 // updateActive is true while the backend apply flow runs (downloading →
@@ -312,6 +435,13 @@ async function copyDiagnostics(): Promise<void> {
   color: #8CA596;
 }
 
+.connect-note {
+  font-size: 12px;
+  color: #8CA596;
+  text-align: center;
+  line-height: 1.5;
+}
+
 .grace-warning {
   font-size: 12px;
   color: #F59E0B;
@@ -328,6 +458,39 @@ async function copyDiagnostics(): Promise<void> {
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 8px;
+}
+
+/* Persistent actionable failure banner: wrap-friendly so a long backend error
+   cannot overflow the fixed-width shell. */
+.actionable-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #FCA5A5;
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.actionable-icon {
+  flex-shrink: 0;
+}
+
+.actionable-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.actionable-hint {
+  color: #8CA596;
 }
 
 .btn {
