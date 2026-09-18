@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transparency report — Locus VPN</title>
+  <meta name="description" content="Government and law-enforcement requests received by Locus VPN, published twice a year.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="transparency">
+
+<main>
+
+  <section class="pagehead">
+    <div class="wrap">
+      <div class="breadcrumbs"><a href="index.html">Home</a> / <span>Transparency report</span></div>
+      <span class="eyebrow">Legal</span>
+      <h1>Transparency report</h1>
+      <p class="lead">
+        Requests for user data we received from authorities, and what we were able to provide.
+        Published twice a year.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="doc-layout">
+
+        <nav class="toc" aria-label="On this page">
+          <h2>Contents</h2>
+          <ul>
+            <li><a href="#numbers">Requests received</a></li>
+            <li><a href="#nothing">Why no traffic data appears</a></li>
+            <li><a href="#process">How we handle a request</a></li>
+            <li><a href="#warrant-canary">Warrant canary</a></li>
+            <li><a href="#audits">Audits supporting this report</a></li>
+            <li><a href="#past">Previous reports</a></li>
+          </ul>
+        </nav>
+
+        <div class="doc">
+
+          <p class="doc-meta">
+            <strong>Reporting period:</strong> 1 January – 30 June 2024 ·
+            <strong>Next report:</strong> July – December 2024
+          </p>
+
+          <h2 id="numbers">Requests received</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Type of request</th><th>Received</th><th>Complied with</th><th>Data provided</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Subpoena or court order</td><td>3</td><td>3</td><td>Account email and billing date</td></tr>
+                <tr><td>Warrant</td><td>1</td><td>1</td><td>Account email and billing date</td></tr>
+                <tr><td>Emergency disclosure request</td><td>0</td><td>0</td><td>—</td></tr>
+                <tr><td>Informal request from law enforcement</td><td>7</td><td>0</td><td>None — no valid legal process</td></tr>
+                <tr><td>National security order</td><td>0</td><td>0</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The four valid orders produced the same two facts each time: the email address on the
+            account, and the month the subscription started. That is the complete set of
+            information the account system holds that identifies a person.
+          </p>
+
+          <h2 id="nothing">Why no traffic data appears above</h2>
+          <p>
+            There is no row for "destinations visited" or "IP addresses", because those records
+            do not exist. Servers hold session state in memory only and write nothing to disk, so
+            there is no archive to search and no backup to hand over. A request that asks for
+            browsing history or a connection log receives a statement that the data does not
+            exist.
+          </p>
+
+          <h2 id="process">How we handle a request</h2>
+          <ol class="steps">
+            <li>We check the order is valid in the jurisdiction that issued it, and that it names an account rather than asking for bulk data.</li>
+            <li>Where the order is invalid or overly broad, we push back and ask for it to be narrowed.</li>
+            <li>If it is valid, we provide what the account system holds and nothing further.</li>
+            <li>We notify the account holder before disclosure, unless we are legally barred from doing so.</li>
+            <li>Every request is logged internally and counted in the next report.</li>
+          </ol>
+
+          <h2 id="warrant-canary">Warrant canary</h2>
+          <p>
+            We publish this report on a fixed schedule rather than to signal a specific event, and
+            we do not operate a canary statement. A scheduled report cannot be silently suspended
+            without the gap becoming visible, which is the property a canary is usually meant to
+            provide.
+          </p>
+
+          <h2 id="audits">Audits supporting this report</h2>
+          <ul>
+            <li>Annual independent security audit of the client and infrastructure, published in full with our response to each finding.</li>
+            <li>Reproducible builds, so the running binary can be checked against published source.</li>
+            <li>Public bug bounty, with payout amounts listed on the report page.</li>
+          </ul>
+
+          <h2 id="past">Previous reports</h2>
+          <p>
+            Earlier periods are retained in the archive with their original figures. Where a later
+            correction was needed, the correction is shown against the original entry rather than
+            replacing it.
+          </p>
+
+          <h2>Contact</h2>
+          <p>
+            Questions about this report: <a href="mailto:legal@locus.example">legal@locus.example</a>.
+            Our data handling is described in the <a href="privacy.html">privacy policy</a>.
+          </p>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="components.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

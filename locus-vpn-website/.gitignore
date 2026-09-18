@@ -1,0 +1,11 @@
+# Local editor artefacts — created by _tools/edit.js, never published.
+.edits/
+
+# Editor, if it is ever run from the site root by mistake.
+/edit.js
+/editor.js
+/editor.css
+# Stray nested checkout of this repository. Nothing in the site links to it;
+# it duplicates the parent repo one commit behind. Safe to delete:
+#   rm -rf locus-vpn-website/VPN-Service
+/VPN-Service/

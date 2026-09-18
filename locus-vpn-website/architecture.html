@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture — Locus VPN</title>
+  <meta name="description" content="How Locus is built: a TUN-based client with no proxy layer, a supervised tunnel engine, per-tier traffic shaping and signed staged updates.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="architecture">
+
+<main>
+
+  <section class="pagehead">
+    <div class="wrap">
+      <div class="breadcrumbs"><a href="index.html">Home</a> / <span>Architecture</span></div>
+      <span class="eyebrow">Technical</span>
+      <h1>How Locus is put together</h1>
+      <p class="lead">
+        The design decisions behind the client and the network, with the reasoning for each.
+        Written for people who want to check the work rather than take a slogan on trust.
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="doc-layout">
+
+        <!-- Sticky table of contents -->
+        <nav class="toc" aria-label="On this page">
+          <h2>Contents</h2>
+          <ul>
+            <li><a href="#tun">1. A TUN device, not a proxy</a></li>
+            <li><a href="#engine">2. The tunnel engine is supervised</a></li>
+            <li><a href="#shaping">3. Per-tier traffic shaping</a></li>
+            <li><a href="#udp">4. Why UDP relay is only on Gaming</a></li>
+            <li><a href="#killswitch">5. The kill switch</a></li>
+            <li><a href="#updates">6. Signed, staged updates</a></li>
+            <li><a href="#activation">7. Activation and device binding</a></li>
+            <li><a href="#backups">8. Server operations</a></li>
+          </ul>
+        </nav>
+
+        <div class="doc">
+
+          <h2 id="tun">1. A TUN device, not a proxy</h2>
+          <p>
+            Older designs in this family ran a SOCKS5 proxy on the local machine and asked
+            applications to use it. That approach has two problems: every application that
+            ignores the proxy setting leaks outside the tunnel, and every connection pays an
+            extra handshake through the proxy layer before it reaches the network.
+          </p>
+          <p>
+            Locus creates a TUN interface instead. The client asks the operating system for a
+            virtual network device, and the system routing table sends traffic to
+            <code>locus0</code>. Because the capture happens below the application, an
+            application does not need to know the tunnel exists — and cannot opt out of it.
+          </p>
+          <p>
+            The trade-off is that applications which resolve names themselves, or speak directly
+            to a hard-coded resolver, need separate handling. There is no proxy setting to
+            point at them, which is exactly what makes the approach leak-resistant in the first
+            place.
+          </p>
+
+          <h2 id="engine">2. The tunnel engine is supervised</h2>
+          <p>
+            The tunnel itself is handled by a separate engine process that the client starts and
+            watches. The client does not assume the engine is healthy: it checks on a timer, and
+            if the process has exited it restarts it.
+          </p>
+          <ul>
+            <li>Up to three restarts within five minutes.</li>
+            <li>After the third, the client stops and reports the fault rather than looping.</li>
+            <li>Shutdown is graceful, with a forced kill after five seconds.</li>
+          </ul>
+          <p>
+            A restart limit matters more than it appears. An engine that is crashing because of
+            a configuration or platform fault will crash again immediately, and a client that
+            restarts it forever hides the problem while leaving the tunnel unusable. Stopping
+            and saying so is the more honest failure.
+          </p>
+
+          <h2 id="shaping">3. Per-tier traffic shaping</h2>
+          <p>
+            Each tier has its own listener on the server, and each listener is attached to a
+            traffic control class with a bandwidth ceiling. Basic is
+            {{tiers.basic.cap}} Mbps, Stream is {{tiers.stream.cap}} Mbps and Gaming is
+            {{tiers.gaming.cap}} Mbps.
+          </p>
+          <p>
+            The important detail is where the shaping happens. It is applied by the kernel
+            after the tunnel has been decrypted, using an HTB queue discipline, so it does not
+            depend on anything running on your machine. A modified client cannot negotiate a
+            higher cap, because the cap is not part of the negotiation — it is the rate at
+            which the server will send.
+          </p>
+          <p>
+            Each class also carries a fair-queue discipline so that a single saturated
+            connection cannot starve the others on the same tier, which is what keeps latency
+            reasonable while a large download is in progress.
+          </p>
+
+          <h2 id="udp">4. Why UDP relay is only on Gaming</h2>
+          <p>
+            TCP guarantees ordering: if a packet is lost, everything behind it waits until it is
+            retransmitted. Tunnelling real-time traffic over TCP therefore converts packet loss
+            into latency spikes, which in a game looks like rubber-banding and in a voice call
+            sounds like a stutter.
+          </p>
+          <p>
+            Gaming therefore carries datagrams as datagrams, with a UDP relay end to end. It is
+            the most expensive capacity we run, because it cannot be multiplexed as neatly as
+            TCP and it requires its own path through the network, so it is the one capability
+            reserved for the top tier rather than given to everyone.
+          </p>
+
+          <h2 id="killswitch">5. The kill switch</h2>
+          <p>
+            The kill switch is a firewall rule, not a check inside the client. Before the tunnel
+            is established the client installs rules that block outbound traffic except to the
+            relay, and it removes them only when the tunnel has been torn down deliberately.
+          </p>
+          <p>
+            The consequence, stated plainly: if the client process is killed without cleanup,
+            traffic stays blocked until the next launch. That is the correct direction to fail,
+            but it does mean a crash can look like a total internet outage until you reopen the
+            app and let it tidy up.
+          </p>
+          <p>
+            On iOS there is no equivalent hook in the system VPN framework, so the app does not
+            claim one. Every other supported platform has it.
+          </p>
+
+          <h2 id="updates">6. Signed, staged updates</h2>
+          <p>
+            The client checks a manifest for a newer version and, when one exists, downloads it,
+            verifies the size against the published bounds and the hash against the published
+            digest, and only then swaps it into place. The previous version is retained until
+            the new one has started successfully.
+          </p>
+          <p>
+            Updates are staged rather than released to everyone at once. A release carries a
+            rollout percentage, and a given account receives it when a stable hash of its
+            identifier falls below that threshold. The practical effect is that a bad build
+            reaches a small, consistent fraction of clients instead of all of them, and the
+            fraction is not chosen at random on each check.
+          </p>
+          <p>
+            Recovery is automatic: if the updated client fails to complete its startup handshake,
+            the previous version is restored on the next launch rather than leaving the machine
+            in an unusable state.
+          </p>
+
+          <h2 id="activation">7. Activation and device binding</h2>
+          <p>
+            An account receives a subscription code. The code is validated locally for format
+            and checksum before it is sent anywhere, so a typo fails instantly instead of
+            consuming one of the limited activation attempts.
+          </p>
+          <p>
+            On first activation the server binds the code to a hardware fingerprint derived
+            from stable machine identifiers. That binding is what enforces the per-tier device
+            limit in practice rather than by honour.
+          </p>
+          <p>
+            Codes carry a checksum, so a typo is caught before it reaches the server. If you
+            replace a machine and no longer have the original, support can unbind the code and
+            let it activate again; every unbind is logged with a reason.
+          </p>
+          <p>
+            Once bound, the client checks in periodically. The interval backs off from five
+            minutes toward two hours when everything is healthy, and includes a small random
+            offset so that a server restart does not produce a synchronised stampede of every
+            client at once.
+          </p>
+          <p>
+            If a subscription lapses, there is a {{policy.graceDays}}-day grace period in which
+            the connection keeps working. The client shows the remaining days so the lapse is
+            not a surprise.
+          </p>
+
+          <h2 id="backups">8. Server operations</h2>
+          <p>
+            Server configuration is applied by a set of idempotent modules, meaning each can be
+            re-run safely without duplicating work or breaking an existing installation. Backups
+            run hourly, are encrypted before leaving the server, and are verified by hash on
+            arrival. A full restore to a bare machine is scripted.
+          </p>
+          <p>
+            Health is exposed on a single endpoint that reports whether the control plane is up.
+            We monitor it externally and treat a failure as an incident.
+          </p>
+
+          <p class="mt-4">
+            <a class="btn btn--ghost" href="client.html">See what this looks like in the client</a>
+          </p>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="components.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

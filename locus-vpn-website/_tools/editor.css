@@ -1,0 +1,135 @@
+/* ============================================================
+   Locus site editor — overlay UI
+   Only loaded by edit.js. Never part of the published site.
+   ============================================================ */
+
+[data-edit-hover] {
+  outline: 1px dashed rgba(26, 115, 87, .55) !important;
+  outline-offset: 2px;
+  cursor: text;
+}
+
+.lc-editing {
+  outline: 2px solid #1a7357 !important;
+  outline-offset: 2px;
+  background: #f0f7f4 !important;
+}
+
+/* ---------- Toolbar ---------- */
+.lc-bar {
+  position: fixed;
+  z-index: 2147483000;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .45rem .5rem;
+  background: #16181a;
+  color: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .3);
+  font: 500 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.lc-bar button {
+  font: inherit;
+  color: #e8eaea;
+  background: transparent;
+  border: 0;
+  padding: .45rem .7rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lc-bar button:hover { background: #2b2f31; color: #fff; }
+.lc-bar button[data-on="true"] { background: #1a7357; color: #fff; }
+.lc-bar button:disabled { opacity: .4; cursor: default; }
+.lc-bar .lc-sep { width: 1px; height: 20px; background: #3a3e40; margin: 0 .2rem; }
+.lc-bar .lc-status { color: #9aa2a6; font-size: 12px; padding: 0 .5rem; min-width: 74px; }
+.lc-bar .lc-status[data-state="dirty"] { color: #e0b341; }
+.lc-bar .lc-status[data-state="saved"] { color: #56c08d; }
+.lc-bar .lc-status[data-state="error"] { color: #e07575; }
+
+/* ---------- Values panel ---------- */
+.lc-panel {
+  position: fixed;
+  z-index: 2147483000;
+  top: 0; right: 0;
+  width: 340px;
+  max-width: 92vw;
+  height: 100%;
+  overflow-y: auto;
+  background: #fff;
+  border-left: 1px solid #e2e5e6;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, .1);
+  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #16181a;
+  transform: translateX(100%);
+  transition: transform .18s ease;
+}
+.lc-panel[data-open="true"] { transform: translateX(0); }
+.lc-panel__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .9rem 1rem;
+  border-bottom: 1px solid #e2e5e6;
+  position: sticky; top: 0; background: #fff;
+}
+.lc-panel__head h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.lc-panel__head button {
+  border: 0; background: transparent; cursor: pointer; font-size: 18px;
+  color: #6f767d; line-height: 1; padding: .2rem .4rem; border-radius: 4px;
+}
+.lc-panel__head button:hover { background: #f2f3f3; }
+.lc-panel__body { padding: 1rem; }
+.lc-group { margin-bottom: 1.4rem; }
+.lc-group h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: #6f767d; margin: 0 0 .6rem; font-weight: 600;
+}
+.lc-field { display: flex; align-items: center; gap: .5rem; margin-bottom: .45rem; }
+.lc-field label { flex: 0 0 42%; color: #4a5158; font-size: 12px; }
+.lc-field input {
+  flex: 1; min-width: 0;
+  font: inherit; font-size: 13px;
+  padding: .4rem .5rem;
+  border: 1px solid #cfd4d6; border-radius: 5px;
+  color: #16181a;
+}
+.lc-field input:focus { outline: 2px solid #1a7357; outline-offset: 0; border-color: #1a7357; }
+.lc-hint { color: #6f767d; font-size: 11.5px; margin: .2rem 0 1rem; }
+.lc-actions { display: flex; gap: .5rem; }
+.lc-actions button {
+  flex: 1; font: inherit; font-weight: 600;
+  padding: .55rem; border-radius: 6px; cursor: pointer; border: 1px solid transparent;
+}
+.lc-actions .lc-primary { background: #1a7357; color: #fff; }
+.lc-actions .lc-primary:hover { background: #0b3d2e; }
+.lc-actions .lc-secondary { background: #fff; border-color: #cfd4d6; color: #16181a; }
+.lc-actions .lc-secondary:hover { border-color: #4a5158; }
+
+/* ---------- History ---------- */
+.lc-hist { border-top: 1px solid #e2e5e6; margin-top: 1rem; padding-top: .8rem; }
+.lc-hist ul { list-style: none; margin: 0; padding: 0; }
+.lc-hist li {
+  font-size: 12px; color: #4a5158; padding: .4rem 0;
+  border-bottom: 1px solid #f0f1f1;
+  display: flex; justify-content: space-between; gap: .6rem;
+}
+.lc-hist li span:last-child { color: #6f767d; flex: none; }
+
+/* ---------- Toast ---------- */
+.lc-toast {
+  position: fixed; z-index: 2147483001;
+  left: 50%; bottom: 78px; transform: translateX(-50%);
+  background: #16181a; color: #fff;
+  padding: .6rem .9rem; border-radius: 8px;
+  font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .28);
+  opacity: 0; pointer-events: none; transition: opacity .18s ease;
+}
+.lc-toast[data-show="true"] { opacity: 1; }
+.lc-toast[data-kind="error"] { background: #8f2f2f; }
+
+@media print {
+  .lc-bar, .lc-panel, .lc-toast { display: none !important; }
+}

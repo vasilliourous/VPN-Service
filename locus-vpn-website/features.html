@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Features — Locus VPN</title>
+  <meta name="description" content="What Locus does: a TUN-based tunnel, supervised engine, per-tier shaping, UDP relay, kill switch and signed updates.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="features">
+
+<main>
+
+  <section class="pagehead">
+    <div class="wrap">
+      <div class="breadcrumbs"><a href="index.html">Home</a> / <span>Features</span></div>
+      <span class="eyebrow">What is in it</span>
+      <h1>Features, and what they cost you</h1>
+      <p class="lead">
+        Every entry below describes a real capability, names the trade-off, and links to the
+        technical detail. Anything that would not survive that treatment has been left out.
+      </p>
+    </div>
+  </section>
+
+  <!-- ==================== CAPABILITY BANDS ==================== -->
+  <section class="section">
+    <div class="wrap">
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">01 — Routing</span>
+          <div class="icon mt-2" data-icon="route"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">Routing at the network layer</h2>
+          <p>
+            The client creates a TUN interface and captures traffic below your applications.
+            No SOCKS5 proxy sits in the path, so no app can ignore a proxy setting and leak
+            around the tunnel. Everything that leaves the machine goes through it.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: applications that bypass system DNS and speak to a resolver directly
+            need separate handling, because they are not using the system path we control.
+          </p>
+          <p><a class="band__link" href="architecture.html#tun">How the TUN path works →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">02 — Reliability</span>
+          <div class="icon mt-2" data-icon="refresh"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">A supervised engine</h2>
+          <p>
+            The tunnel engine runs as a child process the client starts and watches. If it
+            exits unexpectedly the client restarts it, up to three times in five minutes, and
+            then stops and reports the fault rather than looping forever on a broken tunnel.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: restarting resets the tunnel, so an established download will not
+            survive an engine crash. We would rather lose a transfer than pretend a dead
+            tunnel is up.
+          </p>
+          <p><a class="band__link" href="architecture.html#engine">Engine supervision →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">03 — Speed</span>
+          <div class="icon mt-2" data-icon="speed"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">Published speed caps</h2>
+          <p>
+            {{tiers.basic.cap}}, {{tiers.stream.cap}} or {{tiers.gaming.cap}} Mbps depending on
+            tier, applied on the server after decryption, which is why they hold on every device
+            and cannot be edited away in a config file.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: Basic being slower than Stream is the product, not a defect. It is stated
+            on the pricing page rather than buried, and we consider that arrangement honest.
+          </p>
+          <p><a class="band__link" href="pricing.html">Compare tiers →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">04 — Latency</span>
+          <div class="icon mt-2" data-icon="globe"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">UDP relay on Gaming</h2>
+          <p>
+            Datagrams travel as datagrams, which is what low-latency games and voice chat
+            need. Tunnelling UDP over TCP introduces head-of-line blocking, which shows up as
+            rubber-banding the moment there is any packet loss.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: UDP relay is the single most expensive thing we run, so it is the one
+            capability reserved for the top tier rather than given to everyone.
+          </p>
+          <p><a class="band__link" href="architecture.html#udp">Why UDP is separate →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">05 — Leak safety</span>
+          <div class="icon mt-2" data-icon="shield"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">A kill switch that survives a crash</h2>
+          <p>
+            The kill switch is implemented as a firewall rule rather than a check inside the
+            client, so it still holds if the client process dies. Traffic cannot escape to the
+            open internet while the tunnel is down.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: a hard process kill leaves traffic blocked until the next launch. That
+            is the correct failure direction, but it does mean a crash looks like an internet
+            outage until you reopen the app.
+          </p>
+          <p><a class="band__link" href="architecture.html#killswitch">Kill switch detail →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">06 — Updates</span>
+          <div class="icon mt-2" data-icon="code"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">Signed, staged updates</h2>
+          <p>
+            Downloads are checked for size and for a matching hash before the new version is
+            swapped in, and the previous version is kept until the new one has run
+            successfully. Releases reach a percentage of clients first, picked by a stable
+            account hash.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: staged rollout means you may wait a few days behind the newest release.
+            It is the reason a bad build reaches a fraction of users instead of all of them.
+          </p>
+          <p><a class="band__link" href="architecture.html#updates">Update process →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">07 — Cryptography</span>
+          <div class="icon mt-2" data-icon="lock"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">Standard cryptography, no exotica</h2>
+          <p>
+            Published primitives and published protocols, with no proprietary cipher and no
+            custom handshake. Every tier is identical here — the differences between plans are
+            speed, devices and UDP relay, and nothing else.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: we will not invent a cipher to win a comparison table, which means we
+            have no proprietary-sounding security claim to sell you.
+          </p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">08 — Privacy</span>
+          <div class="icon mt-2" data-icon="noTrace"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">No logs, on every tier</h2>
+          <p>
+            No IP addresses, no DNS queries, no destinations, no connection timestamps.
+            Logging is not a feature you pay to enable — it is the same on Basic as it is on
+            Gaming, and it is written into the terms so it cannot be changed quietly.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: without logs we cannot diagnose "was my account used" the way a logging
+            service could, and we cannot produce data we do not hold. Full detail is in the
+            <a href="privacy.html">privacy policy</a>.
+          </p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">09 — Devices</span>
+          <div class="icon mt-2" data-icon="devices"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">Device limits that mean something</h2>
+          <p>
+            Each subscription code binds to a hardware fingerprint on first activation, which
+            is what enforces the device count rather than a policy we hope you follow. Three
+            devices on Basic, eight on Stream, unlimited on Gaming.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: replacing a machine is a support unbind, and each unbind is logged with
+            a reason. Convenient, it is not — but it is why the limit holds.
+          </p>
+          <p><a class="band__link" href="architecture.html#activation">Activation model →</a></p>
+        </div>
+      </article>
+
+      <article class="band" data-reveal>
+        <div class="band__aside">
+          <span class="band__index">10 — Billing</span>
+          <div class="icon mt-2" data-icon="clock"></div>
+        </div>
+        <div class="band__body">
+          <h2 class="band__title">{{policy.graceDays}}-day grace on lapsed plans</h2>
+          <p>
+            If a payment lapses the connection keeps working for {{policy.graceDays}} days, and
+            the client shows the days remaining in the main window. Running out of credit
+            should not mean losing connectivity mid-task.
+          </p>
+          <p class="band__tradeoff">
+            Trade-off: we carry the cost of those days. It is cheaper than the support burden
+            of abrupt disconnections, so we treat it as a feature rather than a concession.
+          </p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ==================== PLATFORMS ==================== -->
+  <section class="section section--soft">
+    <div class="wrap split">
+      <div data-reveal>
+        <span class="eyebrow">Platforms</span>
+        <h2>Where the client runs</h2>
+        <ul class="tick-list">
+          <li>Windows 10 and later, with kill switch</li>
+          <li>macOS 12 and later, with kill switch</li>
+          <li>Linux, with kill switch</li>
+          <li>Android, with kill switch</li>
+          <li>iOS, using the system VPN framework</li>
+          <li>Routers and other devices via generated configuration</li>
+        </ul>
+        <p class="muted-note mt-2">
+          Kill switch support depends on the platform's firewall API, so iOS is the exception —
+          the system VPN framework does not expose an equivalent hook. We would rather say that
+          than list a feature that quietly does nothing.
+        </p>
+      </div>
+
+      <div data-reveal>
+        <span class="eyebrow">Server side</span>
+        <h2>How the network is run</h2>
+        <ul class="tick-list">
+          <li>Idempotent setup modules, safe to re-run</li>
+          <li>Hourly encrypted backups, hash-verified on arrival</li>
+          <li>Scripted restore to a bare machine</li>
+          <li>Per-tier shaping applied at the kernel queue discipline</li>
+          <li>External uptime monitoring on the control endpoint</li>
+          <li>{{network.servers}} servers we operate on our own autonomous systems</li>
+        </ul>
+        <p class="muted-note mt-2">
+          Setup being repeatable matters more than it sounds: it is what makes rebuilding a
+          server during an incident a routine task rather than a risky one.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== DEEPER ==================== -->
+  <section class="section">
+    <div class="wrap center">
+      <span class="eyebrow">Deeper</span>
+      <h2 class="measure-34">The reasoning behind each decision</h2>
+      <p class="lead measure-54">
+        Including the parts where we chose one trade-off over another, and what we gave up.
+      </p>
+      <div class="row-inline mt-2 center-cta">
+        <a class="btn btn--primary" href="architecture.html">Read the architecture</a>
+        <a class="btn btn--ghost" href="client.html">See the client</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="components.js"></script>
+<script src="site.js"></script>
+</body>
+</html>
