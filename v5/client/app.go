@@ -23,6 +23,7 @@ import (
 	"locus/internal/activation"
 	"locus/internal/buildinfo"
 	"locus/internal/heartbeat"
+	"locus/internal/install"
 	"locus/internal/manager"
 	"locus/internal/pinned"
 	"locus/internal/storage"
@@ -68,6 +69,12 @@ type App struct {
 	// loaded rather than re-deriving it (and possibly disagreeing).
 	singBoxPath string
 	configPath  string
+
+	// installLoc is where this copy of Locus resolved itself to live, and how
+	// it was deployed (installed / portable / unwritable / immutable). Set once
+	// at startup; reported by Diagnostics and used to decide whether an
+	// in-place self-update is even possible.
+	installLoc install.Location
 
 	// lastUpdateStatus/lastUpdateDetail record the outcome of the most recent
 	// update check so "it never offers updates" is answerable from a support
@@ -329,20 +336,34 @@ func (a *App) Startup(ctx context.Context) {
 	a.mgr.SetHelperMode(false)
 
 	// ── Updater (crash recovery) ──
-	execPath, err := os.Executable()
-	if err == nil {
-		appDir := filepath.Dir(execPath)
-		binaryName := filepath.Base(execPath)
-		a.up = updater.New(appDir, binaryName, a.version)
+	//
+	// The updater's directory is resolved through internal/install rather than
+	// filepath.Dir(os.Executable()) directly. A portable copy run out of
+	// Downloads used to stage and rename *inside Downloads*, which is the most
+	// heavily observed directory on Windows — antivirus, the indexer and sync
+	// clients all hold handles on a new .exe, and the rename failed with
+	// "being used by another process". See internal/install for the full
+	// write-up; the resolution is recorded on the App so Diagnostics can report
+	// which directory was chosen and why.
+	if loc, err := install.Executable(); err == nil {
+		a.installLoc = loc
+		a.up = updater.New(loc.Dir, loc.Binary, a.version)
+		if staging, err := loc.EnsureStagingDir(); err == nil {
+			a.up.SetStagingDir(staging)
+		} else {
+			wailsruntime.LogWarning(a.ctx, "Cannot create update staging dir: "+err.Error())
+		}
 
 		// Run update recovery before anything else
-		updater.CleanStaleMarkers(appDir, 48*time.Hour)
+		updater.CleanStaleMarkers(loc.Dir, 48*time.Hour)
 		if _, err := updater.CheckOnStartup(false); err != nil {
 			wailsruntime.LogWarning(a.ctx, "Update recovery warning: "+err.Error())
 		}
-		if err := updater.ConfirmIfPending(appDir); err != nil {
+		if err := updater.ConfirmIfPending(loc.Dir); err != nil {
 			wailsruntime.LogWarning(a.ctx, "Update confirm warning: "+err.Error())
 		}
+	} else {
+		wailsruntime.LogWarning(a.ctx, "Cannot resolve install location: "+err.Error())
 	}
 
 	// ── Restore state from storage ──
@@ -1343,6 +1364,22 @@ func (a *App) GetDiagnostics() string {
 		}
 	}
 
+	// Where this copy of Locus lives and whether it may replace itself.
+	//
+	// This is the line that turns "update failed" into an answerable question:
+	// a portable run from Downloads and an installed copy in Program Files fail
+	// in completely different ways, and the previous report could not tell them
+	// apart. The reason string records which rule selected the directory.
+	installLine := "(unresolved)"
+	if a.installLoc.Dir != "" {
+		installLine = a.installLoc.Describe()
+		if a.installLoc.Mode == install.ModeUnwritable {
+			installLine += " — self-update needs a writable location"
+		} else if a.installLoc.Mode == install.ModeImmutable {
+			installLine += " — self-update impossible; replace the bundle"
+		}
+	}
+
 	report := fmt.Sprintf(`Locus Diagnostics
 ===================
 %s
@@ -1363,6 +1400,8 @@ Grace Remaining:  %d days
 Server:       %s
 sing-box:     %s
 Config:       %s
+
+Install:      %s
 
 Last update check: %s
 
@@ -1386,6 +1425,7 @@ Reported:     %s
 		a.serverReachability(),
 		singBox,
 		a.configPath,
+		installLine,
 		updateLine,
 		leftoverLines(a.mgr.ForeignEngines()),
 		logFilePath(),

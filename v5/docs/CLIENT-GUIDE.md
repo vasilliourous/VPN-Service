@@ -91,12 +91,22 @@ The `.github/workflows/build.yml` workflow (repo root):
    `-tags frontend`
 3. Builds for Linux, macOS (Intel + ARM), and Windows in parallel
 4. Downloads the matching sing-box binary (**1.12.1**) for each platform
-5. Bundles 2 binaries (`locus` + `sing-box`) into **4** platform ZIPs
-6. Publishes the **raw per-platform executables** + `manifest.json` +
+5. Bundles 2 binaries (`locus` + `sing-box`) into **4** platform ZIPs — the
+   portable artefact, which remains supported
+6. Builds the **installers**: a Windows Inno Setup `.exe` and macOS `.dmg`
+   disk images (per architecture). These install into a directory the
+   application owns, which is what makes in-place self-update reliable — see
+   §3.1. Linux ships portable only, by design.
+7. Publishes the **raw per-platform executables** + `manifest.json` +
    `checksums.sha256` — the raw binaries are what the auto-updater consumes
-   (it cannot unpack a zip)
+   (it cannot unpack a zip, and must never be handed an installer)
 
 **Trigger:** Push a tag starting with `v` (e.g., `v2.0.0`).
+
+> The hub's `fetch-release.py` resolves assets **by name** from an allowlist of
+> the four raw binaries plus `manifest.json`. The installer and DMG assets on the
+> release are therefore ignored by the update pipeline rather than breaking its
+> all-or-nothing check — an installer is not a valid update payload.
 
 ---
 
@@ -216,13 +226,15 @@ Loop:
 
 ```
 Heartbeat says update_available for this device:
-  1. Download binary to temp file (.new)
-  2. Verify SHA256 checksum
-  3. Save backup of current binary (.locus-backups/)
-  4. Create .update-pending sentinel
-  5. Swap binary (platform-specific: rename / .old trick)
-  6. Fork new process with same args
-  7. Parent exits
+  1. Resolve the install location (internal/install) and ensure the private
+     staging directory exists inside it
+  2. Download binary to <staging>/.new
+  3. Verify SHA256 checksum (before anything is replaced)
+  4. Save backup of current binary (.locus-backups/)
+  5. Create .update-pending sentinel
+  6. Swap binary (platform-specific: rename / .old trick)
+  7. Fork new process with same args
+  8. Parent exits
 
 New process starts:
   Sees .update-pending → creates .update-confirmed
@@ -234,6 +246,46 @@ On crash:
   → Auto-revert to backup binary
   → Place .reverted sentinel
 ```
+
+**The download is never staged in the directory the app was launched from.**
+It goes into a private subdirectory of the *resolved install location* (see
+§3.1), the file handle is closed before the rename, and a transient blocker is
+retried a bounded number of times. A transient blocker is an antivirus scanner,
+the search indexer or a sync client holding a handle on a freshly written
+executable — which is what happens to any `.exe` that appears in Downloads, and
+is why the portable build used to fail to update itself there.
+
+---
+
+## 3.1 Install Locations & Deployment Modes
+
+`internal/install` resolves where this copy of Locus lives and how it was
+deployed. The distinction decides whether an in-place self-update is safe, and it
+is reported in Diagnostics.
+
+| Platform | Install location | Mode |
+|---|---|---|
+| Windows | `%ProgramFiles%\Locus`, else `%LOCALAPPDATA%\Programs\Locus` | `installed` |
+| macOS | `/Applications/Locus.app` (or `~/Applications`) | `installed` |
+| Linux | `~/.local/bin`, else `~/.local/share/locus/bin` | `installed` |
+| Anywhere else | the launched directory | `portable` |
+
+Additional modes:
+
+- `portable` — an extracted zip or a USB stick. **Supported, not a failure.**
+  Updates are staged privately inside the launched directory.
+- `unwritable` — the directory cannot be written to; self-update needs a
+  writable location and the client says so rather than failing mid-download.
+- `immutable` — a read-only mounted bundle (an AppImage). No write can succeed,
+  so the remedy is replacing the bundle, not elevation.
+
+Detection is a real write probe rather than a permissions check, because mode
+bits are close to meaningless on Windows. The launch directory is only adopted
+as an install location when it already *exists* — a location is never created
+speculatively, so a portable user is not silently relocated.
+
+**Linux is deliberately the least intrusive of the three**: there is no
+system-wide target and nothing is written to `/usr` or `/opt`.
 
 ---
 

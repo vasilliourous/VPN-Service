@@ -127,6 +127,12 @@ type Updater struct {
 	binaryName string
 	currentVer string
 	client     *http.Client
+
+	// stagingDir is the private directory downloads are written into before
+	// being renamed into the install directory. Empty means "derive it" —
+	// see ensureStagingDir — which keeps New usable from tests that only care
+	// about path resolution.
+	stagingDir string
 }
 
 // New creates a new Updater.
@@ -145,6 +151,35 @@ func New(appDir, binaryName, currentVer string) *Updater {
 		},
 	}
 }
+
+// SetStagingDir overrides where downloads are staged before installation.
+//
+// The caller sets this from internal/install, which is the single place that
+// knows how this copy of Locus was deployed. Left unset, the updater derives a
+// private subdirectory of appDir, which is correct for every deployment shape
+// but less informative in diagnostics.
+func (u *Updater) SetStagingDir(dir string) {
+	u.stagingDir = dir
+}
+
+// ensureStagingDir returns the private staging directory, creating it if
+// needed. Falls back to deriving one from appDir when none was set.
+func (u *Updater) ensureStagingDir() (string, error) {
+	dir := u.stagingDir
+	if dir == "" {
+		dir = filepath.Join(u.appDir, defaultStagingDirName)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create staging directory %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// defaultStagingDirName matches internal/install's directory name. Duplicated
+// as a constant rather than imported so the updater keeps no dependency on the
+// install package — it is usable standalone in tests and the two names are
+// asserted equal by a test in the install package.
+const defaultStagingDirName = ".locus-staging"
 
 // PerformUpdate downloads, verifies, and applies an update.
 // The update is crash-safe: if the new binary crashes on first run,
@@ -168,14 +203,27 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 
 	currentPath := filepath.Join(u.appDir, u.binaryName)
 
+	// Step 0: Resolve the private staging directory.
+	//
+	// The download is staged inside the app's own directory, NOT the system
+	// temp directory. os.Rename is only atomic within one filesystem, and
+	// %TEMP% is frequently a different volume from the install location;
+	// renaming across volumes degrades to a copy, which is neither atomic nor
+	// safe for an executable. See internal/install for the full reasoning, and
+	// rename.go for the field failure this prevents.
+	stagingDir, err := u.ensureStagingDir()
+	if err != nil {
+		return fmt.Errorf("cannot prepare update staging area: %w", err)
+	}
+
 	// Step 1: Create backup of current binary
 	backupPath, err := u.createBackup(currentPath)
 	if err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
 
-	// Step 2: Download new binary
-	newPath := filepath.Join(u.appDir, u.binaryName+".new")
+	// Step 2: Download new binary into the staging directory.
+	newPath := filepath.Join(stagingDir, u.binaryName+".new")
 	if err := u.downloadBinary(ctx, downloadURL, newPath, expectedSHA); err != nil {
 		// Clean up failed download
 		_ = os.Remove(newPath)
@@ -262,7 +310,21 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 	if err != nil {
 		return fmt.Errorf("cannot create temp file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+
+	// The handle is closed EXPLICITLY below, before any rename.
+	//
+	// It used to rely on `defer f.Close()`, which runs at function return —
+	// i.e. after the rename. On Windows a file with an open handle cannot be
+	// renamed, so the code was racing its own file descriptor and failed
+	// whenever the OS had not yet flushed the close. The defer is kept as a
+	// safety net for the early-error paths below, where the close is harmless
+	// whether or not it already happened.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+	}()
 
 	// Download with size and hash verification
 	// io.LimitReader ensures we cap at MaxDownloadSize (no unbounded reads)
@@ -287,9 +349,27 @@ func (u *Updater) downloadBinary(ctx context.Context, url, path, expectedSHA256 
 		return fmt.Errorf("SHA256 mismatch: got %s, expected %s", checksum, expectedSHA256)
 	}
 
-	// Atomic rename
-	if err := os.Rename(tmpPath, path); err != nil {
+	// Close before renaming, and surface a failure to flush as its own error
+	// rather than silently proceeding into a rename that cannot succeed. A
+	// close error here means bytes may not have reached the disk, and the hash
+	// we just computed was over what we *wrote*, not what landed — so this is
+	// a real failure, not a formality.
+	if err := f.Close(); err != nil {
+		closed = true
 		_ = os.Remove(tmpPath)
+		return fmt.Errorf("cannot flush downloaded file: %w", err)
+	}
+	closed = true
+
+	// Rename into place. Retried against a transient external holder (an
+	// antivirus scanner, an indexer, a sync client) rather than failing on the
+	// first sharing violation — see rename.go for why this is a separate,
+	// classified path instead of a bare os.Rename.
+	if err := renameWithRetry(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		if isRetryableRenameError(err) {
+			return fmt.Errorf("%s: %w", renameBlockedError(path), err)
+		}
 		return fmt.Errorf("cannot rename downloaded file: %w", err)
 	}
 

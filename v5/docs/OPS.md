@@ -379,12 +379,23 @@ tag → wait for CI → run one script.
 
 1. **CI** (`.github/workflows/build.yml`) builds on a `v*` tag and attaches to a
    GitHub Release:
-   - `locus-<OS>-<arch>.zip` + `checksums.sha256` — for humans downloading the
-     installer from a website.
+   - `locus-<OS>-<arch>.zip` + `checksums.sha256` — the **portable** bundle, for
+     humans who want to extract and run with no installer.
+   - `locus-setup-<version>.exe` (Windows, Inno Setup) and
+     `locus-setup-<version>-macos-<arch>.dmg` — the **installers**, which put
+     the client in a directory the application owns. Required for the Windows
+     one: the release **fails** if it is missing, because a release without it
+     would look complete while leaving those users on the broken update path.
    - **raw** `locus-linux-amd64`, `locus-windows-amd64.exe`,
      `locus-darwin-amd64`, `locus-darwin-arm64` — for the auto-updater.
    - `manifest.json` — version, per-platform filename + SHA256. The build
      **fails** if any platform artifact is missing.
+
+   > The installer and `.dmg` assets are **ignored by the update pipeline**.
+   > `fetch-release.py` resolves by name from an allowlist of the four raw
+   > binaries plus `manifest.json`, so adding packaging artefacts neither
+   > breaks the all-or-nothing check nor risks an installer being handed to the
+   > updater as a payload. Nothing needs re-publishing when packaging changes.
 2. **Publishing** puts those bytes on the hub and points `update_config` at them.
    There are two equivalent routes:
    - **Console / GitHub fetch (normal)** — `scripts/fetch-release.py` downloads the
@@ -526,7 +537,14 @@ the first hours at a low `rollout_percent` as the safety net.
 - **sing-box is not updated** by this pipeline — it is bundled in the installer.
   Updating it means shipping a new installer and re-publishing.
 - **macOS builds are unsigned**, so Gatekeeper blocks first launch
-  (right-click → Open). Tracked as gap #3, out of scope.
+  (right-click → Open). Tracked as gap #3, out of scope. The `.dmg` carries a
+  README with the exact steps, including the `xattr -cr` fallback for the
+  "damaged and can't be opened" variant.
+- **Where a client installs decides whether it can update itself.** An installed
+  copy (Program Files / Applications / `~/.local/bin`) self-updates reliably; a
+  portable copy stages privately inside its own directory. The client reports
+  which it is on the Diagnostics screen — ask for that report before debugging an
+  update failure, because the two fail in completely different ways.
 - `update_config.version` must match the git tag (CI derives the in-binary
   version from the tag; `publish-release.sh` sets the column from its argument).
 - `/update.json` is still a static placeholder written by `05-caddy.sh`. The

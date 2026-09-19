@@ -298,6 +298,11 @@ jobs:
           go build -tags "${{ matrix.tags }}" -ldflags="$LDFLAGS" \
             -o locus-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} .
 
+      # The raw executable the updater consumes must exist before packaging,
+      # because both the Windows installer and the macOS bundle embed it rather
+      # than fetching it at runtime — the whole reason the client exists is a
+      # network where downloads are blocked, so a bootstrap download would fail
+      # exactly where the app is needed most.
       - name: Download sing-box engine
         env:
           GOOS: ${{ matrix.goos }}
@@ -334,6 +339,67 @@ jobs:
               sing-box
           fi
 
+      # ── Installer / disk image (in addition to the portable zip) ──
+      #
+      # The zip above REMAINS the portable artefact and still ships. These are
+      # extra, so a student without admin rights — or running from a USB stick —
+      # is not broken by the change.
+      #
+      # Why they exist: a portable copy run out of Downloads staged its own
+      # update in that same directory, where Defender, SmartScreen and the
+      # search indexer all hold handles on a freshly written .exe, so the
+      # rename failed and the update could not be applied at all. Installing
+      # into a directory the application owns removes the entire class of
+      # problem. internal/install is the runtime half of this fix.
+      - name: Build Windows installer (Inno Setup)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content "${{ github.workspace }}/v5/VERSION" -Raw).Trim()
+          $caseTag = "${{ github.ref_name }}"
+          if ($caseTag -like "v*") { $version = $caseTag.Substring(1) }
+          Write-Host "Building Windows installer for version $version"
+
+          # ISCC ships with Inno Setup 6, which the windows-latest runner image
+          # already has. A missing compiler is a hard failure rather than a
+          # silent skip: an installer that quietly does not exist is worse than
+          # a build that stops, because the release would look complete.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "::error::Inno Setup 6 not found at $iscc — cannot build the installer"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & $iscc "/DAppVersion=$version" "..\..\build\windows\locus.iss"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Inno Setup compilation failed (exit $LASTEXITCODE)"
+            exit 1
+          }
+          Get-ChildItem dist -Filter *.exe | Format-Table Name, Length
+
+      - name: Build macOS disk image
+        if: matrix.goos == 'darwin'
+        run: |
+          VERSION="$(cat "${{ github.workspace }}/v5/VERSION" 2>/dev/null || echo dev)"
+          CASE_TAG="${{ github.ref_name }}"
+          case "${CASE_TAG}" in v*) VERSION="${CASE_TAG#v}";; esac
+          [ -z "$VERSION" ] && VERSION="dev"
+          echo "Building disk image for version $VERSION (${{ matrix.goarch }})"
+          mkdir -p dist
+          # A DMG failure warns rather than fails the build. hdiutil is an
+          # external packaging tool and the portable zip is still a complete
+          # deliverable, so a packaging hiccup should not block the release —
+          # but it must be visible, hence ::warning:: rather than silence.
+          if ! bash ../../build/macos/make-dmg.sh \
+                 "$VERSION" "${{ matrix.goarch }}" \
+                 "locus-darwin-${{ matrix.goarch }}" \
+                 "sing-box" \
+                 dist; then
+            echo "::warning::macOS disk image build failed — shipping the zip only"
+          fi
+          ls -lh dist
+
       # The auto-updater downloads a RAW EXECUTABLE and swaps it in place — it
       # cannot consume the .zip above (writing zip bytes over the running binary
       # would brick the install). So we also publish the bare client binary plus
@@ -362,6 +428,8 @@ jobs:
           path: |
             ${{ env.CLIENT_DIR }}/dist/*.zip
             ${{ env.CLIENT_DIR }}/dist/raw/*
+            ${{ env.CLIENT_DIR }}/dist/*.dmg
+            ${{ env.CLIENT_DIR }}/dist/*-setup-*.exe
 
   # ── Release (tag pushes only) ──
   release:
@@ -399,15 +467,26 @@ jobs:
 
       - name: Generate release checksums
         run: |
-          # Only the human-facing bundles; the raw binaries are covered by
-          # manifest.json, and mixing both here would make the file ambiguous.
+          # The human-facing deliverables: portable bundles, the Windows
+          # installer and the macOS disk images. The raw per-platform binaries
+          # are deliberately excluded — they are covered by manifest.json, and
+          # mixing hashes of both in one file makes it ambiguous which artefact
+          # a line refers to.
           shopt -s nullglob
-          zips=( *.zip )
-          if [ ${#zips[@]} -eq 0 ]; then
-            echo "::error::no .zip bundles found — cannot generate checksums"
+          targets=( *.zip *.dmg *-setup-*.exe )
+          if [ ${#targets[@]} -eq 0 ]; then
+            echo "::error::no release bundles found — cannot generate checksums"
             exit 1
           fi
-          sha256sum "${zips[@]}" > checksums.sha256
+          # A Windows installer must exist: it is the fix for the update failure
+          # this release is for, and a release published without it would look
+          # complete while leaving those users stuck on the broken path.
+          windows_setup=( *-setup-*.exe )
+          if [ ${#windows_setup[@]} -eq 0 ]; then
+            echo "::error::no Windows installer (*-setup-*.exe) was produced"
+            exit 1
+          fi
+          sha256sum "${targets[@]}" > checksums.sha256
           cat checksums.sha256
 
       # Emit the per-version manifest the publish script uploads to the hub.
@@ -475,6 +554,8 @@ jobs:
         with:
           files: |
             *.zip
+            *.dmg
+            *-setup-*.exe
             locus-linux-amd64
             locus-windows-amd64.exe
             locus-darwin-amd64
@@ -486,7 +567,20 @@ jobs:
           body: |
             ## Locus ${{ github.ref_name }}
 
-            ### Bundles
+            ### Installers (recommended)
+
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | Windows | `locus-setup-<version>.exe` | Installs to Program Files |
+            | macOS | `locus-setup-<version>-macos-<arch>.dmg` | Drag into Applications |
+
+            These install into a directory the application owns, so in-place
+            self-update works. A portable copy run from Downloads fails to
+            update: Windows will not let the updater rename a file that
+            antivirus, SmartScreen or the search indexer has open, which is
+            exactly where such a copy is running from.
+
+            ### Portable bundles (still supported)
 
             | Platform | File |
             |----------|------|
@@ -495,22 +589,35 @@ jobs:
             | macOS Apple Silicon | `locus-macOS-arm64.zip` |
             | Linux | `locus-Linux-amd64.zip` |
 
+            Extract and run — no installer, no admin rights. Updates are staged
+            inside the app's own directory, so a portable copy works from any
+            folder. Linux ships as a portable bundle only by design: nothing is
+            written to `/usr` or `/opt`.
+
             ### macOS note (unsigned build)
             macOS Gatekeeper will block the unsigned app on first launch.
             Right-click the app → **Open** (or run `xattr -cr /Applications/Locus.app`)
-            before first run. Full instructions will live on the download site.
+            before first run. Both the .dmg and the zip carry a README with
+            these steps. Signing is a known gap, handled separately.
 
             ### What's Included
 
             - `locus` — Desktop client (single binary, Wails + Vue 3)
-            - `sing-box` — Tunnel engine (Shadowsocks + TUN)
+            - `sing-box` — Tunnel engine (Shadowsocks + TUN, bundled)
 
             ### Quick Install
 
-            1. Download the bundle for your platform
-            2. Extract the zip
-            3. Launch `locus`
-            4. Enter your activation code
+            **Windows:** run `locus-setup-<version>.exe`.
+            **macOS:** open the `.dmg`, drag Locus into Applications, then
+            right-click → Open the first time.
+            **Linux:** extract the zip and run `./locus`.
+            **Portable (any platform):** extract the zip and run the client.
+
+            ### Updating
+
+            The client updates itself from this release — no manual download.
+            The hub must have fetched and published the version, and rollout
+            must be above 0 for it to be offered.
 
             See `v5/docs/WAILS-MIGRATION.md` for architecture details and
             `v5/docs/BACKEND-API.md` for the backend API reference.

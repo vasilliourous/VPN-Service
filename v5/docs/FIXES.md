@@ -1,3 +1,153 @@
+## CLIENT UPDATE — THE PORTABLE BINARY COULD NOT REPLACE ITSELF (2026-09-20)
+
+Field report, immediately after 2.2.3 was published:
+
+```
+⚠ Update to 2.2.3 failed: download failed: cannot rename downloaded file: rename
+C:\Users\Hello\Downloads\locus-windows-amd64.exe.new.tmp
+C:\Users\Hello\Downloads\locus-windows-amd64.exe.new:
+The process cannot access the file because it is being used by another process.
+```
+
+The download was fine — it reached the rename at the very end, after the
+checksum had passed. The rename is the step that installs the new binary, and it
+could not run. This was not a fluke of one machine: it is a structural
+consequence of how the portable build was deployed.
+
+### 54. The updater staged its download in whatever directory the app was launched from
+
+`PerformUpdate` resolved its working directory as
+`filepath.Dir(os.Executable())`. For a portable copy that is wherever the user
+unzipped the zip, and the most common place a student runs a downloaded
+executable from is **Downloads**.
+
+Downloads is the most heavily observed directory on Windows. Defender,
+SmartScreen, the search indexer, cloud-sync clients and download managers all
+open a newly written `.exe` within milliseconds of it appearing. The updater
+wrote `locus-windows-amd64.exe.new.tmp` and then tried to rename it *in that
+same directory*, so it was aiming at the one folder most likely to have something
+else holding a handle on the file.
+
+Nothing here is a bug in the rename itself: renaming a file that another process
+has open genuinely cannot succeed on Windows. The mistake was choosing a
+directory the application does not own as the place to perform an install.
+
+### 55. The download handle was still open at rename time
+
+Independently of any third party, the code raced its own file descriptor:
+
+```go
+f, err := os.OpenFile(tmpPath, ...)
+defer func() { _ = f.Close() }()   // runs at function RETURN
+...
+os.Rename(tmpPath, path)           // ...so the handle is still open here
+```
+
+`defer` runs when the function returns, which is *after* the rename. On Windows
+a file with an open handle cannot be renamed, so this was guaranteed to fail
+whenever the timing lined up. The reported error blamed "another process"; in
+some of those cases the other process was Locus.
+
+### 56. A transient blocker was never retried, and the error was unreadable
+
+Two smaller defects made the same failure worse:
+
+- `os.Rename` was called once. The holders described above are transient by
+  nature — a scanner that opened the file the instant it appeared, a sync client
+  finishing up — and a short bounded retry would have ridden most of them out.
+- The surfaced error was the raw `os.Rename` output: two absolute paths, a
+  Windows status phrase, and no indication of which process was involved or that
+  retrying after closing a File Explorer window would work.
+
+### The fix
+
+**Install into a directory the application owns.** A new package
+`v5/client/internal/install` resolves where this copy of Locus lives and how it
+was deployed:
+
+| Platform | Install location | Rationale |
+|---|---|---|
+| Windows | `%ProgramFiles%\Locus`, else `%LOCALAPPDATA%\Programs\Locus` | Owned directory; the client already runs elevated (its manifest sets `requireAdministrator`) |
+| macOS | `/Applications/Locus.app` | A `.app` is the unit macOS replaces |
+| Linux | `~/.local/bin`, else `~/.local/share/locus/bin` | Deliberately unintrusive — nothing system-wide is written |
+
+Anything else resolves as **portable**, which is a supported deployment rather
+than a failure — the launched directory is still used, just with a private
+staging subdirectory inside it (`<install-dir>/.locus-staging/`). A portable copy
+run from Downloads therefore keeps working: the download no longer lands on a
+filename that the folder's watchers are sitting on.
+
+The staging directory is deliberately *not* the system temp directory.
+`os.Rename` is only atomic within a single filesystem, and `%TEMP%` is frequently
+a different volume from the install location — renaming across volumes degrades
+to a copy, which is neither atomic nor safe for a running executable.
+
+Also fixed:
+
+- **The handle is closed explicitly before the rename** (the `defer` stays as a
+  safety net for error paths), and a close failure is now reported rather than
+  silently proceeding into a rename that cannot succeed.
+- **Transient rename failures retry** with a bounded backoff — 5 attempts,
+  100→1600 ms (~3.1 s total). Permanent failures (missing path, read-only
+  filesystem, cross-device) are classified and returned immediately, because
+  waiting on them converts a fast, clear error into a slow one.
+- **The error is actionable**: it names the file that was blocked, says another
+  program is holding it, gives a platform-specific remedy, and states that the
+  verified download was left intact so retrying is safe.
+- **AppImage-style read-only mounts are detected** and reported as their own
+  mode (`immutable`), since elevation cannot help there and the correct advice is
+  to replace the bundle.
+- **Diagnostics report the install location and mode**, so "update failed" is
+  answerable from a support report instead of requiring a reproduction.
+
+### Installers, and the portable build stays
+
+Real installers now ship alongside the portable zips, which continue to be
+published and supported:
+
+- **Windows** — Inno Setup (`build/windows/locus.iss`), installs to
+  `%ProgramFiles%\Locus`, registers an uninstaller, and removes the staging and
+  rollback directories on uninstall.
+- **macOS** — a real `Locus.app` bundle inside a `.dmg`
+  (`build/macos/make-dmg.sh`), which installs into `/Applications` and carries a
+  README explaining the unsigned-app first-launch steps.
+- **Linux** — portable only, by design. `os.Rename` over a running binary is
+  legal on Linux, so in-place update already worked and there is no reason to
+  write anything system-wide.
+
+No signing is performed on macOS; Gatekeeper still blocks the first launch, which
+remains a separate known gap.
+
+### Verified
+
+- `internal/install` and `internal/updater` tests pass; the regression tests were
+  each run against the reverted implementation to confirm they fail:
+  `TestResolveNeverStagesInTheLaunchedDirectoryForInstalledCopies` reports
+  "staging dir is the install dir itself; downloads would race directory watchers
+  again", and `TestIsRetryableRenameError` caught a real defect in the first
+  draft of the classifier (the Windows phrases were gated behind
+  `runtime.GOOS == "windows"`, so the exact message from the field report was
+  classified *permanent* when tested off Windows).
+- `gofmt` clean; `GOOS=windows go vet -tags "desktop production"` clean;
+  `golangci-lint` clean with the same linters CI uses (it caught one dead helper
+  in the new package — the same class of failure that killed the 2.2.2 tag).
+- The manifest generator was checked against the full post-change filename set:
+  all four raw binaries still resolve, and neither the installer nor the DMG is
+  picked up as a platform artifact.
+- `fetch-release.py` needs no change: it resolves assets by name from an
+  allowlist of the four binaries plus `manifest.json`, so the new installer
+  assets on the GitHub Release are ignored rather than breaking the all-or-
+  nothing check.
+
+### Not fixed by this
+
+The Windows rename fix is verified by inspection and by classification tests, but
+**not on a real Windows machine** — this host cannot run one. Confirming the
+update end to end on an installed copy is still required, and a portable copy
+running from Downloads is the case worth testing explicitly.
+
+---
+
 ## CLIENT TUNNEL/RECOVERY — NORTON KILLS THE SOCKET; THREE STATE BUGS IT EXPOSED (2026-09-20)
 
 Field report: the client connected for ~5 seconds, then showed "Repairing…",

@@ -264,19 +264,30 @@ make build          # current platform only
 make build-all      # Linux + Windows + macOS
 ```
 
-Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds **4 platform
-bundles** plus the raw per-platform executables + `manifest.json` + checksums
-that the auto-updater consumes. (`locus` + `sing-box` per bundle.)
+Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds **4 portable
+bundles**, the **Windows installer + macOS disk images**, and the raw
+per-platform executables + `manifest.json` + checksums that the auto-updater
+consumes. (`locus` + `sing-box` per bundle.)
 
 ### Step 6: Install & Test
 
-1. Extract the platform zip
-2. Launch `locus` (Windows: `locus.exe`) — Windows runs elevated, since TUN
-   creation requires it
-3. Test activation, connection, heartbeat, update
+**Windows:** run `locus-setup-<version>.exe` (installs to `%ProgramFiles%\Locus`).
+**macOS:** open the `.dmg`, drag Locus into Applications, then right-click → Open
+the first time (the build is unsigned).
+**Linux / portable:** extract the platform zip and run `locus` — no installer,
+no admin rights.
 
-No admin install step is needed — the app runs as a normal user and sing-box
-creates the TUN interface with the user's own admin rights (BYOD).
+Windows runs elevated, since TUN creation requires it. Test activation,
+connection, heartbeat, and update.
+
+> **Install somewhere the app owns — not Downloads.** A portable copy run out of
+> Downloads cannot reliably update itself: Windows will not let the updater
+> rename a file that Defender, SmartScreen or the search indexer has open, and a
+> freshly written `.exe` in Downloads is opened by one of them within
+> milliseconds. The installer exists to remove that failure mode. A portable copy
+> is still supported and stages its download privately inside its own directory,
+> so extracting to a normal folder (not Downloads) works too. The Diagnostics
+> screen reports which mode the running copy is in.
 
 ---
 

@@ -19,7 +19,8 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
            ↓             ↓             ↓            ↓
      ┌─────────────────────────────────────────────────────┐
      │                  GitHub Release (tag v* only)        │
-     │  zips + raw per-platform executables + manifest.json │
+     │  portable zips + installers (.exe / .dmg)            │
+     │  + raw per-platform executables + manifest.json      │
      │                + checksums.sha256                    │
      └─────────────────────────────────────────────────────┘
                         ↓
@@ -76,9 +77,32 @@ The pipeline will:
    that no *unaccounted* copy exists
 3. Build the Vue frontend, then the client — 4 platform targets in parallel
 4. Download the matching sing-box engine binary (1.12.1) for each
-5. Bundle into 4 platform ZIPs
-6. Publish the raw per-platform executables + `manifest.json` + checksums,
+5. Bundle into 4 portable platform ZIPs
+6. Build the installers — a Windows Inno Setup `.exe` (hard failure if it cannot
+   be produced) and macOS `.dmg` disk images (warning only; the portable zip is
+   still a complete deliverable)
+7. Publish the raw per-platform executables + `manifest.json` + checksums,
    then create a GitHub Release
+
+### Release assets, and which consumer each one is for
+
+Two different consumers read this release, and they need different things:
+
+| Asset | Consumer | Notes |
+|---|---|---|
+| `locus-<OS>-<arch>.zip` | humans | Portable: extract and run, no installer |
+| `locus-setup-<v>.exe` | humans | Windows installer → `%ProgramFiles%\Locus` |
+| `locus-setup-<v>-macos-<arch>.dmg` | humans | macOS `.app` → `/Applications` |
+| raw `locus-<os>-<arch>[.exe]` | **auto-updater** | Must be raw; the updater cannot unpack a zip |
+| `manifest.json` | updater + hub | Version + per-platform filename + SHA256 |
+| `checksums.sha256` | humans | Hashes of the human-facing deliverables |
+
+**The updater must never be handed an installer.** It always fetches exactly one
+named raw executable, and the hub's `fetch-release.py` resolves assets from an
+allowlist of the four raw binaries plus `manifest.json` — so the installer and
+DMG assets are ignored by the update pipeline rather than needing to be
+excluded from it. Adding a new packaging artefact therefore requires **no change
+to the hub or to `update_config`**.
 
 **CI does not touch the hub.** It builds and attaches artifacts to the GitHub
 Release. Publishing to the live server is a separate, deliberate step — see
