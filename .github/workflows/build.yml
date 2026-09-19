@@ -347,14 +347,43 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # download-artifact with merge-multiple restores the paths AS THEY WERE
+      # UPLOADED, it does not flatten them. The build job uploads
+      #   dist/*.zip        (the bundles)   -> arrive at the top level
+      #   dist/raw/*        (the binaries)  -> arrive under raw/
+      # Every step below therefore has to look in BOTH places. Assuming a flat
+      # directory is what made "Generate updater manifest" find no artifacts at
+      # all and fail, so no manifest.json was ever attached to a release.
       - uses: actions/download-artifact@v4
         with:
           pattern: locus-*
           merge-multiple: true
 
+      - name: Normalise artifact layout
+        run: |
+          echo "=== as downloaded ==="
+          find . -maxdepth 2 -type f | sort
+          # Flatten raw/ into the top level so the manifest, checksums and
+          # release-upload steps all see one directory. Names are already
+          # unique across platforms, so a plain move is safe.
+          if [ -d raw ]; then
+            mv raw/* . 2>/dev/null || true
+            rmdir raw 2>/dev/null || true
+          fi
+          echo "=== normalised ==="
+          ls -l
+
       - name: Generate release checksums
         run: |
-          sha256sum *.zip > checksums.sha256
+          # Only the human-facing bundles; the raw binaries are covered by
+          # manifest.json, and mixing both here would make the file ambiguous.
+          shopt -s nullglob
+          zips=( *.zip )
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "::error::no .zip bundles found — cannot generate checksums"
+            exit 1
+          fi
+          sha256sum "${zips[@]}" > checksums.sha256
           cat checksums.sha256
 
       # Emit the per-version manifest the publish script uploads to the hub.
@@ -379,25 +408,39 @@ jobs:
               "locus-darwin-amd64":  "macos_intel",
               "locus-darwin-arm64":  "macos_arm",
           }
-          for base in sorted(os.listdir(".")):
-              if not base.startswith("locus-") or base.endswith(".zip"):
-                  continue
-              if base.endswith(".sha256"):
-                  continue
-              stem, ext = os.path.splitext(base)
-              if stem in mapping:
-                  h = hashlib.sha256(open(base, "rb").read()).hexdigest()
-                  out["platforms"][mapping[stem]] = {
-                      "file": base,
-                      "sha256": h,
-                      "size": os.path.getsize(base),
-                  }
+          # Walk the tree instead of listing one directory. download-artifact
+          # preserves the uploaded layout (raw/…) and an earlier revision of
+          # this step only looked at the top level, found nothing, and failed
+          # the whole release — so no manifest.json ever reached a release.
+          # Searching is the fix that cannot silently regress on layout.
+          found = {}
+          for root, _dirs, files in os.walk("."):
+              for base in files:
+                  if not base.startswith("locus-") or base.endswith(".zip"):
+                      continue
+                  if base.endswith(".sha256"):
+                      continue
+                  stem, ext = os.path.splitext(base)
+                  if stem not in mapping:
+                      continue
+                  path = os.path.join(root, base)
+                  # Keep the top-level copy if the same artifact appears twice.
+                  found.setdefault(stem, path)
+          for stem, path in sorted(found.items()):
+              out["platforms"][mapping[stem]] = {
+                  "file": os.path.basename(path),
+                  "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest(),
+                  "size": os.path.getsize(path),
+              }
           missing = sorted(set(mapping.values()) - set(out["platforms"]))
           if missing:
               # Fail loudly: a partial manifest would silently withhold updates
               # from the missing platforms.
               sys.stderr.write("ERROR: no artifact found for: %s\n" % ", ".join(missing))
-              sys.stderr.write("Files present: %s\n" % ", ".join(sorted(os.listdir("."))))
+              sys.stderr.write("Files present:\n")
+              for root, _dirs, files in os.walk("."):
+                  for base in sorted(files):
+                      sys.stderr.write("  %s\n" % os.path.join(root, base))
               sys.exit(1)
           print(json.dumps(out, indent=2, sort_keys=True))
           PY
@@ -408,7 +451,11 @@ jobs:
         with:
           files: |
             *.zip
-            *.exe
+            locus-linux-amd64
+            locus-windows-amd64.exe
+            locus-darwin-amd64
+            locus-darwin-arm64
+            *.sha256
             checksums.sha256
             manifest.json
           generate_release_notes: true

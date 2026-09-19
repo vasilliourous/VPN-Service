@@ -1,7 +1,71 @@
 
 ---
 
-## CLIENT AUDIT — VERSION/DEBUG SURFACE, ELEVATION, UPDATE CORRECTNESS (2026-09-19)
+## RELEASE PIPELINE — `manifest.json` WAS NEVER PRODUCED (2026-09-19)
+
+Found while trying to publish the first real release through the updater.
+
+### 25. `download-artifact` does not flatten, and the release job assumed it did
+
+The build job uploads two things per platform:
+
+```
+dist/*.zip      → the bundles      (human download)
+dist/raw/*      → the binaries     (the auto-updater's artifacts)
+```
+
+`actions/download-artifact` with `merge-multiple: true` **merges artifact names,
+not directory paths** — the uploaded layout is preserved, so on the release
+runner the bundles land at the top level and the binaries land under `raw/`.
+
+Three release steps assumed one flat directory:
+
+| Step | Assumption | Result |
+|---|---|---|
+| Generate release checksums | `sha256sum *.zip` | worked (zips are top-level) |
+| **Generate updater manifest** | `os.listdir(".")` | **found zero artifacts → `sys.exit(1)` → the release job failed, so no `manifest.json` ever attached** |
+| Create GitHub Release | `files: *.zip, *.exe` | would have attached no binaries either |
+
+The manifest step's own "fail loudly on a missing platform" guard is what
+turned a silent wrong-hash into a hard failure — but it was failing the whole
+release, which is why the tag produced zips and nothing else.
+
+**Fix:**
+- New **Normalise artifact layout** step flattens `raw/` into the top level
+  (names are already unique per platform, so nothing collides), giving every
+  subsequent step the flat directory they were written for.
+- The manifest generator now **walks the tree** (`os.walk`) instead of listing
+  one directory, so a future layout change degrades to "still finds them"
+  rather than "fails the release". It still fails loudly, naming the missing
+  platforms, when an artifact really is absent.
+- Release assets now explicitly include the four raw binaries
+  (`locus-linux-amd64`, `locus-windows-amd64.exe`, `locus-darwin-amd64`,
+  `locus-darwin-arm64`) plus `*.sha256` — previously only `*.exe` was globbed,
+  which would have skipped the three extension-less Unix binaries.
+- Checksums step asserts it found bundles and only covers `.zip` (the raw
+  binaries are covered by `manifest.json`; mixing both made the file
+  ambiguous).
+
+### Verified
+
+Replayed the exact steps locally against a directory reproducing the
+`download-artifact` layout (zips top-level, binaries under `raw/`):
+
+- normalise → all 8 files flat, no collisions
+- checksums → 4 zip entries
+- manifest → all four platforms with correct filenames and hashes
+- manifest hashes agree with CI's own `.sha256` files
+- `publish-release.sh RELEASE_DIR=… DRY_RUN=1 2.1.0` → finds all four, manifest
+  cross-check passes on every platform
+- deliberately removing two platforms → manifest step exits 1 naming
+  `macos_arm, macos_intel` (still fails loudly)
+
+**What to upload:** the four **raw binaries** (from `dist/raw/`, i.e. inside
+each platform's inner zip) plus `manifest.json`. **Not** the outer `.zip`
+bundles — the updater replaces the executable in place and cannot unpack an
+archive.
+
+---
 
 The client had drifted into being a black box: it could not reliably say which
 build it was, "no update available" had five indistinguishable causes, and the
