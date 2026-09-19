@@ -7,13 +7,28 @@
 # points `update_config` at them, starting at a small rollout.
 #
 # Usage:
-#   v5/server/scripts/publish-release.sh 1.1.0
+#   v5/server/scripts/publish-release.sh 2.2.1
 #
-#   # Dry run — does everything except touch the hub:
-#   DRY_RUN=1 v5/server/scripts/publish-release.sh 1.1.0
+#   # Fetch the artifacts from the GitHub Release instead of from disk
+#   # (this is the normal path — CI already built and attached them):
+#   v5/server/scripts/publish-release.sh 2.2.1 --from-github
+#
+#   # Dry run — does everything except upload and touch the hub:
+#   DRY_RUN=1 v5/server/scripts/publish-release.sh 2.2.1 --from-github
 #
 #   # Publish but keep the rollout at 0 (upload only, offer to nobody):
-#   ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 1.1.0
+#   ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 2.2.1
+#
+# WHY --from-github EXISTS
+#   The first live publish of a release was done with an empty RELEASE_DIR. The
+#   script warned for every missing platform, found "no usable artifacts", and
+#   then WROTE update_config ANYWAY — producing a row whose version/active/rollout
+#   were real but whose download_* and sha256_* fields were all empty. That row
+#   advertises a release that no client can fetch. Fetching the artifacts by
+#   version removes the whole class of mistake: the version argument selects the
+#   release, so there is no directory to get wrong.
+#
+#   See FIXES.md entry 41.
 #
 # Environment:
 #   VPS              ssh target (default root@networkingguides.duckdns.org)
@@ -22,25 +37,62 @@
 #   PB_ADMIN_PASS    PocketBase admin password ─┘ (or PB_TOKEN to skip login)
 #   ROLLOUT_PERCENT  initial rollout gate (default 5)
 #   RELEASE_DIR      where to find the artifacts (default ./release-artifacts)
+#   GITHUB_REPO      owner/name for --from-github (default vasilliourous/VPN-Service)
+#   GH_TOKEN         optional; only needed for a private repo or to dodge
+#                    anonymous rate limits on the download URL
 #   DRY_RUN=1        print actions without uploading or updating the DB
+#   ALLOW_PARTIAL=1  publish even though some platforms are missing. Refused by
+#                    default: a release that omits a platform leaves those
+#                    clients unable to update, and the omission is invisible
+#                    from the operator's seat.
 #
 # Exit codes: 0 success, 1 usage/validation error, 2 upload failure,
-#             3 update_config failure.
+#             3 update_config failure, 4 artifact acquisition failure.
 set -euo pipefail
+
+# --help must be handled BEFORE the version is read from $1, or
+# `publish-release.sh --help` treats "--help" as the version and fails with a
+# confusing "release dir not found" further down.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,75p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0 ;;
+esac
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
-    echo "usage: $0 <version>   (e.g. 1.1.0 — no leading v)" >&2
+    sed -n '10,30p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit 1
 fi
 # Normalise a leading v so callers can pass either form.
 VERSION="${VERSION#v}"
+# Reject a version that is not a version. Without this, `publish-release.sh
+# --from-github 2.2.1` (options before the version) would silently set
+# VERSION="--from-github" and then try to fetch a release for that tag.
+case "$VERSION" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) echo "error: '${VERSION}' does not look like a version (expected x.y.z)" >&2; exit 1 ;;
+esac
 
 VPS="${VPS:-root@networkingguides.duckdns.org}"
 PB_API="${PB_API:-https://networkingguides.duckdns.org}"
 ROLLOUT_PERCENT="${ROLLOUT_PERCENT:-5}"
 RELEASE_DIR="${RELEASE_DIR:-./release-artifacts}"
 DRY_RUN="${DRY_RUN:-0}"
+GITHUB_REPO="${GITHUB_REPO:-vasilliourous/VPN-Service}"
+ALLOW_PARTIAL="${ALLOW_PARTIAL:-0}"
+FROM_GITHUB=0
+
+# Parse the optional second argument. Kept position-independent of VERSION so
+# `publish-release.sh 2.2.1 --from-github` and `--from-github 2.2.1` both work.
+for arg in "${@:2}"; do
+    case "$arg" in
+        --from-github) FROM_GITHUB=1 ;;
+        --allow-partial) ALLOW_PARTIAL=1 ;;
+        -h|--help) sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
 
 # The filenames are a contract with the client (PlatformDownloadURL) and with
 # CI's raw-artifact staging step. Keep them in one place.
@@ -53,11 +105,112 @@ PLATFORMS=(
 
 log()  { printf '\033[0;32m[publish]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[publish][WARN]\033[0m %s\n' "$*"; }
-fail() { printf '\033[0;31m[publish][FAIL]\033[0m %s\n' "$*" >&2; exit "${2:-1}"; }
+
+# fail prints a multi-line message and exits with the given code (default 1).
+#
+# `%b` rather than `%s` so embedded \n in the message becomes a real newline.
+# With %s every multi-line diagnostic printed the literal characters "\n", which
+# made the most important failures (the ones that refuse a publish) unreadable.
+#
+# The exit code is taken from the LAST argument only when it is a bare number,
+# so existing `fail "message" 2` calls keep working while a message that happens
+# to end in a digit is not mistaken for a code.
+fail() {
+    local code=1
+    if [ "$#" -gt 1 ]; then
+        case "${!#}" in
+            [0-9]|[0-9][0-9]) code="${!#}"; set -- "${@:1:$#-1}" ;;
+        esac
+    fi
+    printf '\033[0;31m[publish][FAIL]\033[0m %b\n' "$*" >&2
+    exit "$code"
+}
+
+# ── Acquire artifacts ──
+# Two sources: a local directory the operator populated, or the GitHub Release
+# for this exact version. --from-github is the normal path and exists because
+# publishing from an empty directory once wrote a live update_config row with no
+# download URLs in it (FIXES.md 41). Selecting artifacts BY VERSION removes the
+# operator's chance to point at the wrong directory.
+
+# fetch_from_github downloads this version's raw executables and manifest.json
+# from its GitHub Release into RELEASE_DIR.
+#
+# Deliberately strict about what it accepts:
+#   * the release MUST exist for tag v<version>, or we would publish artifacts
+#     from a different release than the version we are writing into the row;
+#   * every platform in PLATFORMS must be present, because a release missing a
+#     platform is a CI failure, not something to paper over at publish time;
+#   * manifest.json is fetched too. It is what proves (below) that the bytes we
+#     are about to serve came from the same build CI hashed.
+fetch_from_github() {
+    local api="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${VERSION}"
+    local auth=()
+    [ -n "${GH_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+
+    log "Fetching artifacts for v${VERSION} from ${GITHUB_REPO}…"
+    mkdir -p "$RELEASE_DIR"
+
+    # `curl -f` so an HTTP error is a failure rather than a JSON error document
+    # written into RELEASE_DIR and later mistaken for an artifact.
+    if ! curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
+            "$api" -o "${RELEASE_DIR}/.release.json"; then
+        fail "no GitHub Release found for tag v${VERSION} in ${GITHUB_REPO}.\n"\
+"Either CI has not finished, the tag was never pushed, or the release failed.\n"\
+"Check: gh release view v${VERSION} --repo ${GITHUB_REPO}" 4
+    fi
+
+    # Pull the browser_download_url for each asset we need, so the download does
+    # not depend on GitHub's asset naming staying in lockstep with our own.
+    local files=(manifest.json)
+    for entry in "${PLATFORMS[@]}"; do
+        rest="${entry#*:}"; files+=("${rest%%:*}")
+    done
+
+    local missing=()
+    for want in "${files[@]}"; do
+        local url
+        url=$(python3 - "${RELEASE_DIR}/.release.json" "$want" <<'PY'
+import json, sys
+try:
+    rel = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for a in rel.get("assets", []):
+    if a.get("name") == sys.argv[2]:
+        print(a.get("browser_download_url", ""))
+        break
+PY
+)
+        if [ -z "$url" ]; then
+            missing+=("$want")
+            continue
+        fi
+        if ! curl -fsSL "${auth[@]}" "$url" -o "${RELEASE_DIR}/${want}"; then
+            fail "download failed for ${want} from ${url}" 4
+        fi
+        local size
+        size=$(stat -c%s "${RELEASE_DIR}/${want}" 2>/dev/null || stat -f%z "${RELEASE_DIR}/${want}")
+        log "  ↓ ${want} (${size} bytes)"
+    done
+    rm -f "${RELEASE_DIR}/.release.json"
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        fail "the v${VERSION} release is missing: ${missing[*]}\n"\
+"CI is supposed to attach all four platform executables plus manifest.json.\n"\
+"A release without them cannot be published — fix CI and re-release rather than\n"\
+"publishing a partial update." 4
+    fi
+    log "✓ Fetched $((${#files[@]})) assets for v${VERSION}"
+}
+
+if [ "$FROM_GITHUB" = "1" ]; then
+    fetch_from_github
+fi
 
 # ── Validate local artifacts ──
 log "Publishing Locus ${VERSION} from ${RELEASE_DIR}"
-[ -d "$RELEASE_DIR" ] || fail "release dir not found: ${RELEASE_DIR} (did you download the release artifacts?)"
+[ -d "$RELEASE_DIR" ] || fail "release dir not found: ${RELEASE_DIR} (did you download the release artifacts?)" 4
 
 declare -a HAVE_FILES=() HAVE_KEYS=() HAVE_SHA=()
 for entry in "${PLATFORMS[@]}"; do
@@ -79,7 +232,44 @@ for entry in "${PLATFORMS[@]}"; do
     log "  ${key}: ${file} ($(( size / 1024 / 1024 )) MB) sha256=${sha:0:16}…"
 done
 
-[ "${#HAVE_FILES[@]}" -gt 0 ] || fail "no usable artifacts found in ${RELEASE_DIR}"
+# ── Hard stop: never write a partial row ───────────────────────────────────
+# The row this script writes is what the live hub serves to every client. A row
+# with some download_* fields empty silently withholds updates from those
+# platforms — the failure is invisible from the operator's seat and only shows
+# up as students stuck on an old build. So refuse the publish entirely unless
+# the operator explicitly accepts the gap.
+#
+# This is the check that did NOT exist when the first live publish wrote an
+# update_config row whose version was real and whose URLs were all empty.
+[ "${#HAVE_FILES[@]}" -gt 0 ] || fail "no usable artifacts found in ${RELEASE_DIR}.\n"\
+"Refusing to write update_config — a row with no download URLs advertises a\n"\
+"release that no client can fetch." 4
+
+MISSING_PLATFORMS=()
+for entry in "${PLATFORMS[@]}"; do
+    key="${entry%%:*}"
+    found=0
+    for have in "${HAVE_KEYS[@]}"; do
+        [ "$have" = "$key" ] && found=1 && break
+    done
+    [ "$found" = "1" ] || MISSING_PLATFORMS+=("$key")
+done
+if [ "${#MISSING_PLATFORMS[@]}" -gt 0 ]; then
+    if [ "$ALLOW_PARTIAL" != "1" ]; then
+        for k in "${MISSING_PLATFORMS[@]}"; do
+            file=""
+            for entry in "${PLATFORMS[@]}"; do
+                case "$entry" in "$k:"*) rest="${entry#*:}"; file="${rest%%:*}" ;; esac
+            done
+            warn "  ${k}: ${file} absent"
+        done
+        fail "${#MISSING_PLATFORMS[@]} platform(s) have no artifact (${MISSING_PLATFORMS[*]}).\n"\
+"Publishing now would withhold updates from those platforms with no visible\n"\
+"symptom, so this is refused by default. If the gap is deliberate, re-run with\n"\
+"ALLOW_PARTIAL=1 (or --allow-partial) and say why in the release notes." 4
+    fi
+    warn "ALLOW_PARTIAL=1 — publishing without: ${MISSING_PLATFORMS[*]}"
+fi
 
 # ── Cross-check against manifest.json if present ──
 # CI generates manifest.json from the same build. If it disagrees with the

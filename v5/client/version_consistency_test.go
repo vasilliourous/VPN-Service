@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 
 // Version consistency guard.
 //
-// The client version is duplicated in four places, and they can silently drift:
+// The client version is duplicated across six files, and they can silently drift:
 //
 //	v5/VERSION               — the canonical runtime source (Makefile + CI read it)
 //	main.go `version`        — the fallback literal, compiled in when ldflags is absent
@@ -97,6 +98,54 @@ func TestFrontendPackageVersionMatchesRepoVersion(t *testing.T) {
 	}
 	if pkg.Version != want {
 		t.Errorf("frontend/package.json version = %q, but v5/VERSION = %q", pkg.Version, want)
+	}
+}
+
+// TestFrontendLockfileVersionMatchesRepoVersion guards the npm lockfile root.
+//
+// WHY: found 2026-09-19 — frontend/package-lock.json was rooted at "2.0.0"
+// while package.json said "2.2.0", and nothing checked the lockfile at all, so
+// it had drifted across two releases unnoticed. It was harmless only because CI
+// runs `npm install` (which tolerates a stale root) rather than `npm ci` (which
+// fails hard on a package.json/lockfile mismatch) and only the built output
+// ships. That is luck, not safety: this test makes the drift visible now, long
+// before someone tightens the CI install step.
+//
+// The lockfile carries the version twice: once at the document root and once in
+// packages[""]. Both must agree with v5/VERSION, or `npm ci` becomes a
+// release-blocking failure.
+func TestFrontendLockfileVersionMatchesRepoVersion(t *testing.T) {
+	want := repoVersion(t)
+	data, err := os.ReadFile(filepath.Join("frontend", "package-lock.json"))
+	if err != nil {
+		t.Fatalf("cannot read frontend/package-lock.json: %v", err)
+	}
+	var lock struct {
+		Version  string `json:"version"`
+		Packages map[string]struct {
+			Version string `json:"version"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		t.Fatalf("frontend/package-lock.json is not valid JSON: %v", err)
+	}
+	if lock.Version != want {
+		t.Errorf("frontend/package-lock.json root version = %q, but v5/VERSION = %q.\n"+
+			"Bump it with: v5/server/scripts/bump-version.sh <version>",
+			lock.Version, want)
+	}
+	// packages[""] is the entry describing this package itself. It is a
+	// separate field from the document root and drifts independently.
+	if root, ok := lock.Packages[""]; ok {
+		if root.Version != want {
+			t.Errorf("frontend/package-lock.json packages[\"\"] version = %q, but "+
+				"v5/VERSION = %q — `npm ci` would fail on this mismatch",
+				root.Version, want)
+		}
+	} else {
+		t.Error("frontend/package-lock.json has no packages[\"\"] entry — " +
+			"the lockfile layout changed, so this guard is now blind and must be " +
+			"updated rather than deleted")
 	}
 }
 
@@ -247,5 +296,92 @@ func TestCommittedWindowsResourceBinariesMatchRepoVersion(t *testing.T) {
 					"old brand in the executable's metadata", path, res.ProductName, "Locus")
 			}
 		})
+	}
+}
+
+// ── Drift guard: every copy of the version must be accounted for ───────────
+//
+// The tests above assert that the copies WE KNOW ABOUT agree. None of them can
+// notice a NEW copy appearing — a version constant added to a new package, a
+// hardcoded version in the Vue UI, a JSON fixture the build reads. That is how
+// drift recurs: the seventh copy is invisible to a list of six.
+//
+// This test inverts the question. It derives the running version, greps the
+// whole client tree for it, and requires every hit to be in a file that
+// bump-version.sh maintains. A hit anywhere else fails the build and names the
+// file, so the fix is always "add it to the accounting list (and to
+// bump-version.sh's KNOWN_VERSION_FILES)" or "remove the copy".
+//
+// Deliberately greps for the CONCRETE version string rather than looking for
+// something version-shaped: a version-shaped regex would match dependency
+// versions, ports, timeouts and dates, and would have to be loosened until it
+// caught nothing. An exact-string search over the current release version has
+// no false positives worth speaking of.
+func TestNoUnaccountedCopyOfVersion(t *testing.T) {
+	want := repoVersion(t)
+
+	// Files whose copy of the version is intentional and maintained. Keep in
+	// sync with KNOWN_VERSION_FILES in v5/server/scripts/bump-version.sh.
+	accounted := map[string]string{
+		filepath.FromSlash("../VERSION"):                      "canonical source of truth",
+		filepath.FromSlash("main.go"):                         "runtime fallback + go:generate directive",
+		filepath.FromSlash("internal/buildinfo/buildinfo.go"): "uninstrumented-build fallback",
+		filepath.FromSlash("wails.json"):                      "Wails build metadata",
+		filepath.FromSlash("frontend/package.json"):           "npm build metadata",
+		filepath.FromSlash("frontend/package-lock.json"):      "npm lockfile root",
+	}
+
+	// Directories that are build output, vendored, or not part of the source.
+	skipDirs := map[string]bool{
+		"node_modules": true, "dist": true, ".git": true,
+		"build": true, "wailsjs": true,
+	}
+
+	var offenders []string
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // unreadable path is not this test's concern
+		}
+		if info.IsDir() {
+			if skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Text sources only. A version string inside a binary (.syso, a built
+		// executable) is checked by the resource tests above, which read the
+		// actual artifact rather than raw bytes.
+		switch filepath.Ext(path) {
+		case ".go", ".json", ".ts", ".js", ".vue", ".sh", ".yml", ".yaml":
+		default:
+			return nil
+		}
+		if strings.HasSuffix(path, "_test.go") {
+			// Tests deliberately contain literal versions as fixtures.
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), want) {
+			return nil
+		}
+		if _, ok := accounted[filepath.Clean(path)]; !ok {
+			offenders = append(offenders, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk failed: %v", err)
+	}
+
+	if len(offenders) > 0 {
+		sort.Strings(offenders)
+		t.Errorf("version %s appears in %d file(s) not maintained by the release tooling:\n%s\n\n"+
+			"Either add each file to KNOWN_VERSION_FILES in "+
+			"v5/server/scripts/bump-version.sh (and to the accounting map in this "+
+			"test), or read the version from a maintained source instead of "+
+			"hardcoding it. An unaccounted copy is what makes a release ship a "+
+			"binary that reports a version the source tree disagrees with.",
+			want, len(offenders), "  "+strings.Join(offenders, "\n  "))
 	}
 }
