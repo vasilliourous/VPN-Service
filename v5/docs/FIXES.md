@@ -441,6 +441,25 @@ private helpers, which correctly have no frontend binding.)
 
 ---
 
+### 38. `codes.expire` had no UI
+
+The admin hook implemented `codes.expire` (set or clear a code's `expires_at`,
+with an audit-log entry), but nothing in the console called it — an operator
+could only change an expiry by editing PocketBase directly.
+
+That was tolerable while expiry was effectively advisory, but entry 33 made an
+expired code refused on **re-activation** as well as first activation. So the
+one action that can remedy a lapsed code was the one with no affordance, and the
+operator's only recourse was the raw admin UI.
+
+The Codes page now exposes it in two places: an "Expiry" button on each row, and
+an expiry field in the code detail modal. Both prompt for a `YYYY-MM-DD` date and
+accept blank to clear it — with the prompt stating plainly that a past date
+blocks both activation and re-activation, because that is the consequence the
+operator is about to apply.
+
+---
+
 ## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
 
 ### 26. The console could silently publish the wrong binary

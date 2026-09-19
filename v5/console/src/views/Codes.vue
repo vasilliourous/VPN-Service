@@ -136,6 +136,50 @@ async function unbind(row: CodeRow) {
   }
 }
 
+/**
+ * Set or clear a code's expiry.
+ *
+ * `codes.expire` existed in the hook but had no UI at all, so an operator could
+ * only change an expiry by hand-editing PocketBase. That was tolerable while
+ * expiry was advisory; it is not any more, because an expired code is now
+ * refused on re-activation as well as on first use (see FIXES.md 33) — a lapsed
+ * code needs a remedy the operator can reach.
+ *
+ * Empty clears the expiry (the code then never expires).
+ */
+async function setExpiry(row: CodeRow, when: string) {
+  const res = await call('codes.expire', { code: row.code, expires_at: when })
+  if (res.ok) {
+    toast.ok(when ? `Expires ${when.slice(0, 10)}` : 'Expiry cleared')
+    await load()
+    if (detail.value?.code === row.code) {
+      detail.value.expires_at = when
+      await openDetail(detail.value)
+    }
+  } else {
+    toast.err(res.message || res.transportError || 'Could not set expiry')
+  }
+}
+
+/** Prompt for a new expiry date, pre-filled with the current one. */
+async function editExpiry(row: CodeRow) {
+  const current = row.expires_at ? row.expires_at.slice(0, 10) : ''
+  const input = window.prompt(
+    `Expiry for ${row.code}\n\nYYYY-MM-DD, or leave blank for no expiry.\n` +
+      `A code past its expiry is refused on activation AND on re-activation.`,
+    current,
+  )
+  if (input === null) return
+  const trimmed = input.trim()
+  if (trimmed && !/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    toast.err('Enter a date like 2027-03-01, or leave blank')
+    return
+  }
+  // Send a full timestamp so the server stores a well-formed date; PocketBase's
+  // date field accepts ISO 8601.
+  await setExpiry(row, trimmed ? `${trimmed}T00:00:00.000Z` : '')
+}
+
 async function openDetail(row: CodeRow) {
   detail.value = row
   historyLoading.value = true
@@ -317,6 +361,7 @@ onMounted(async () => {
             <div class="actions" style="margin: 0">
               <button class="tiny" @click="openDetail(row)">Details</button>
               <button v-if="row.bound" class="tiny" @click="unbind(row)">Unbind</button>
+              <button class="tiny" @click="editExpiry(row)">Expiry</button>
               <button v-if="!row.suspended" class="tiny danger" @click="setSuspended(row, true)">Suspend</button>
               <button v-else class="tiny" @click="setSuspended(row, false)">Reactivate</button>
             </div>
@@ -347,6 +392,15 @@ onMounted(async () => {
       <label class="field">
         <span>Notes</span>
         <textarea v-model="detail.notes"></textarea>
+      </label>
+
+      <label class="field">
+        <span>Expiry</span>
+        <input
+          :value="detail.expires_at ? detail.expires_at.slice(0, 10) : ''"
+          placeholder="YYYY-MM-DD (blank = never expires)"
+          @change="editExpiry(detail)"
+        />
       </label>
 
       <div class="actions">
