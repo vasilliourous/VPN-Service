@@ -314,7 +314,15 @@ Tiers → edit → Save. Clients pick it up on their next heartbeat (≤5 min).
    Each upload shows a progress bar; the browser hashes the file first so a
    truncated transfer is rejected with a clear message rather than corrupting a
    release.
-3. **Stage at 5%**, confirm a few clients update, then widen: 25% → 100%.
+   Each file is also **verified automatically before upload**: the console
+   checks its executable format against the platform slot it was dropped into
+   (a Windows `.exe` in the Linux slot is refused), and confirms the version
+   string is inside the binary. No `manifest.json` upload is needed — this
+   replaces it. A failed row cannot be uploaded.
+3. Set the rollout. For a **first test release, use 100%** (see "Why a
+   percentage" above — at 5% your own device probably is not in the bucket).
+   Once real customers are on it: 5%, confirm a few clients update, then widen
+   25% → 100%.
 
 The password of a tier is deliberately *not* editable in the console — changing
 it instantly breaks every client already using that tier, so it stays a
@@ -408,11 +416,54 @@ Day 7:  rollout_percent = 100  (everyone)
 Day 8:  active = false         (stop advertising; keeps the version recorded)
 ```
 
-Update `update_config` in the admin UI or with:
-`sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=25;"`
+#### Why a percentage, and when to ignore it
+
+Question that comes up every time: *"we have rollback, why stage the rollout?"*
+
+**Because there is no rollback.** The client has exactly one automatic recovery:
+the two-phase sentinel (`.update-pending` → `.update-confirmed`), which reverts
+**only if the new binary crashes on startup**. A build that launches fine but is
+broken in some other way — connects but passes no traffic, DNS fails on school
+WiFi, blank UI on one GPU driver — is marked *confirmed* and **stays installed**.
+There is no server-driven downgrade; the only fix is publishing a higher
+version, which the possibly-broken client must then successfully fetch.
+
+So the rollout gate is not a substitute for rollback — it is compensation for
+not having one. It answers: *if this build is bad, how many users find out
+before I do?* At 100%, that is everyone.
+
+Why a **percentage of devices** rather than the usual alternatives:
+
+| Alternative | Why it is not used here |
+|---|---|
+| Canary/lab devices | There is no lab — often only one bound device exists |
+| Opt-in beta channel | Requires student cooperation; students buy codes from middlemen and will not opt into anything |
+| Everyone at once | Only viable if rollback works (it does not — see above) |
+
+The percentage needs **zero client cooperation and no extra infrastructure**:
+15 lines in the heartbeat hook, no new table, no client change, no per-device
+config. The client does not know it is part of a staged rollout; it either sees
+`update_available` or it does not.
 
 The gate is deterministic per device: `hash(fingerprint) % 100`, so a client
 cannot flip in and out of the rollout between heartbeats.
+
+**Practical guidance by fleet size:**
+
+- **Under ~10 users (current):** use **100%**. There is nobody to protect, and a
+  low percentage means your own test device probably is not in the bucket — with
+  one bound device and a 5% rollout there is a ~95% chance you see nothing and
+  wrongly conclude the updater is broken. This is the most common way a rollout
+  is misdiagnosed.
+- **From ~20 users:** stage properly (5% → 25% → 100%). This is where a bad build
+  reaching the whole fleet at once becomes a real event rather than an
+  inconvenience.
+
+Delete this section only if a real downgrade mechanism is ever built; until
+then the gate is the only thing standing between a bad build and the fleet.
+
+Update `update_config` in the admin UI or with:
+`sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=25;"`
 
 ### Verify it is actually working
 

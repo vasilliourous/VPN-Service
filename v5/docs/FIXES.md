@@ -1,6 +1,62 @@
 
 ---
 
+## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
+
+### 26. The console could silently publish the wrong binary
+
+The console's Releases page accepted any file whose *name* matched the slot. It
+never looked at the file's contents, so two failures passed undetected:
+
+1. **Cross-slot mixup.** Dropping the Windows binary into the Linux slot
+   published a `locus-linux-amd64` URL that serves a Windows PE file. Linux
+   clients download it, fail the SHA-256 check, and never update — with no error
+   anywhere. The hash matched, because the artifact is internally consistent;
+   only the *platform* was wrong.
+2. **Wrong release.** Uploading 2.0.0's binaries while typing 2.1.0 passes every
+   existing check, and the fleet ends up on the wrong build.
+
+`publish-release.sh` caught (1) and (2) via the `manifest.json` cross-check, but
+the console had no equivalent — so the two publishing paths had materially
+different safety guarantees with nothing in the UI to say so.
+
+**Also confirmed:** the uploader's allowlist already accepted `manifest.json`,
+but the console had no slot for it, so there was no way to supply one through
+the web UI at all.
+
+**Fix — automatic, no manifest needed.** The artifacts are self-describing, so
+the console verifies each file directly (`v5/console/src/lib/artifact.ts`):
+
+- **Format vs slot**, from the magic number: `MZ` = Windows PE, `\x7fELF` =
+  Linux, `\xFE\xED\xFA\xCF` / `\xCF\xFA\xED\xFE` (thin) and `\xCA\xFE\xBA\xBE`
+  (universal) = macOS, with the CPU type at offset 4 separating Intel
+  (`0x01000007`) from Apple Silicon (`0x0100000C`). A mismatch is refused before
+  anything is uploaded, naming what the file actually is.
+- **Version vs typed version**, by scanning the binary for the version string
+  (bounded to 4MB). A miss is treated as failure — the likely cause is a binary
+  from a different release — while an unscannable large file degrades to a note
+  rather than a block.
+- Failed rows cannot be uploaded, and "Upload all" is disabled while any row has
+  failed or is still being checked.
+- The detected format is shown in the row, so the operator never has to take the
+  filename on trust.
+
+Re-picking a file, or changing the version, re-runs the check (only for files
+not already uploaded or in flight).
+
+**Verified:** the detection logic was exercised against real magic bytes for all
+ten cases — PE, ELF, Mach-O arm64/x86_64 in both byte orders, universal, plus
+zip and text as negative controls. This caught a genuine bug in the first
+revision, which accepted `0xCAFEBABE` in either byte order and therefore
+classified Java `.class` files as macOS binaries; universal Mach-O is accepted
+big-endian only. Also verified: console builds, `/admin` base guard passes, and
+`artifact.ts` typechecks.
+
+**Result:** the two publishing paths now have equivalent integrity guarantees,
+and the console needs no manifest upload.
+
+---
+
 ## RELEASE PIPELINE — `manifest.json` WAS NEVER PRODUCED (2026-09-19)
 
 Found while trying to publish the first real release through the updater.

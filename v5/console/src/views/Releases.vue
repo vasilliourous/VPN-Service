@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { call, uploadArtifact, sha256OfFile } from '../api'
 import { toast } from '../toast'
+import { verifyArtifact, type ArtifactCheck, type PlatformKey } from '../lib/artifact'
 
 interface Platform {
   url: string
@@ -17,7 +18,7 @@ interface Release {
 // The filenames the client's updater looks for. If these do not match, updates
 // silently never apply — so the UI names them explicitly rather than letting a
 // wrong file be picked.
-const EXPECTED: { key: string; filename: string; label: string }[] = [
+const EXPECTED: { key: PlatformKey; filename: string; label: string }[] = [
   { key: 'linux', filename: 'locus-linux-amd64', label: 'Linux (amd64)' },
   { key: 'windows', filename: 'locus-windows-amd64.exe', label: 'Windows (amd64)' },
   { key: 'macos_intel', filename: 'locus-darwin-amd64', label: 'macOS (Intel)' },
@@ -35,14 +36,35 @@ interface Slot {
   file: File | null
   sha256: string
   percent: number
-  status: 'empty' | 'ready' | 'uploading' | 'done' | 'error'
+  status: 'empty' | 'ready' | 'checking' | 'uploading' | 'done' | 'error'
   message: string
+  // Verification result, surfaced in the row so the operator can see what the
+  // file actually is rather than trusting the filename.
+  detected: string
+  notes: string[]
+  problem: string
 }
 const slots = ref<Record<string, Slot>>({})
 
 function blankSlot(): Slot {
-  return { file: null, sha256: '', percent: 0, status: 'empty', message: '' }
+  return { file: null, sha256: '', percent: 0, status: 'empty', message: '', detected: '', notes: [], problem: '' }
 }
+
+// Re-verify already-picked files when the version changes.
+//
+// The embedded-version check needs the version string, and the operator may
+// reasonably type it before or after choosing files. Only files that are not
+// already uploaded are re-checked, and the in-flight upload state is never
+// disturbed.
+watch(version, (v) => {
+  if (!v.trim()) return
+  for (const e of EXPECTED) {
+    const slot = slots.value[e.filename]
+    if (slot?.file && slot.status !== 'done' && slot.status !== 'uploading') {
+      void verifySlot(e, slot.file)
+    }
+  }
+})
 
 function ensureSlots() {
   for (const e of EXPECTED) {
@@ -63,7 +85,7 @@ async function loadRelease() {
   loading.value = false
 }
 
-function pickFile(entry: { filename: string }, fileList: FileList | null) {
+function pickFile(entry: { filename: string; key: PlatformKey }, fileList: FileList | null) {
   const file = fileList && fileList[0]
   if (!file) return
   // Guard the obvious mistake: picking the .zip bundle instead of the raw
@@ -80,7 +102,57 @@ function pickFile(entry: { filename: string }, fileList: FileList | null) {
     percent: 0,
     status: 'ready',
     message: `${(file.size / 1024 / 1024).toFixed(1)} MB ready`,
+    detected: '',
+    notes: [],
+    problem: '',
   }
+
+  // Verify the artifact against the slot it was dropped into. This is what
+  // replaces the manual manifest.json cross-check: the executables are
+  // self-describing, so a cross-slot mixup (Windows binary in the Linux slot)
+  // or a wrong-release binary is caught here rather than silently published.
+  // The check is asynchronous; the slot is marked 'checking' until it settles.
+  if (!version.value.trim()) {
+    slots.value[entry.filename].status = 'ready'
+    slots.value[entry.filename].message =
+      `${(file.size / 1024 / 1024).toFixed(1)} MB ready — enter the version to verify it`
+    return
+  }
+  void verifySlot(entry, file)
+}
+
+// verifySlot runs the artifact checks and updates the slot state. Kept separate
+// from pickFile so the version field changing can re-run it (see watch below).
+async function verifySlot(entry: { filename: string; key: PlatformKey }, file: File, showToast = false) {
+  const slot = slots.value[entry.filename]
+  if (!slot || slot.file !== file) return
+  slot.status = 'checking'
+  slot.problem = ''
+  slot.message = 'Checking file…'
+
+  let check: ArtifactCheck
+  try {
+    check = await verifyArtifact(file, entry.key, version.value.trim())
+  } catch (err) {
+    // A verification failure must never block a legitimate publish — fall
+    // through to the size-only state and say the check could not run.
+    slot.status = 'ready'
+    slot.message = `${(file.size / 1024 / 1024).toFixed(1)} MB ready (could not verify: ${(err as Error).message})`
+    return
+  }
+
+  slot.detected = check.detected
+  slot.notes = check.notes
+  if (!check.ok) {
+    slot.status = 'error'
+    slot.problem = check.problem || 'Verification failed'
+    slot.message = slot.problem
+    if (showToast) toast.err(`${entry.label}: file failed verification`)
+    return
+  }
+  slot.status = 'ready'
+  const size = `${(file.size / 1024 / 1024).toFixed(1)} MB`
+  slot.message = `${size} ready · ${check.detected}` + (check.notes.length ? ` · ${check.notes.join(', ')}` : '')
 }
 
 async function uploadSlot(entry: { filename: string }) {
@@ -184,6 +256,18 @@ function uploadedCount(): number {
 
 const allUploaded = computed(() => uploadedCount() === EXPECTED.length)
 
+// A file that failed verification must not be uploadable, and "Upload all"
+// must not silently skip it. These drive the buttons' disabled state.
+function slotFailed(name: string): boolean {
+  return slots.value[name]?.status === 'error'
+}
+function anyFailed(): boolean {
+  return EXPECTED.some((e) => slotFailed(e.filename))
+}
+function anyChecking(): boolean {
+  return EXPECTED.some((e) => slots.value[e.filename]?.status === 'checking')
+}
+
 onMounted(() => {
   ensureSlots()
   loadRelease()
@@ -240,6 +324,12 @@ onMounted(() => {
         <code>.zip</code> bundles — the updater replaces the app binary directly and
         cannot unpack a zip.
       </p>
+      <p class="muted" style="margin-top: 0">
+        Each file is checked automatically against the platform slot it was dropped
+        into and against the version you enter below — a Windows binary in the Linux
+        slot, or a binary from a different release, is refused before it is uploaded.
+        No separate manifest file is needed.
+      </p>
 
       <label class="field">
         <span>Version being published</span>
@@ -262,11 +352,16 @@ onMounted(() => {
                 class="badge"
                 :class="{
                   available: slots[e.filename]?.status === 'done',
-                  bound: slots[e.filename]?.status === 'uploading',
+                  bound: slots[e.filename]?.status === 'uploading' || slots[e.filename]?.status === 'checking',
                   suspended: slots[e.filename]?.status === 'error',
                 }"
               >{{ slots[e.filename]?.status || 'empty' }}</span>
               <div class="muted" style="font-size: 11px; margin-top: 3px">{{ slots[e.filename]?.message }}</div>
+              <!-- Show what the file actually is. The operator should never
+                   have to take the filename on trust. -->
+              <div v-if="slots[e.filename]?.detected" class="muted mono" style="font-size: 10px; margin-top: 2px">
+                {{ slots[e.filename].detected }}
+              </div>
               <div v-if="slots[e.filename]?.status === 'uploading'" class="progress">
                 <div :style="{ width: slots[e.filename].percent + '%' }" />
               </div>
@@ -274,7 +369,7 @@ onMounted(() => {
             <td>
               <button
                 class="tiny"
-                :disabled="!slots[e.filename]?.file || slots[e.filename]?.status === 'uploading' || slots[e.filename]?.status === 'done'"
+                :disabled="!slots[e.filename]?.file || slots[e.filename]?.status === 'uploading' || slots[e.filename]?.status === 'checking' || slots[e.filename]?.status === 'done' || slots[e.filename]?.status === 'error'"
                 @click="uploadSlot(e)"
               >Upload</button>
             </td>
@@ -282,8 +377,18 @@ onMounted(() => {
         </tbody>
       </table>
 
+      <div v-if="anyFailed()" class="msg warn">
+        One or more files failed verification and cannot be uploaded. Fix the
+        highlighted rows — a wrong file here is published to every client on that
+        platform and fails silently on their devices.
+      </div>
+
       <div class="actions">
-        <button class="primary" :disabled="uploadedCount() === 0" @click="uploadAll">
+        <button
+          class="primary"
+          :disabled="uploadedCount() === 0 || anyFailed() || anyChecking()"
+          @click="uploadAll"
+        >
           Upload all pending
         </button>
         <span class="muted" style="align-self: center">{{ uploadedCount() }} / 4 uploaded</span>
