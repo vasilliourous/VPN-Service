@@ -19,7 +19,38 @@
 //
 // NOTE: deployed by copying this file to /opt/pocketbase/pb_hooks/ (see OPS.md).
 // PocketBase must be restarted for a new hook file to register.
+
 routerAdd("POST", "/api/code-lookup", function(e) {
+    // ── PocketBase date parsing ──────────────────────────────────────────────
+    // CRITICAL: `new Date("2027-09-19 00:00:00.000Z")` returns NaN in goja.
+    // The ECMAScript date-string format requires a "T" separator; PocketBase
+    // stores a space. Measured against the live hub on 2026-09-19.
+    //
+    // Every expiry check used to read:
+    //     var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) ...
+    // and because the parse ALWAYS returned NaN, the isNaN guard was always
+    // taken and the comparison NEVER RAN — so no code ever expired. The guard
+    // converted a parse failure into "still valid", the most dangerous default
+    // for an expiry check.
+    //
+    // Defined inside the callback on purpose: goja does not hoist function
+    // declarations across scopes, so a file-level helper is invisible here.
+    function parsePBDate(value) {
+        if (value === null || value === undefined || value === "") return 0;
+        if (typeof value === "number") return value;
+        var s = String(value).trim();
+        if (!s) return 0;
+        var direct = new Date(s).getTime();
+        if (!isNaN(direct)) return direct;
+        var swapped = new Date(s.replace(" ", "T")).getTime();
+        if (!isNaN(swapped)) return swapped;
+        if (/^[0-9]+$/.test(s)) {
+            var n = parseInt(s, 10);
+            return s.length <= 10 ? n * 1000 : n;
+        }
+        return NaN;
+    }
+
     try {
         var data = $apis.requestInfo(e).data;
         var code = (data.code || "").trim();
@@ -116,7 +147,7 @@ routerAdd("POST", "/api/code-lookup", function(e) {
             return e.json(200, resp);
         }
         if (exp) {
-            var ed = new Date(exp).getTime();
+            var ed = parsePBDate(exp);
             if (!isNaN(ed) && ed < Date.now()) {
                 resp.status = "expired";
                 resp.message = "This code has expired";

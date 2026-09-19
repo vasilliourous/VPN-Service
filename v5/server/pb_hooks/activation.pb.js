@@ -2,7 +2,38 @@
 // Uses findFirstRecordByData for lookups (simplest API, works across versions)
 // Uses newQuery().execute() for SQL operations
 // All code inside routerAdd callback (functions not hoisted in goja scope)
+
 routerAdd("POST", "/api/activate", function(e) {
+    // ── PocketBase date parsing ──────────────────────────────────────────────
+    // CRITICAL: `new Date("2027-09-19 00:00:00.000Z")` returns NaN in goja.
+    // The ECMAScript date-string format requires a "T" separator; PocketBase
+    // stores a space. Measured against the live hub on 2026-09-19.
+    //
+    // Every expiry check used to read:
+    //     var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) ...
+    // and because the parse ALWAYS returned NaN, the isNaN guard was always
+    // taken and the comparison NEVER RAN — so no code ever expired. The guard
+    // converted a parse failure into "still valid", the most dangerous default
+    // for an expiry check.
+    //
+    // Defined inside the callback on purpose: goja does not hoist function
+    // declarations across scopes, so a file-level helper is invisible here.
+    function parsePBDate(value) {
+        if (value === null || value === undefined || value === "") return 0;
+        if (typeof value === "number") return value;
+        var s = String(value).trim();
+        if (!s) return 0;
+        var direct = new Date(s).getTime();
+        if (!isNaN(direct)) return direct;
+        var swapped = new Date(s.replace(" ", "T")).getTime();
+        if (!isNaN(swapped)) return swapped;
+        if (/^[0-9]+$/.test(s)) {
+            var n = parseInt(s, 10);
+            return s.length <= 10 ? n * 1000 : n;
+        }
+        return NaN;
+    }
+
     try {
         var data = $apis.requestInfo(e).data;
         var code = (data.code || "").trim();
@@ -91,12 +122,9 @@ routerAdd("POST", "/api/activate", function(e) {
         // to display), and a suspended code still returns 403 "Code bound to
         // another device" first when the fingerprint differs, so suspension
         // status is not leaked to a probing device.
-        var exp = rec.get("expires_at");
-        if (exp) {
-            var ed = new Date(exp).getTime();
-            if (!isNaN(ed) && ed < Date.now()) {
-                return e.json(410, {code:410, message:"Code expired"});
-            }
+        var expMs = parsePBDate(rec.get("expires_at"));
+        if (!isNaN(expMs) && expMs > 0 && expMs < Date.now()) {
+            return e.json(410, {code:410, message:"Code expired"});
         }
         var suspended = rec.getBool("suspended");
 

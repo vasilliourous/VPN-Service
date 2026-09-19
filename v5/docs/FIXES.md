@@ -460,6 +460,85 @@ operator is about to apply.
 
 ---
 
+### 39. No code had ever expired: `new Date()` cannot parse PocketBase dates in goja
+
+Found while trying to verify entry 33's fix on the live hub. The fix was deployed
+and correct — and the expiry check still did nothing, on either path.
+
+Five places computed an expiry with the same expression:
+
+```js
+var ed = new Date(exp).getTime();
+if (!isNaN(ed) && ed < Date.now()) { ... }
+```
+
+Measured directly on the live host with a temporary probe hook:
+
+```
+typeof_get      = object
+string_get      = 2020-01-01 00:00:00.000Z
+new_Date_raw    = NaN        <- new Date(raw).getTime()
+Date_parse_raw  = NaN        <- Date.parse(raw)
+getDateTime     = NaN        <- record.getDateTime("expires_at")
+T_replaced      = 1577836800000   <- raw.replace(" ", "T")
+```
+
+**goja cannot parse PocketBase's date format.** PocketBase returns
+`"2027-09-19 00:00:00.000Z"`; the ECMAScript Date Time String Format requires a
+`T` between the date and time parts, and goja enforces that strictly. Replacing
+the space with `T` parses correctly.
+
+**Why this was invisible.** The `isNaN(ed)` guard was written to skip empty or
+unset values — a reasonable intent. But because the parse *always* produced NaN,
+the guard was *always* taken, so the comparison never ran. The guard converted a
+parse failure into **"still valid"**, which is the most dangerous possible
+default for an expiry check. `expires_at` was decorative: every code was
+permanently valid regardless of its date.
+
+It also survived review because the line looks correct, and it survives testing
+in Node/V8 — `new Date("2020-01-01 00:00:00.000Z")` parses fine there. The bug
+only exists in goja, the one runtime these hooks actually run in. That is worth
+recording: a JS-level unit test in Node would have passed.
+
+The bug also predates this pass. Entry 33 fixed the check being *unreachable* on
+the re-activation path; this is the separate reason it was *ineffective* even
+where it did run.
+
+**Fix.** A single `parsePBDate()` helper, defined **inside each `routerAdd`
+callback**. It tries the value as-is, then with the space replaced by `T`, then
+as a numeric epoch, and distinguishes the three cases that matter: `0` for
+empty/unset, a number for a real date, `NaN` for a non-empty unparseable value —
+so a future parse failure does not silently mean "no expiry". All five call sites
+use it (`activation`, `code_lookup`, `hiddify`, and two in `admin_console`).
+
+The placement is deliberate and was learned the hard way on this very deploy: a
+file-level helper is invisible to the callback, because goja does not hoist
+function declarations across scopes. `activation.pb.js` has carried a comment
+saying exactly that since the beginning. Deploying the helper at file level
+produced `parsePBDate is not defined` on every request.
+
+**Verified live**, against PocketBase directly rather than through Caddy:
+
+```
+PASS  expired, unbound         want 410  got 410  Code expired
+PASS  valid, first use         want 200  got 200  Activation successful
+PASS  expired, re-activation   want 410  got 410  Code expired
+PASS  no expiry, first use     want 200  got 200  Activation successful
+```
+
+The last case is the negative control: a code with no `expires_at` must stay
+usable, or the fix would have broken every code issued without one.
+
+**Incidental finding — Caddy rate-limits tests, not just abusers.**
+`/api/activate` is capped at 5 requests per 10 minutes keyed on `{remote_host}`.
+Iterating a verification script from one IP trips it, and the limiter returns an
+empty-bodied 429, which reads exactly like a hook crash. The first three test
+runs of this entry were invalidated by that before it was identified. The
+verification script now targets `127.0.0.1:8090` and bypasses Caddy deliberately,
+since the limiter is a deployment concern and not what is under test.
+
+---
+
 ## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
 
 ### 26. The console could silently publish the wrong binary

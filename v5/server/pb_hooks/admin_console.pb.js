@@ -16,7 +16,38 @@
 //   * Helper functions must be declared INSIDE the handler — file-scope
 //     declarations are not visible to routerAdd callbacks.
 //   * findFirstRecordByData THROWS (rather than returning null) when absent.
+
 routerAdd("POST", "/api/admin/console", function(e) {
+    // ── PocketBase date parsing ──────────────────────────────────────────────
+    // CRITICAL: `new Date("2027-09-19 00:00:00.000Z")` returns NaN in goja.
+    // The ECMAScript date-string format requires a "T" separator; PocketBase
+    // stores a space. Measured against the live hub on 2026-09-19.
+    //
+    // Every expiry check used to read:
+    //     var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) ...
+    // and because the parse ALWAYS returned NaN, the isNaN guard was always
+    // taken and the comparison NEVER RAN — so no code ever expired. The guard
+    // converted a parse failure into "still valid", the most dangerous default
+    // for an expiry check.
+    //
+    // Defined inside the callback on purpose: goja does not hoist function
+    // declarations across scopes, so a file-level helper is invisible here.
+    function parsePBDate(value) {
+        if (value === null || value === undefined || value === "") return 0;
+        if (typeof value === "number") return value;
+        var s = String(value).trim();
+        if (!s) return 0;
+        var direct = new Date(s).getTime();
+        if (!isNaN(direct)) return direct;
+        var swapped = new Date(s.replace(" ", "T")).getTime();
+        if (!isNaN(swapped)) return swapped;
+        if (/^[0-9]+$/.test(s)) {
+            var n = parseInt(s, 10);
+            return s.length <= 10 ? n * 1000 : n;
+        }
+        return NaN;
+    }
+
     // ── Inline helpers (file scope is NOT visible here) ──
     function ok(data) {
         var out = {ok: true};
@@ -105,7 +136,7 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 byTier[t] = (byTier[t] || 0) + 1;
                 var isSusp = c.getBool("suspended");
                 var exp = c.get("expires_at");
-                var expMs = exp ? new Date(exp).getTime() : 0;
+                var expMs = parsePBDate(exp);
                 var isExp = expMs && !isNaN(expMs) && expMs < now;
                 if (isSusp) suspended++;
                 else if (isExp) expired++;
@@ -163,7 +194,7 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 var codeVal = rec.getString("code");
                 var fp = rec.getString("bound_fingerprint");
                 var expRaw = rec.get("expires_at");
-                var expMs2 = expRaw ? new Date(expRaw).getTime() : 0;
+                var expMs2 = parsePBDate(expRaw);
                 var isExp2 = expMs2 && !isNaN(expMs2) && expMs2 < nowMs;
                 var susp2 = rec.getBool("suspended");
 
