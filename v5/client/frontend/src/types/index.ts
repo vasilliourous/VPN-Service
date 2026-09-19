@@ -54,7 +54,10 @@ export interface OpResult {
 // server), others are server/engine-side. Students can act on the former
 // ("check your wi-fi") but can only report the latter, so the UI classifies
 // the message to pick the right wording.
-export type FailureKind = 'offline' | 'elevation' | 'engine' | 'server' | 'unknown'
+// FailureKind classifies a backend message so the UI can show the right next
+// step. 'starting' is the transient case: the backend is still initialising, so
+// the call should be retried rather than reported as a failure.
+export type FailureKind = 'offline' | 'elevation' | 'engine' | 'server' | 'starting' | 'unknown'
 
 // ── Updates ──
 

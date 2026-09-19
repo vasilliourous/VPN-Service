@@ -137,6 +137,18 @@ export async function getDiagnostics(): Promise<string> {
 export function classifyFailure(message: string): FailureKind {
   const m = (message || '').toLowerCase()
 
+  // Transient: Startup has not finished wiring the backend yet. This is NOT a
+  // failure and must not be shown as one — the correct response is to retry
+  // shortly. Checked first because the wording is distinctive and the other
+  // buckets would otherwise mis-file it.
+  if (
+    m.includes('still starting up') ||
+    m.includes('is not ready') ||
+    m.includes('starting up — try again')
+  ) {
+    return 'starting'
+  }
+
   if (
     m.includes('no such host') ||
     m.includes('no route to host') ||

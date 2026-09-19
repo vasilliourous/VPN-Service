@@ -63,6 +63,13 @@ func isElevated() bool {
 // command-line args. It returns an error only if the elevation could not be
 // started (including when the user cancels the UAC prompt, which surfaces as
 // ERROR_CANCELLED / SE_ERR_ACCESSDENIED).
+//
+// IMPORTANT — arg handling: argsToAdd are added IDEMPOTENTLY. The previous
+// version appended unconditionally, so a handoff from a process that was itself
+// started with --autoconnect produced "--autoconnect --autoconnect" (and grew
+// with each attempt). Duplicated flags are harmless by themselves, but they
+// made the "am I an elevated relaunch?" test non-deterministic, which is what
+// turned a slow UAC consent into a confusing permission error.
 func relaunchElevated(argsToAdd ...string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -74,9 +81,8 @@ func relaunchElevated(argsToAdd ...string) error {
 	// Build the full command line from current args plus the extras. On Windows
 	// we rebuild args as a single quoted command line so spaces in paths are
 	// preserved.
-	allArgs := append([]string(nil), os.Args[1:]...)
-	allArgs = append(allArgs, argsToAdd...)
-	cmdLine := quoteCommandLine(allArgs)
+	merged := mergeArgs(os.Args[1:], argsToAdd)
+	cmdLine := quoteCommandLine(merged)
 
 	// UTF16PtrFromString replaces the deprecated StringToUTF16Ptr and returns
 	// an error instead of panicking, so a bad path is reported rather than

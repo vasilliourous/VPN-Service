@@ -1,3 +1,78 @@
+## ELEVATION — "ELEVATED COPY DID NOT HAVE PERMISSION" ON EVERY CONNECT (2026-09-19)
+
+### 40. The elevation handoff mistook a normal auto-connect for a failed relaunch
+
+Reported from a real Windows machine: pressing Connect raised the UAC prompt,
+the user approved it, and the app replied
+
+> Locus needs administrator permission to connect, but the elevated copy did not
+> have permission. Close it and relaunch as Administrator…
+
+and doing exactly that — launching elevated — produced the same message. A
+second, apparently unrelated symptom accompanied it: an intermittent
+`application is not ready — restart Locus`, curable only by pressing retry
+several times, after which the app relaunched and showed the elevation error.
+
+Four independent defects combined to produce that experience.
+
+**(a) Elevation was inferred from the wrong flag.** `Connect()` decided "I am
+the elevated copy that failed to elevate" from the presence of `--autoconnect`.
+But `--autoconnect` is a legitimate user-facing flag and is *also* set on the
+handoff, so an ordinary auto-connect run was indistinguishable from a relaunch
+that had failed. The guard then refused to connect and printed the permission
+error — including on processes that **were** elevated, which is why "Run as
+administrator" changed nothing.
+
+Fixed by giving the handoff a dedicated marker, `--elevated-attempt`, that is
+never set by anything else. `--autoconnect` now means only "connect when ready".
+
+**(b) The flags accumulated across handoffs.** `relaunchElevated` appended
+unconditionally:
+
+```go
+allArgs := append([]string(nil), os.Args[1:]...)  // carries existing args
+allArgs = append(allArgs, argsToAdd...)           // appends the same flag again
+```
+
+so a second handoff produced `--autoconnect --autoconnect` (and grew with each
+attempt), and `--elevation-attempt=N` was appended rather than replaced, leaving
+a stale count in place. Fixed with `mergeArgs`, which replaces a flag of the same
+name instead of duplicating it.
+
+**(c) Elevation got no second chance and no bound.** A single failed handoff was
+terminal, with no retry counter — while the actual failure mode (a slow UAC
+consent, an antivirus scan of the new process) is transient. Now bounded at
+three attempts, after which the message tells the user to use "Run as
+administrator" directly instead of relaunching in a loop.
+
+**(d) The real cause of "application is not ready".** Startup launched the
+auto-connect goroutine and relied on a fixed 1-second sleep to outrun its own
+initialisation. On a cold elevated launch — WebView2 initialising, the new
+process being scanned — `Startup` could still be running when the sleep expired,
+so `Connect()` hit the not-ready guard and told the user to restart. Retrying
+won the race often enough to look like a flaky crash rather than a race.
+
+Fixed by publishing a `ready` flag **before** the goroutine starts, so readiness
+is guaranteed rather than timed, and by distinguishing the two cases in
+`notReady()`: a transient "still starting" (accurate, retried automatically, no
+longer shown as an error) versus a recorded `startupErr` (where restarting is
+genuinely the right advice).
+
+Also fixed, found while verifying (a): the shipped `rsrc_windows_*.syso` carries
+`requestedExecutionLevel="requireAdministrator"`, so a normally launched copy is
+*always* elevated. Any user-visible elevation error therefore means the manifest
+was bypassed or the binary is not the one being run — worth knowing before
+debugging the token check itself.
+
+Tests: `elevation_flags_test.go` covers arg merging (no duplication across
+repeated handoffs, valued flags replaced, input not mutated) and, as a direct
+regression test for the report, that `--autoconnect` alone is **not** treated as
+an elevated relaunch. Writing them caught a real inconsistency in the first
+revision of the fix: `hasFlag` compared the bare flag name while the attempt
+constant included its `=`, so the valued form never matched.
+
+---
+
 ## TIERS PAGE — STALE WARNING CONTRADICTED THE STRIKE DESIGN (2026-09-19)
 
 ### 27. The Web UI told operators to switch off the feature Strike exists for

@@ -3,7 +3,7 @@
 
 import { reactive, readonly } from 'vue'
 import * as bridge from '@/lib/bridge'
-import type { StatusResult, UpdateCheckResult, UpdatePhase, UpdateStatus, FailureKind } from '@/types'
+import type { OpResult, StatusResult, UpdateCheckResult, UpdatePhase, UpdateStatus, FailureKind } from '@/types'
 
 // offlineMessage mirrors the constant in lib/bridge (re-exported there for the
 // components); kept as a single source via import so wording never drifts.
@@ -109,6 +109,14 @@ const state = reactive<State>({
 function setFailure(msg: string): void {
   const kind = classifyFailure(msg)
   state.lastErrorKind = kind
+  // A "still starting" result is not a failure — it is the backend telling us
+  // it is not ready yet. Reporting it as an error is what produced the
+  // "application is not ready — restart Locus" wall the user had to dismiss
+  // repeatedly; the store retries it automatically instead (see connect()).
+  if (kind === 'starting') {
+    state.lastActionable = ''
+    return
+  }
   const friendly = kind === 'offline' ? offlineMessage : msg
   state.error = friendly
   state.lastActionable = friendly
@@ -181,7 +189,12 @@ async function connect(): Promise<string | null> {
   state.error = ''
   state.connectStage = 'starting'
   try {
-    const result = await bridge.connect()
+    // Retry the transient "still starting" answer instead of surfacing it.
+    // The backend finishes Startup in well under a second in practice, but a
+    // cold elevated launch (WebView2 init, antivirus scanning the new process)
+    // can take longer — and the old UI demanded the user press retry until it
+    // happened to win that race.
+    const result = await connectWithStartupRetry()
     if (result.success) {
       state.connected = true
       // A fresh connect invalidates any previous degraded/repair state — clear
@@ -201,16 +214,35 @@ async function connect(): Promise<string | null> {
       return null
     }
     setFailure(result.message)
-    return result.message
+    // A transient not-ready result leaves no error banner (see setFailure), so
+    // return the message only when it is a real, user-actionable failure.
+    return state.lastErrorKind === 'starting' ? null : result.message
   } catch (err: any) {
     const msg = err?.message || 'Connection failed'
     setFailure(msg)
-    return msg
+    return state.lastErrorKind === 'starting' ? null : msg
   } finally {
     state.connecting = false
     state.loading = false
     state.connectStage = 'idle'
   }
+}
+
+// connectWithStartupRetry calls the backend, retrying briefly while it reports
+// that it is still starting up. Bounded, so a genuinely broken backend cannot
+// spin here forever.
+async function connectWithStartupRetry(): Promise<OpResult> {
+  const maxAttempts = 5
+  let last: OpResult = { success: false, message: 'Connection failed' }
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    last = await bridge.connect()
+    if (last.success || classifyFailure(last.message) !== 'starting') {
+      return last
+    }
+    // Backend still initialising — wait briefly and try again.
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  return last
 }
 
 // retryConnect is the adaptive-button path used once the watchdog has given up

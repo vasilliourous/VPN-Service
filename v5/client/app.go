@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"locus/internal/activation"
@@ -103,17 +104,41 @@ type App struct {
 	// created). Frontend-bound methods check it so a broken startup shows a
 	// clear error instead of panicking on nil store/manager.
 	startupErr error
+
+	// ready is closed/published once Startup has finished wiring every
+	// dependency. Frontend calls and the auto-connect goroutine consult it so a
+	// call that arrives early gets an accurate "still starting" answer instead
+	// of a misleading one.
+	ready atomic.Bool
 }
 
 // notReady returns a human-readable failure reason when the app is not fully
 // initialized, or "" when it is ready. All frontend-bound methods should bail
 // out with this message when it is non-empty.
+//
+// The two failure modes are deliberately worded differently, because they need
+// different user actions:
+//
+//   - Dependencies missing while Startup is still running is a TRANSIENT state.
+//     Telling the user to "restart Locus" here was actively bad advice — it
+//     names the one action that cannot help, and it is what made the intermittent
+//     "application is not ready — restart Locus" look like a crash. The honest
+//     answer is "still starting, try again in a moment".
+//   - A recorded startupErr is permanent for this process, and only then is
+//     restarting the right advice.
 func (a *App) notReady() string {
 	if a.startupErr != nil {
 		return a.startupErr.Error()
 	}
 	if a.store == nil || a.mgr == nil {
-		return "application is not ready — restart Locus"
+		// No startupErr recorded and the deps are not built yet: this is
+		// Startup still in flight.
+		if !a.ready.Load() {
+			return "Locus is still starting up — try again in a moment."
+		}
+		// Ready was published but a dependency is still missing, which means
+		// Startup took an early-return path. Only here is a restart warranted.
+		return "application failed to initialize — restart Locus"
 	}
 	return ""
 }
@@ -352,32 +377,63 @@ func (a *App) Startup(ctx context.Context) {
 	// When relaunched elevated via the Connect() elevation gate, we pass
 	// "--autoconnect". The elevated instance connects on startup so the student
 	// doesn't have to click Connect again after accepting the UAC prompt.
+	// ── Auto-connect after elevation ──
+	// When relaunched elevated via the Connect() elevation gate, we pass
+	// --autoconnect. The elevated instance connects on startup so the student
+	// doesn't have to click Connect again after accepting the UAC prompt.
+	//
+	// The GUI is ready the moment this line is reached: every field Connect()
+	// needs (store, mgr, activator, fp) was assigned above, and the ready flag
+	// is published BEFORE the goroutine starts so there is no window in which
+	// Connect() could observe a half-built app.
+	//
+	// This ordering is the fix for "application is not ready — restart Locus":
+	// the previous version launched the goroutine and relied on a fixed 1s
+	// sleep to outrun Startup. On a cold elevated launch (WebView2
+	// initialisation, antivirus scanning the new process, slow disk) Startup
+	// could still be running when the sleep expired, so Connect() hit the
+	// not-ready guard. Retrying eventually won the race, which is exactly why
+	// the error looked intermittent and why "press retry a few times" worked.
+	a.ready.Store(true)
+
 	if state.Activated && state.ServerConfig != nil && flagAutoConnect() {
-		log.Printf("Auto-connecting (launched with --autoconnect after elevation)")
+		why := "flag"
+		if flagElevatedAttempt() {
+			why = "elevated relaunch"
+		}
+		log.Printf("Auto-connecting on startup (%s, elevated=%v)", why, isElevated())
 		go func() {
-			// Slight delay so the Wails DOM / event system is ready to receive
-			// the status:changed events emitted by Connect().
+			// The app is ready; the small delay only exists so the webview has
+			// painted and can render the status:changed events rather than
+			// missing the first one. It is no longer load-bearing for
+			// correctness — readiness is guaranteed by the ready flag.
 			time.Sleep(1 * time.Second)
 			res := a.Connect()
 			if !res.Success {
-				log.Printf("Auto-connect after elevation failed: %s", res.Message)
+				log.Printf("Auto-connect on startup failed: %s", res.Message)
 			}
 		}()
 	}
 
 	wailsruntime.LogInfo(a.ctx, "Locus started (version "+a.version+")")
-	log.Printf("Startup complete (activated=%v)", state.Activated)
+	log.Printf("Startup complete (activated=%v, elevated=%v)", state.Activated, isElevated())
 }
 
-// flagAutoConnect reports whether the process was launched with --autoconnect
-// (set by Connect() when it re-launches the app elevated via UAC).
+// flagAutoConnect reports whether this process should connect as soon as it is
+// ready. Set by the elevation handoff, or passed directly on the command line.
 func flagAutoConnect() bool {
-	for _, a := range os.Args[1:] {
-		if a == "--autoconnect" {
-			return true
-		}
-	}
-	return false
+	return hasFlag(os.Args[1:], flagAutoConnectValue)
+}
+
+// flagElevatedAttempt reports whether this process IS the elevated copy that a
+// handoff produced.
+//
+// This must NOT be inferred from --autoconnect: that flag is also a legitimate
+// user request, and inferring elevation from it made the loop guard misfire on
+// ordinary auto-connect runs (the "elevated copy did not have permission" error
+// shown to a user who had approved UAC and WAS elevated).
+func flagElevatedAttempt() bool {
+	return hasFlag(os.Args[1:], flagElevatedAttemptValue)
 }
 
 // Shutdown is called by Wails when the application is quitting.
@@ -607,35 +663,63 @@ func (a *App) Connect() OpResult {
 	//     Connect() proceeded and the student got an obscure sing-box error
 	//     instead of "you need root".
 	if !isElevated() {
-		// One path for Windows (UAC handoff) and Unix (no mechanism). If a
-		// platform cannot elevate, report the prepared reason rather than
-		// pretending a handoff will happen.
+		// Unix (or Windows without a UAC path): no automatic elevation.
 		if reason := elevationUnsupportedReason(); reason != "" {
 			log.Printf("Refusing to connect without privilege: %s", reason)
 			return OpResult{Success: false, Message: reason}
 		}
 
-		// Guard against an elevation loop: if this instance ALREADY came from a
-		// UAC relaunch (--autoconnect) and still isn't elevated, relaunching
-		// again would only bounce the window forever. Fail clearly instead.
-		if flagAutoConnect() {
-			log.Printf("Already relaunched for elevation but still not elevated — refusing to loop")
+		// Windows: ask for elevation by relaunching with the "runas" verb.
+		//
+		// The loop guard uses the DEDICATED --elevated-attempt marker, not
+		// --autoconnect. Using --autoconnect was a defect: it is also a
+		// user-facing flag, so a normal auto-connect run was misread as a
+		// relaunch that had failed to elevate, and Connect() refused with a
+		// permission error even when the process WAS elevated.
+		if flagElevatedAttempt() {
+			// We are the elevated copy and still are not elevated. Elevation
+			// genuinely failed (declined, or blocked by policy) — do not loop.
+			log.Printf("Elevated relaunch did not gain privilege (elevated=%v) — refusing to loop", isElevated())
 			return OpResult{
 				Success: false,
-				Message: "Locus needs administrator permission to connect, but the elevated copy did not have permission. Close it and relaunch as Administrator, or run it from an administrator account.",
+				Message: "Windows did not grant administrator permission, so the VPN " +
+					"adapter cannot be created. If a permission prompt appeared, " +
+					"choose Yes. Otherwise right-click Locus and choose " +
+					"\"Run as administrator\".",
 			}
 		}
+
 		log.Printf("Not elevated — requesting elevation before connecting")
-		if err := relaunchElevated("--autoconnect"); err != nil {
+		// Cap the retries: each handoff replaces this process, so a bound is
+		// the only way to stop an unbreakable relaunch loop. Three attempts is
+		// generous for a prompt that is either approved or not.
+		attempt := parseAttempt(os.Args[1:]) + 1
+		if attempt > 3 {
+			log.Printf("Elevation attempted %d times without success — giving up", attempt-1)
+			return OpResult{
+				Success: false,
+				Message: "Locus could not obtain administrator permission after several " +
+					"attempts. Right-click the Locus icon and choose " +
+					"\"Run as administrator\", then press Connect.",
+			}
+		}
+
+		if err := relaunchElevated(
+			flagElevatedAttemptValue,
+			flagAutoConnectValue,
+			flagAttemptValue+strconv.Itoa(attempt),
+		); err != nil {
 			log.Printf("Elevation request returned: %v", err)
 			return OpResult{
 				Success: false,
-				Message: "Administrator permission was required to connect. The elevation prompt was declined or could not be shown — please relaunch Locus and allow the administrator prompt.",
+				Message: "Administrator permission was required to connect. The elevation " +
+					"prompt was declined or could not be shown — please relaunch Locus " +
+					"and allow the administrator prompt.",
 			}
 		}
 		// The elevated instance is starting; end this one. The original window
 		// is closing on purpose as part of the elevation handoff.
-		log.Printf("UAC accepted — elevated instance starting; exiting non-elevated process")
+		log.Printf("UAC accepted — elevated instance starting (attempt %d); exiting this process", attempt)
 		wailsruntime.Quit(a.ctx)
 		return OpResult{
 			Success: true,
