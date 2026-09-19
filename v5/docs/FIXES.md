@@ -1,4 +1,122 @@
 ## ELEVATION (CONT'D) — THE TOKEN CHECK ITSELF WAS BROKEN; UPDATES NEEDED A CODE (2026-09-19)
+---
+
+## RELEASE TOOLING — VERSION DRIFT AND A PUBLISH THAT WROTE AN UNUSABLE ROW (2026-09-19, later pass)
+
+`release.pb.js` implements `GET /api/release` — the update path that needs no
+activation code. It exists for exactly the situation where an update matters
+most: the installed build is broken enough that activation fails, or the code is
+suspended, or the device never activated. In all three the heartbeat is
+unreachable, so without this route the client can never be told that a fix has
+been published. The failure prevents escaping the failure.
+
+It was written, committed and reviewed. It was never copied to the host. In
+production the route returned `{"code":404,"message":"Not Found."}`.
+
+**Why nothing caught it:** hooks were deployed by hand, so there were two
+sources of truth — the repo and `/opt/pocketbase/pb_hooks/` — with no
+reconciliation between them. Nothing compared the two, and no check asked the
+live hub whether its own routes worked. A route that 404s is not an error
+anywhere; it is just a 404.
+
+**Fix:** `v5/server/scripts/hooks-sync.sh`. It hashes each hook in the repo
+against the host copy, uploads only what differs (to a temp name, moved into
+place atomically, so a partial file is never loaded), restarts PocketBase, waits
+for it to answer rather than sleeping a fixed amount, then verifies: service
+active, no new `-p err` journal lines, and `GET /api/release` returning 200 with
+valid JSON. A restart that leaves the hub broken now fails the deploy instead of
+passing silently. It also runs standalone as `--check` for drift detection.
+
+**Verified live:** the dry run named `release.pb.js` as the one hook missing and
+the other six as current — so the repo and host really were in sync apart from
+this. After deploy, `/api/release` returns 200.
+
+### 44. `publish-release.sh` wrote `update_config` for a release with no artifacts
+
+The live `update_config` row before this fix:
+
+```
+version=2.2.0  rollout=0  active=1
+download_linux=''  download_windows=''  download_macos_intel=''  download_macos_arm=''
+sha256_linux=''
+```
+
+Every URL and hash was an empty string. The script had been run with an empty
+`RELEASE_DIR`: it warned once per missing platform, found no usable artifacts,
+and **wrote the row anyway**. The result is a release that is advertised as
+active with zero platforms — visible publicly as:
+
+```
+GET /api/release -> {"ok":true,"platforms":{},"published":true,"version":"2.2.0"}
+```
+
+The client handles this as `no_asset` rather than a crash, so the practical
+effect is that no client can ever fetch this release while the hub reports that
+one is published.
+
+**Fix — three guards plus a source that cannot be got wrong:**
+
+- `--from-github` fetches this version's assets from its GitHub Release by tag.
+  The version argument selects the release, so there is no directory for an
+  operator to point at the wrong place. Verified against the real `v2.2.0`
+  release: all five assets fetched, and all four hashes matched CI's
+  `manifest.json`.
+- No usable artifacts at all → refuse, exit 4, `update_config` untouched.
+- An incomplete platform set → refuse unless `ALLOW_PARTIAL=1`, which says
+  loudly which platforms are being dropped. Dropping one is invisible from the
+  operator's seat and shows up later as those students stuck on an old build.
+- `--help` was parsed as the version (it died with "release dir not found"), and
+  a non-version argument was accepted and used as a tag. Both fixed.
+- `fail()` used `%s`, so every multi-line refusal printed the literal characters
+  `\n`. The most important messages were the least readable. Now `%b`.
+
+`smoke-publish.sh` (21 checks, `DRY_RUN=1`, no network, no hub changes) asserts
+every refusal path, including that the script does not reach `update_config`.
+
+**Not fixed, deliberately:** the live 2.2.0 row still has empty `download_*`
+fields. 2.2.0 is superseded by 2.2.1, so it is left alone — republishing it is a
+separate decision, not a side effect of this work. Until 2.2.1 is published,
+`/api/release` advertises 2.2.0 with no platforms.
+
+### 45. The version was maintained by hand across six files, and the lockfile had already drifted
+
+The client version lives in six places that different tools read
+independently. Bumping them by hand has already produced a shipped defect: in
+2.1.0 the `go:generate` DIRECTIVE was bumped but the committed
+`rsrc_windows_*.syso` were not regenerated, so the Windows executables reported
+version "2.0.0" and product name "MyVPN" in their Properties tab. Every
+text-based check passed — a correct directive says nothing about the artifact it
+already produced.
+
+Found while writing the replacement: **`frontend/package-lock.json` was rooted at
+"2.0.0" while `package.json` said "2.2.0"**, and nothing checked the lockfile at
+all, so it had drifted across two releases. Harmless only because CI runs
+`npm install` rather than `npm ci` and ships built output — a latent hard CI
+failure for whoever tightened that step.
+
+**Fix:** `v5/server/scripts/bump-version.sh`. It rewrites all six, regenerates
+the Windows resources, then re-reads the version OUT of the compiled `.syso`
+before declaring success — the only check that can catch a stale artifact. It
+refuses a dirty tree so a failed run is recoverable with `git checkout --`, and
+it stops before any git command.
+
+`bump.sh` at the repo root is the same thing with the next version computed
+automatically from the current one.
+
+Two guards, each **proven to fail on the defect it targets** rather than merely
+passing on a clean tree:
+
+- `TestFrontendLockfileVersionMatchesRepoVersion` checks both the document root
+  and `packages[""]`, which drift independently.
+- `TestNoUnaccountedCopyOfVersion` inverts the question the other guards ask.
+  They assert the copies *we know about* agree; none can notice a NEW copy
+  appearing. This greps the tree for the running version and requires every hit
+  to be in a maintained file — so the seventh copy becomes a build failure
+  instead of a silent divergence.
+
+`smoke-bump.sh` (21 checks) runs the whole thing against a throwaway tree,
+including that a deliberately introduced seventh copy is caught and named.
+
 
 ### 41. `GetTokenInformation` was called with four arguments instead of five
 

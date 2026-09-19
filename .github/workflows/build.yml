@@ -155,6 +155,21 @@ jobs:
           # versioning rather than looking like a test error.
           ( cd v5/client && go test ./internal/winres/... -run TestCommittedSysoMatchesRepoVersion -count=1 ) || {
             echo "::error::committed rsrc_windows_*.syso is stale — run: cd v5/client && go generate -tags windows"; fail=1; }
+          # npm lockfile root + packages[""] must match too. The lockfile is
+          # NOT read by any build step, so it drifted silently from 2.0.0 to
+          # 2.2.0 across two releases and nothing noticed. It is harmless while
+          # CI runs `npm install`, but it becomes a hard failure the day anyone
+          # switches to `npm ci` — so assert it now, while it is cheap.
+          ( cd v5/client && go test . -run TestFrontendLockfileVersionMatchesRepoVersion -count=1 ) || {
+            echo "::error::frontend/package-lock.json version does not match v5/VERSION"; fail=1; }
+          # The inverse guard: every copy of the version must be one we maintain.
+          # The checks above assert the copies we KNOW ABOUT agree; none of them
+          # can notice a NEW copy appearing (a version constant in a new package,
+          # a hardcoded value in the UI). That is how drift recurs, so fail on
+          # any unaccounted occurrence rather than discovering it in a shipped
+          # binary.
+          ( cd v5/client && go test . -run TestNoUnaccountedCopyOfVersion -count=1 ) || {
+            echo "::error::an unaccounted copy of the version exists — add it to KNOWN_VERSION_FILES in v5/server/scripts/bump-version.sh"; fail=1; }
           # On a v* tag the tag itself must match v5/VERSION, or CI would publish
           # a release whose binary reports a different version than its tag.
           case "${{ github.ref }}" in
