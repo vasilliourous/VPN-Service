@@ -3,7 +3,6 @@
 package manager
 
 import (
-	"os/exec"
 	"strings"
 )
 
@@ -14,7 +13,7 @@ const tunInterfaceName = "locus0"
 // name is locus0; we query netsh to see it. If netsh is unavailable we report
 // (false, false) so the caller does not block on an unverifiable check.
 func tunInterfaceUp() (up bool, available bool) {
-	out, err := exec.Command("netsh", "interface", "show", "interface").Output()
+	out, err := hiddenOutput("netsh", "interface", "show", "interface")
 	if err != nil {
 		return false, false
 	}
@@ -35,7 +34,7 @@ func tunInterfaceUp() (up bool, available bool) {
 // killForeignEngines terminates any sing-box.exe processes this app does not
 // track (taskkill). Best-effort.
 func killForeignEngines() {
-	_ = exec.Command("taskkill", "/F", "/IM", "sing-box.exe", "/T").Run()
+	_ = hiddenRun("taskkill", "/F", "/IM", "sing-box.exe", "/T")
 }
 
 // removeStaleTUN deletes a leftover locus0 Wintun adapter so a fresh engine can
@@ -45,13 +44,13 @@ func removeStaleTUN() error {
 	if up, _ := tunInterfaceUp(); !up {
 		return nil
 	}
-	return exec.Command("netsh", "interface", "delete", "interface", tunInterfaceName).Run()
+	return hiddenRun("netsh", "interface", "delete", "interface", tunInterfaceName)
 }
 
 // describeForeignEngines returns a short human description of any foreign
 // sing-box processes for diagnostics (best effort).
 func describeForeignEngines() string {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq sing-box.exe", "/FO", "CSV", "/NH").Output()
+	out, err := hiddenOutput("tasklist", "/FI", "IMAGENAME eq sing-box.exe", "/FO", "CSV", "/NH")
 	if err != nil {
 		return ""
 	}

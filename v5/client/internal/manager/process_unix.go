@@ -21,6 +21,27 @@ func newProcAttr() *syscall.SysProcAttr {
 	}
 }
 
+// hiddenCommand builds an exec.Cmd for a helper process.
+//
+// On Unix there is no console to suppress — a GUI process simply does not
+// allocate one for its children — so this is a plain constructor. It exists so
+// shared code (which needs the same call on every platform) has one name to use.
+// On Windows the same function applies CREATE_NO_WINDOW; see process_windows.go
+// for why that matters (the terminal-flash bug).
+func hiddenCommand(name string, args ...string) *exec.Cmd {
+	return exec.Command(name, args...)
+}
+
+// hiddenRun spawns a helper and waits for it (see hiddenCommand).
+func hiddenRun(name string, args ...string) error {
+	return hiddenCommand(name, args...).Run()
+}
+
+// hiddenOutput spawns a helper and captures stdout (see hiddenCommand).
+func hiddenOutput(name string, args ...string) ([]byte, error) {
+	return hiddenCommand(name, args...).Output()
+}
+
 // killProcessGroup force-kills the whole process group led by p.
 //
 // Why the group and not just p: sing-box is launched via a shell wrapper on some

@@ -788,13 +788,31 @@ func (a *App) Disconnect() OpResult {
 }
 
 func (a *App) disconnect() OpResult {
-	if !a.connected {
-		return OpResult{Success: true, Message: "Already disconnected"}
-	}
 	if a.mgr == nil {
 		a.connected = false
 		return OpResult{Success: true, Message: "Already disconnected"}
 	}
+
+	// The engine is stopped UNCONDITIONALLY, even when we already believe we are
+	// disconnected.
+	//
+	// This used to early-return on `!a.connected`, which was the direct cause of
+	// a two-bug chain that could only be escaped by restarting the app:
+	//
+	//   1. The watchdog's auto-disconnect calls this after the UI has already
+	//      flipped to Disconnected (or the student tapped Disconnect while a
+	//      repair was in flight). `a.connected` was therefore already false, so
+	//      this returned "Already disconnected" WITHOUT calling mgr.Stop().
+	//      sing-box kept running, untracked.
+	//   2. The next Connect hit Start()'s "tunnel is already running" guard,
+	//      because a real engine was alive while the app believed it was
+	//      disconnected. No UI action could clear that state.
+	//
+	// `a.connected` is a UI/state flag; it is not evidence about the process.
+	// Only the manager can answer that, and calling Stop() when nothing is
+	// running is already a safe no-op (it cancels the context and cleans up the
+	// config file), so there is nothing to save by skipping it.
+	wasConnected := a.connected
 
 	// Emit an OPTIMISTIC disconnected status before the (up to ~2s) shutdown
 	// wait, so the UI reflects the tap immediately instead of sitting on a
@@ -805,10 +823,23 @@ func (a *App) disconnect() OpResult {
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 
 	a.mgr.StopWatchdog()
-	_ = a.mgr.Stop()
+	// Stop() is idempotent and safe when no engine is tracked; always call it so
+	// an orphan cannot survive a disconnect.
+	if err := a.mgr.Stop(); err != nil {
+		// A failure here is worth surfacing rather than swallowing: it means the
+		// engine may still be alive, which is exactly the condition that makes
+		// the next Connect fail. The manager has already force-killed and
+		// cleared tracking by this point, so report it but do not re-set
+		// a.connected.
+		log.Printf("disconnect: stopping engine returned an error: %v", err)
+		wailsruntime.LogWarning(a.ctx, "Tunnel stop reported an error: "+err.Error())
+	}
 
 	wailsruntime.EventsEmit(a.ctx, "status:changed", a.buildStatus())
 
+	if !wasConnected {
+		return OpResult{Success: true, Message: "Disconnected"}
+	}
 	return OpResult{Success: true, Message: "Disconnected"}
 }
 

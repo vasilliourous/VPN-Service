@@ -18,6 +18,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -88,6 +89,28 @@ func (m *Manager) StopWatchdog() {
 	m.tunnelHealthy = false
 }
 
+// errEngineNotRunning is returned by ProbeTunnel when there is no engine to
+// probe at all. It is distinct from "the engine is running but the tunnel is
+// broken" because the two must be handled differently: a broken tunnel should
+// be escalated, whereas a missing engine means the app is disconnected and
+// escalating would spawn an engine nobody asked for.
+var errEngineNotRunning = errors.New("engine not running")
+
+// isNotRunning reports whether a probe error means "there is no engine", as
+// opposed to "the engine is up but not passing traffic".
+func isNotRunning(err error) bool {
+	return errors.Is(err, errEngineNotRunning)
+}
+
+// watchdogActive reports whether the watchdog is currently the owner of a live
+// tunnel. It is false once StopWatchdog has run (the tunnel was stopped), which
+// is the signal that recovery must not touch the engine any more.
+func (m *Manager) watchdogActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.watchdogStop != nil
+}
+
 // ProbeTunnel performs a best-effort, dependency-free check that the tunnel is
 // actually passing traffic. It layers several signals:
 //
@@ -100,16 +123,24 @@ func (m *Manager) StopWatchdog() {
 // fails. This cannot distinguish "tunnel broken" from "server down", but the
 // recovery ladder only escalates to a full reset, which is safe in either case
 // and restores the dominant failure mode autonomously.
+//
+// KNOWN LIMITATION (documented, not hidden): step 3 is a host-level dial to the
+// server ADDRESS, not a request through the tunnel, so it proves the server is
+// reachable, not that traffic is flowing. A tunnel that is up but silently
+// dropping payloads will read as healthy here. Replacing it with an in-tunnel
+// probe (the DNS-over-tunnel query designed for the UoT work) is the correct
+// fix and is tracked separately; this function deliberately does not claim more
+// than it measures.
 func (m *Manager) ProbeTunnel() error {
 	m.mu.Lock()
 	cmd := m.cmd
 	m.mu.Unlock()
 
 	if cmd == nil || cmd.Process == nil {
-		return fmt.Errorf("sing-box process not running")
+		return fmt.Errorf("sing-box process not running: %w", errEngineNotRunning)
 	}
 	if !m.processAlive() {
-		return fmt.Errorf("sing-box process exited")
+		return fmt.Errorf("sing-box process exited: %w", errEngineNotRunning)
 	}
 
 	if up, ok := tunInterfaceUp(); ok && !up {
@@ -156,9 +187,32 @@ func (m *Manager) watchdogLoop(stop chan struct{}) {
 }
 
 // runProbeCycle runs one probe and, if it fails, one recovery escalation.
+//
+// The watchdog stops escalating the moment it is no longer the owner of a live
+// tunnel. Without this guard, `StopWatchdog()` closing the stop channel was the
+// ONLY way to end the loop, and a probe cycle already in flight would go on to
+// restart the engine — so a "disconnect" could be followed by several more
+// sing-box startups (visible in the field as a console flash and a fresh engine
+// per retry, and as sing-box.exe still running after the UI said Disconnected).
 func (m *Manager) runProbeCycle() {
+	// Snapshot the stop channel under the lock: if it is nil, StopWatchdog has
+	// run and this cycle must not act.
+	m.mu.Lock()
+	active := m.watchdogStop != nil
+	m.mu.Unlock()
+	if !active {
+		return
+	}
+
 	if err := m.ProbeTunnel(); err == nil {
 		m.markHealthy()
+		return
+	} else if isNotRunning(err) {
+		// No engine to recover. This is the disconnected state, not a degraded
+		// tunnel: escalating would SPAWN an engine the user did not ask for.
+		// Report it and leave it alone.
+		m.notifyProbe(StageDisconnected, "stopped", err)
+		return
 	} else {
 		m.escalate(err)
 	}
@@ -166,7 +220,17 @@ func (m *Manager) runProbeCycle() {
 
 // escalate walks the recovery ladder: restart in place, then full reset, then
 // degraded.
+//
+// Every rung re-checks that the watchdog is still the active owner before doing
+// any work, because the ladder takes several seconds and the user (or the
+// auto-disconnect) may stop the tunnel in the middle of it. Restarting onto a
+// tunnel the user just disconnected is how the engine ended up alive while the
+// UI showed Disconnected.
 func (m *Manager) escalate(probeErr error) {
+	if !m.watchdogActive() {
+		return
+	}
+
 	m.mu.Lock()
 	m.tunnelHealthy = false
 	m.mu.Unlock()
@@ -177,6 +241,10 @@ func (m *Manager) escalate(probeErr error) {
 	}
 
 	time.Sleep(2 * time.Second)
+	if !m.watchdogActive() {
+		// Stopped mid-ladder — leave the engine alone rather than resurrecting it.
+		return
+	}
 	if err := m.ProbeTunnel(); err == nil {
 		m.markHealthy()
 		return
@@ -190,6 +258,9 @@ func (m *Manager) escalate(probeErr error) {
 	}
 
 	time.Sleep(2 * time.Second)
+	if !m.watchdogActive() {
+		return
+	}
 	if err := m.ProbeTunnel(); err == nil {
 		m.markHealthy()
 		return

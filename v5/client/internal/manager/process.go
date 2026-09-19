@@ -124,6 +124,28 @@ func (b *boundedBuffer) String() string {
 	return string(b.buf)
 }
 
+// managerLogWriter forwards sing-box output to the app's logger.
+//
+// WHY NOT os.Stdout/os.Stderr: the client is a GUI binary with no console. Handing
+// a child process our stdout/stderr makes Windows allocate a fresh console for
+// it (a flashing terminal window), and gives us no diagnostics anyway. Going
+// through log.Printf puts the same lines in the client's own log file, which is
+// where anyone debugging actually looks (%APPDATA%\locus\locus.log).
+//
+// Lines are passed through verbatim (sing-box prefixes its own timestamps and
+// levels), including any trailing newline, so the log stays readable.
+type managerLogWriter struct{}
+
+func (managerLogWriter) Write(p []byte) (int, error) {
+	// log.Printf adds its own timestamp/newline; trim so we do not emit blank
+	// lines for every newline-terminated line the engine writes.
+	msg := strings.TrimRight(string(p), "\r\n")
+	if msg != "" {
+		log.Printf("[sing-box] %s", msg)
+	}
+	return len(p), nil
+}
+
 // HelperClient communicates with the privileged TUN helper service.
 type HelperClient struct {
 	socketPath string
@@ -297,19 +319,45 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if already running
-	if m.processAlive() {
-		return fmt.Errorf("tunnel is already running")
+	// Reconcile our tracking with reality BEFORE deciding anything.
+	//
+	// `m.cmd != nil` is only our belief about the engine; it can be stale in
+	// both directions (a crashed child we still track, or a live child we no
+	// longer do). Treating the stale belief as truth is what produced the
+	// "⚠ tunnel is already running" dead end: after the watchdog had already
+	// disconnected, or after a Stop raced a Start, an orphaned sing-box kept
+	// running while the UI showed Disconnected, and the ONLY way out was to
+	// restart the app because this guard refused to proceed and the cleanup
+	// below it was unreachable.
+	//
+	// So: drop tracking if the tracked process is gone, and if an untracked
+	// engine is running, adopt it into the normal stop path instead of
+	// refusing. Only a LIVE, TRACKED engine means we are genuinely connected.
+	if m.cmd != nil && !m.processAlive() {
+		log.Printf("Start: clearing stale engine tracking (tracked process is gone)")
+		m.cmd = nil
+		m.exited = nil
+	}
+
+	if m.processAlive() && m.cmd != nil {
+		return errEngineAlreadyRunning
 	}
 
 	// Auto-clean before connecting. Previously this hard-failed with "close it
 	// in Task Manager" — a manual dead-end for students. A leftover sing-box
 	// (orphaned after a crash) or a stale locus0 TUN will corrupt routing if we
 	// stack a fresh engine on top, so we clear both first, then start clean.
+	//
+	// This now runs for an UNTRACKED engine too (the case above), so a leftover
+	// from a previous session or a racing disconnect is reclaimed rather than
+	// being a dead end.
 	if foreignSingBoxRunning() {
 		log.Printf("Leftover sing-box detected before connect; killing it and clearing stale TUN")
 		killForeignEngines()
 		_ = removeStaleTUN()
+		// Give the OS a moment to actually reap the killed processes, otherwise
+		// the fresh engine can collide with the dying one over locus0.
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Retain the tunnel config so the watchdog can restart/recover it later
@@ -507,10 +555,12 @@ func (m *Manager) autoStartHelper() error {
 		// On Windows, use PowerShell Start-Process with RunAs verb to trigger UAC
 		// This shows a UAC elevation prompt and starts the helper as administrator.
 		// The PowerShell window itself is hidden so only the UAC prompt appears.
-		cmd := exec.Command("powershell", "-Command",
+		// hiddenCommand applies HideWindow, which is what actually suppresses the
+		// console — passing -WindowStyle Hidden to powershell alone still lets the
+		// OS allocate a console for the powershell process itself.
+		cmd := hiddenCommand("powershell", "-Command",
 			"Start-Process", "-FilePath", m.helperPath,
 			"-Verb", "RunAs", "-WindowStyle", "Hidden")
-		cmd.SysProcAttr = newProcAttr()
 		return cmd.Start()
 	case "linux", "darwin":
 		// On Unix, try pkexec (PolKit) or sudo for elevation
@@ -600,19 +650,47 @@ func (m *Manager) startDirect(startupCtx context.Context, procCtx context.Contex
 	// "takes forever to connect" symptom).
 	stderrBuf := &boundedBuffer{max: 8192}
 	cmd := exec.CommandContext(procCtx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
+
+	// sing-box output goes to OUR LOG, never to os.Stdout/os.Stderr.
+	//
+	// This is a GUI process: it has no console, so attaching the engine's
+	// inherited handles to the process's stdout/stderr is both useless (nobody
+	// reads it) and harmful. On Windows a child given no usable stdout handle
+	// makes the OS allocate a console for it, which is one of the ways a
+	// terminal window flashes on screen. Routing both streams into the log file
+	// keeps the diagnostics (the TUN "Access is denied" banner is read from
+	// stderrBuf) without ever touching a console.
+	logSink := managerLogWriter{}
+	cmd.Stdout = logSink
+	cmd.Stderr = io.MultiWriter(logSink, stderrBuf)
 
 	// Detach — allow parent to manage lifecycle (platform-specific)
 	cmd.SysProcAttr = newProcAttr()
 
+	// Publish the tracked process BEFORE starting it.
+	//
+	// Previously m.cmd/m.exited were set after cmd.Start() returned. In that
+	// window processAlive() reported false while a child was already running,
+	// so a concurrent Stop() (notably the watchdog's auto-disconnect, or a user
+	// tapping Disconnect during connect) found m.cmd == nil, took the "already
+	// stopped" path and returned without killing anything. The engine survived
+	// as an orphan that the UI no longer tracked — which is exactly the
+	// "disconnected, but sing-box.exe is still running and Connect now says
+	// 'tunnel is already running'" report.
+	//
+	// The exit goroutine is started only after Start() succeeds, so we never
+	// wait on a process that was never created. If Start() fails we roll the
+	// tracking fields back.
+	exited := make(chan struct{})
+	m.cmd = cmd
+	m.exited = exited
+
 	if err := cmd.Start(); err != nil {
+		m.cmd = nil
+		m.exited = nil
 		return fmt.Errorf("cannot start sing-box: %w", err)
 	}
 
-	m.cmd = cmd
-	m.exited = make(chan struct{})
-	exited := m.exited
 	go func() {
 		_ = cmd.Wait()
 		close(exited)

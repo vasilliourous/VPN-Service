@@ -261,7 +261,8 @@ const statusLabel = computed(() => {
 //   2. connected & healthy → "Disconnect" (danger)
 //   3. connected but degraded, watchdog has given up → "Retry" (accent), forces
 //      a clean reconnect rather than a silent no-op
-//   4. connected but degraded, still recovering → disabled "Repairing…"
+//   4. connected but degraded, still recovering → "Stop repairing" (danger),
+//      which disconnects. NOT disabled: see the note on primaryDisabled.
 //   5. a previous attempt failed (lastActionable set) → "Retry"
 //   6. idle → "Connect"
 const recovering = computed(() => props.connected && !props.tunnelOk)
@@ -289,7 +290,13 @@ const primaryLabel = computed(() => {
   if (props.connecting || props.reconnectRequested) return 'Reconnecting…'
   if (props.connected) {
     if (!props.tunnelOk) {
-      return props.repairStage === 'degraded' ? 'Retry' : 'Repairing…'
+      // While the watchdog is mid-repair the button is a real, working CANCEL,
+      // so it says so. It used to read "Repairing…" while being disabled, which
+      // looked like a status readout but was actually a dead control: clicking
+      // it did nothing, and the disabled styling made the app look as though it
+      // had disconnected. The watchdog is also the only owner of the engine at
+      // that point, so the user needs an explicit way to say "stop".
+      return props.repairStage === 'degraded' ? 'Retry' : 'Stop repairing'
     }
     return 'Disconnect'
   }
@@ -300,10 +307,9 @@ const primaryActionClass = computed(() => {
   if (props.connecting || props.reconnectRequested) return 'btn-secondary'
   if (props.connected) {
     if (!props.tunnelOk) {
-      // Degraded: the watchdog is still trying (disabled, secondary) or has
-      // given up (Retry, accent) — never the red Disconnect, which would
-      // misrepresent the action.
-      return props.repairStage === 'degraded' ? 'btn-accent' : 'btn-secondary'
+      // Degraded: the watchdog has given up → Retry (accent). Still repairing →
+      // a usable danger-styled Stop, since pressing it disconnects the tunnel.
+      return props.repairStage === 'degraded' ? 'btn-accent' : 'btn-danger'
     }
     return 'btn-danger'
   }
@@ -311,10 +317,11 @@ const primaryActionClass = computed(() => {
 })
 
 const primaryDisabled = computed(() => {
-  // Block double-taps while a connect is in flight, and while the watchdog is
-  // still actively repairing (the user must wait for Retry to appear).
+  // Block double-taps while a connect is in flight. Everything else is an
+  // actionable state: in particular "Repairing…" is NOT disabled any more, so a
+  // student who wants the app to stop churning the engine can say so instead of
+  // being stuck watching it, or force-quitting the app.
   if (props.connecting || props.reconnectRequested) return true
-  if (recovering.value && props.repairStage !== 'degraded') return true
   return false
 })
 
@@ -383,12 +390,17 @@ async function toggleConnection(): Promise<void> {
     emit('retry-connect')
     return
   }
-  if (!props.connected && props.lastActionable) {
-    emit('retry-connect')
+  if (props.connected) {
+    // Still repairing. This is an explicit CANCEL: the student is telling us to
+    // stop the watchdog churning the engine. It used to fall through with a
+    // "button is disabled, but guard anyway" comment and do nothing at all,
+    // leaving no way out of a repair the network would never satisfy (Norton
+    // tearing the tunnel down, for example) short of killing the app.
+    emit('disconnect')
     return
   }
-  if (props.connected) {
-    // Still recovering — button is disabled, but guard anyway.
+  if (props.lastActionable) {
+    emit('retry-connect')
     return
   }
   emit('connect')

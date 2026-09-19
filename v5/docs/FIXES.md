@@ -1,5 +1,289 @@
-## ELEVATION (CONT'D) — THE TOKEN CHECK ITSELF WAS BROKEN; UPDATES NEEDED A CODE (2026-09-19)
+## CLIENT TUNNEL/RECOVERY — NORTON KILLS THE SOCKET; THREE STATE BUGS IT EXPOSED (2026-09-20)
+
+Field report: the client connected for ~5 seconds, then showed "Repairing…",
+then "⚠ Tunnel could not be recovered automatically". Clicking the button while
+"Repairing…" appeared to disconnect, but the next Connect failed with
+"⚠ tunnel is already running" and only restarting the app recovered it. A
+terminal window flashed on every Connect and kept flashing.
+
+### Root cause of the tunnel drop: a third-party network filter (Norton)
+
+The tunnel itself is fine. The hub was verified healthy (8445/8446 listening, UoT
+live), and with the AV's protections disabled the tunnel holds. With them enabled
+Windows tears the Shadowsocks socket down a few seconds after the adapter comes
+up:
+
+```
+ERROR dns: exchange failed for login.live.com. IN A:
+  read tcp 192.168.68.52:52716->170.64.196.179:8445:
+  wsarecv: An established connection was aborted by the software in your host machine.
+```
+
+"Aborted by the software in your host machine" is a local teardown, not a network
+timeout, and it kills every in-flight DNS query at once — the signature of a
+filter driver detaching the connection rather than a path problem. It lands at
+first-connect, exactly when Windows floods the brand-new TUN adapter with
+telemetry, which is when a security filter is most likely to interfere.
+
+**This is NOT fixed in code.** It is an environment interaction (the same class
+as the earlier `strict_route` WFP finding) and must be surfaced honestly to the
+user rather than silently "repaired" forever. What IS fixed is everything the
+failure exposed: the client now stops churning, stops leaking engines, and stops
+being a dead end when this happens. A user-facing note that Norton's network
+filter must exclude the Locus engine belongs with the release.
+
+Worth recording: the clients' DNS log showed `ncc.avast.com` and
+`filerep-replica-win.ff.avast.com` resolving on a machine the user reports as
+running **Norton**. Those are the machine's OWN background traffic (Locus merely
+resolves DNS for it), so their presence is not evidence about which product is
+filtering. An earlier diagnosis in this pass asserted "Avast" from those domain
+names and was wrong — do not infer the filter vendor from the log's DNS names.
+
+### 49. Disconnect did not stop the engine (the orphan behind every other symptom)
+
+`app.disconnect()` began with `if !a.connected { return "Already disconnected" }`.
+The watchdog's auto-disconnect calls this **after** the UI has already flipped to
+Disconnected, or while the student is tapping Disconnect during a repair — so
+`a.connected` was already false, the function returned early, and **`mgr.Stop()`
+was never called**. sing-box kept running, untracked by the UI.
+
+`a.connected` is a UI flag. It is not evidence about the process; only the
+manager knows that. `Stop()` is already a safe no-op when nothing is tracked
+(it cancels the context and removes the config file), so skipping it saved
+nothing and leaked an engine.
+
+**Fix:** stop unconditionally. `Stop()` is called on every disconnect path, and a
+stop failure is logged and surfaced instead of swallowed (a failed stop is
+exactly the condition that breaks the next Connect).
+
+### 50. "⚠ tunnel is already running" was a dead end, and the cleanup that fixes it was unreachable
+
+`Start()` opened with `if m.processAlive() { return "tunnel is already running" }`,
+and the auto-clean block (`killForeignEngines` + `removeStaleTUN`) sat *below* it.
+So in the one state where cleanup was needed — a live engine we do not track —
+the guard fired first and the cleanup never ran. With bug 49 leaving orphans,
+this became a guaranteed dead end whose only escape was restarting the app.
+
+Two further problems in the same function:
+
+- `m.cmd`/`m.exited` were published **after** `cmd.Start()` returned. In that
+  window `processAlive()` reported false while a child was alive, so a concurrent
+  `Stop()` took the "already stopped" path and returned without killing anything
+  — manufacturing the orphan directly.
+- `processAlive()` is only our *belief*. It can be stale in both directions.
+
+**Fix:** reconcile tracking with reality before deciding (drop tracking if the
+tracked process is gone), then treat only a LIVE, TRACKED engine as "already
+running". An untracked engine is reclaimed through the cleanup path instead of
+refused. `m.cmd`/`m.exited` are now published **before** `Start()`, with a
+rollback if `Start()` fails, closing the race at its source.
+
+### 51. The watchdog escalated forever, and restarted engines after disconnect
+
+Three separate problems:
+
+1. **`escalate()` had no notion of ownership.** `StopWatchdog()` closed the stop
+   channel, but a probe cycle already in flight ran to completion and restarted
+   the engine. Combined with 49/50 that is precisely the observed sequence —
+   `watchdog: tunnel unrecovered after 5 tries — disconnecting` followed by four
+   more sing-box startups, each one a terminal flash and a new orphan.
+2. **The probe could not distinguish "no engine" from "engine up but broken".**
+   Both returned a bare error, and `escalate` was reached for both — so a
+   disconnected tunnel caused recovery to *spawn* an engine the user had not
+   asked for.
+3. **`watchdog: stopping engine for full reset: invalid argument`** — the
+   teardown itself errored, so even the escalation path was failing silently.
+
+**Fix:** a sentinel `errEngineNotRunning` (wrapped with `%w`, checked via
+`errors.Is`, so the classification survives wrapping); `runProbeCycle` reports a
+missing engine as `stopped` instead of escalating; `escalate` re-checks
+`watchdogActive()` at the top and between each rung, so stopping the tunnel
+mid-ladder abandons the ladder.
+
+The probe's real limitation is now documented in the code rather than implied:
+step 3 dials the server ADDRESS at host level, which proves the server is
+reachable — not that the tunnel is carrying payloads. An in-tunnel probe is the
+correct fix and is tracked separately; `ProbeTunnel` no longer claims more than
+it measures.
+
+### 52. A terminal window flashed on every Connect
+
+`sing-box` was spawned with `HideWindow: true`, so the engine itself was fine.
+Every **helper** was not: `tasklist`, `netsh`, `taskkill` and `powershell` were
+spawned with a bare `exec.Command`, and a Windows console-subsystem child of a
+GUI process gets a **new console allocated for it** — a window that appears and
+vanishes. `foreignSingBoxRunning()` and `removeStaleTUN()` run on every `Start()`
+(so: flash on Connect), and the watchdog's escalation called them again per
+retry (so: continuous flashing that only stopped when the app was closed).
+
+**Fix:** one `hiddenCommand(name, args...)` constructor applying `CREATE_NO_WINDOW`
+on Windows, with `hiddenRun`/`hiddenOutput` wrappers, and **every** spawn in the
+package routed through it — including `killProcessGroup`'s `taskkill` and the
+PowerShell elevation call. This bug had been fixed one call site at a time and
+kept returning; one constructor is what makes it unrepeatable.
+
+Also in this pass: sing-box's `stdout`/`stderr` were attached to `os.Stdout`/
+`os.Stderr`. This is a GUI binary with **no console**, so that both allocated a
+console for the child (another flash source) and produced no readable
+diagnostics. Both streams now go to the client log via a `managerLogWriter`
+(`[sing-box]`-prefixed), while stderr is still captured in the bounded buffer
+used to report startup failures.
+
+### 53. "Repairing…" was a disabled button, so there was no way to stop a repair
+
+The UI showed `Repairing…` on a button with `primaryDisabled = true`, and
+`toggleConnection()` fell through a "button is disabled, but guard anyway" branch
+to `return` — doing nothing. So a student watching an unwinnable repair (Norton
+tearing the tunnel down every 10 seconds) had no way to stop it, and the disabled
+styling made the app look as though it had disconnected.
+
+**Fix:** while repairing, the button is an explicit **Stop repairing** in danger
+styling and actually disconnects. `primaryDisabled` now blocks only a
+double-tap during an in-flight connect.
+
+### Tests (and how they were validated)
+
+New `internal/manager/lifecycle_test.go`. The pre-existing watchdog test
+**tolerated** a failing probe (`t.Logf`, not `t.Fatal`), which is why an unsound
+probe could ship; these assert behaviour instead.
+
+Critically, each test was run against the **reverted** fix to confirm it fails:
+
+- `TestEscalateIsInertWhenWatchdogStopped` → **FAILS** with the `escalate` guard
+  removed (`escalate must be inert once the watchdog has been stopped`). This is
+  the test that pins the "engines restart after disconnect" bug.
+- Two earlier drafts were **discarded because they passed with the fix reverted**
+  and therefore proved nothing: one could not reach the orphan state (the probe
+  reads `m.cmd`, which the test had cleared), and one omitted the retained
+  `tunCfg` that recovery needs to actually spawn anything. Recorded here because
+  a green test that cannot fail is worse than no test.
+
+Verified: `gofmt` clean, `GOOS=windows go vet -tags "desktop production"` clean,
+linux build clean, frontend build clean, `go test ./internal/manager/...` green
+(existing tests plus the new ones).
+
 ---
+
+
+
+Publishing a release used to run through the operator's browser. The admin
+console held four file pickers, hashed each file in JavaScript, and POSTed it to
+a dedicated Python uploader (`scripts/release_upload.py` + `locus-upload.service`
+on `127.0.0.1:8091`) because PocketBase refuses request bodies somewhere between
+1 MB and 5 MB and exposes no multipart API to hooks, and this Caddy build has no
+upload handler.
+
+That worked, and every guard in it was earned. But it made the hub depend on the
+operator's laptop, its upload bandwidth and its browser to ship a release — for
+bytes that CI had **already** published to a GitHub Release. The hub can fetch
+them itself.
+
+### 46. Publishing required an operator's machine to be the transport
+
+The specific problems, none of which were bugs in isolation:
+
+- **The transport was the weakest link.** A release could not ship from a phone,
+  from a CI job, or from a box with a bad uplink. The bytes travelled
+  laptop → hub over a home/school connection for no reason; GitHub had them
+  already, and the hub is closer to GitHub than the operator is.
+- **The size problem existed only because of the direction.** The 200 MB
+  upload cap, the Content-Length *and* stream double-check, the browser-side
+  hashing, the progress bars, the `~5 MB` PocketBase body cap that forced a
+  whole second service to exist — all of it was workaround for pushing 30 MB
+  *into* a 454 MB box. Fetching *out* from the hub has none of those
+  constraints, so retiring the uploader deleted the entire class of problem
+  rather than managing it.
+- **Two writers, two field-name layers.** `publish-release.sh` (CLI) and the
+  uploader/console wrote the same `update_config` columns from different code
+  paths. Entry 31 exists because one of them wrote field names the hub does not
+  read. Fewer writers is fewer ways to disagree.
+
+**What replaced it.** `scripts/fetch-release.py` (+ `templates/locus-fetch.service`,
+same loopback port) downloads the artifacts for a version **straight from its
+GitHub Release**, and the new `releases.publish` hook action writes
+`update_config` from the hashes the service computed on disk. Caddy routes
+`/api/admin/fetch-release` and `/api/admin/fetch-link` to it; `05-caddy.sh`
+retires `locus-upload` on deploy so the new unit can bind the port.
+
+Deliberate carry-overs, so the guards that were earned are not lost:
+
+- **Assets are resolved by name from the release manifest**, never by
+  constructing a URL — GitHub's asset naming stays out of the contract, exactly
+  as `publish-release.sh` already did.
+- **The platform/format check moved to the server.** The console used to refuse
+  a Windows `.exe` dropped into the Linux slot (`v5/console/src/lib/artifact.ts`).
+  Deleting the upload UI would have deleted that check, so it now lives in the
+  fetcher (`verify_artifact_kind`: ELF / PE / Mach-O, plus arm64-vs-x86_64 for
+  macOS). Verified against a real release: a PE in the Linux slot and an arm64
+  Mach-O in the Intel slot are both refused.
+- **All-or-nothing.** Every platform plus `manifest.json` must be present, and
+  the manifest must parse as JSON. A partial release is refused rather than
+  published with nothing for those clients to download.
+- **`publish-release.sh` stays** — it is now the only way to publish a
+  hand-built or hotfixed binary that is not on a GitHub Release.
+
+### 47. A 1 MB binary floor silently rejected a valid release
+
+The fetcher inherited the uploader's "anything under 1 MB is a truncated
+download or a Git LFS pointer" rule and applied it to every asset. `manifest.json`
+is a legitimate 719 bytes, so the first real end-to-end fetch failed with
+`downloaded only 719 bytes ... not a binary` — after downloading all four
+correct binaries.
+
+The floor is a guard against truncated *executables*, and a JSON manifest is not
+one. It now applies to binaries only; the manifest is required to be non-empty
+and to parse as JSON, which is the check that actually matters for it (it is
+what proves the bytes came from the same build CI hashed). Caught by running the
+fetcher against the real `v2.2.1` release before deploying, which is the only
+reason it was not discovered live and blamed on GitHub.
+
+### 48. A one-shot link must be single-use, and the version must be inside the signature
+
+Fetches are triggered manually, and a fetch should be triggerable from somewhere
+that does not hold the admin token — a phone, a CI job. That needs a link, and a
+link that can be replayed is a permanent grant the moment it leaks into a chat
+log, a browser history or a CI log.
+
+So a link is `?version&nonce&exp&sig` with `sig = HMAC-SHA256(secret, version|nonce|exp)`:
+
+- **Single use.** The nonce is burned on the first successful verification; a
+  replay is `409`, not a second fetch.
+- **Expiring.** 15 minutes by default (`FETCH_LINK_TTL`).
+- **The version is inside the signed payload**, not just present in the query
+  string — so a link minted for `2.2.1` cannot be edited to fetch `9.9.9`. A
+  signature that covers only the nonce would leave that open, and it is the
+  obvious thing to try first.
+- **Minting requires the token.** A link cannot mint another link, or one
+  leaked URL becomes an unlimited grant.
+
+All four were verified live against the hub, including the failure paths: a
+replayed link, a tampered signature, a version swapped under a valid signature,
+an expired link, and an unauthenticated mint attempt.
+
+### Verified live on the hub (2026-09-19)
+
+- Fetch of `v2.2.1` from GitHub: all four binaries + manifest in **4.8 s**, formats
+  detected `ELF` / `PE` / `Mach-O x86_64` / `Mach-O arm64`, hashes identical to
+  the manifest's declared values.
+- All four artifacts downloaded back **through Caddy** hash to the recorded
+  values.
+- `releases.publish` wrote `update_config` = 2.2.1 with all four `download_*`
+  URLs and `sha256_*`; `/api/release` went from
+  `{"platforms":{},"version":"2.2.0"}` (the broken state of entry 41) to four
+  fully-populated platforms.
+- A real bound code's heartbeat at 100% delivered `update_available`, all four
+  `update_<platform>` URLs **and** all four per-platform
+  `update_sha256_<platform>` hashes.
+- Refusals, all live: unknown tag, `../etc` as a version, an incomplete
+  artifact set, and `rollout > 0` on an unpublished version.
+- `smoke-test.sh`: **23 passed / 0 failed / 0 warnings**. Real codes untouched
+  (11 codes, 1 bound).
+- Rollout left at **0** afterwards — a version nobody is offered yet is the
+  correct resting state.
+
+---
+
+## ELEVATION (CONT'D) — THE TOKEN CHECK ITSELF WAS BROKEN; UPDATES NEEDED A CODE (2026-09-19)
 
 ## RELEASE TOOLING — VERSION DRIFT AND A PUBLISH THAT WROTE AN UNUSABLE ROW (2026-09-19, later pass)
 
