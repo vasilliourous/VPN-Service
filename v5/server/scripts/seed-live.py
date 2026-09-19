@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""Locus live-seed for a PocketBase on a (re-)provisioned VPS.
+"""DEPRECATED — use seed-pb.py instead.
+
+This file was a near-duplicate of seed-pb.py: same collections, same tier
+seeding, same update_config upsert. Two scripts describing the same schema
+means one of them is always slightly out of date, and nothing tells you which.
+
+Its one unique behaviour — a throwaway end-to-end activation test — has been
+ported into seed-pb.py behind VERIFY=1:
+
+    cd v5/server && DOMAIN=$DOMAIN VERIFY=1 python3 scripts/seed-pb.py
+
+Retired 2026-09-19 (FIXES.md 36). Kept as a guard rather than deleted so an
+existing runbook or shell history lands on an explanation instead of a
+"no such file" error.
+
+--- original docstring follows ---
+
+Locus live-seed for a PocketBase on a (re-)provisioned VPS.
 
 Creates the collections, update_config, tier_configs (reading passwords from
 /etc/shadowsocks/*.json — the single source of truth on the box) and seeds
@@ -15,6 +32,15 @@ import os
 import secrets
 import subprocess
 import sys
+
+sys.exit(
+    "seed-live.py is retired — use seed-pb.py instead.\n"
+    "\n"
+    "  cd v5/server && DOMAIN=$DOMAIN python3 scripts/seed-pb.py\n"
+    "\n"
+    "Add VERIFY=1 to also run the throwaway end-to-end activation check that\n"
+    "used to live only in this file. See FIXES.md 36."
+)
 
 API = "http://127.0.0.1:8090"
 DOMAIN = os.environ.get("DOMAIN", "networkingguides.duckdns.org")

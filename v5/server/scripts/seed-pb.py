@@ -4,7 +4,7 @@ PocketBase bootstrap: creates admin, collections, seeds data.
 Runs on a fresh PocketBase install. Idempotent — safe to re-run.
 Called by 06-pocketbase.sh after PocketBase starts.
 """
-import json, subprocess, os, sys, time
+import json, secrets, subprocess, os, sys, time
 
 API = "http://127.0.0.1:8090"
 DOMAIN = os.environ.get("DOMAIN", "")
@@ -14,6 +14,12 @@ ADMIN_CREDS = "/root/.pb_admin_creds"
 ADMIN_EMAIL = f"admin@{DOMAIN}"
 PB_BINARY = os.environ.get("PB_BINARY", "/opt/pocketbase/pocketbase")
 PB_DATA_DIR = os.environ.get("PB_DATA_DIR", "/opt/pocketbase/pb_data")
+
+# Code alphabet, matching scripts/generate_codes.sh and the client's
+# internal/activation package. No I/O/0/1 — they are misread when a
+# student types a code from a card.
+CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+N = len(CHARSET)
 
 # ── PocketBase 0.22.x quirk: admin auth lives at /api/admins, NOT
 # /api/collections/_superusers. The `_superusers` collection (and its
@@ -390,7 +396,80 @@ if tiers_seeded == 0:
     log("  ✗ No tier configs were seeded.")
     SCHEMA_ERRORS += 1
 
+def verify_end_to_end():
+    """Throwaway end-to-end activation check against the public API.
+
+    Ported from the now-retired seed-live.py, whose only unique value was this
+    routine. It creates a temporary eco code, activates it through the real
+    /api/activate endpoint with a synthetic fingerprint, prints what came back,
+    and deletes the code. A hub that seeds "successfully" but cannot complete an
+    activation is not a working hub, and nothing else in the deploy path
+    exercises that path end to end.
+
+    Safe to run repeatedly: the code is created and deleted within the call, and
+    the synthetic fingerprint is random so it never collides with a real device.
+    """
+    log("── End-to-end verification ──")
+    test_code = make_test_code()
+    r = api("POST", "/api/collections/codes/records",
+            {"code": test_code, "tier": "eco", "used": False, "suspended": False})
+    if not r.get("id"):
+        log(f"  ✗ could not create test code: {json.dumps(r)[:200]}")
+        return False
+    test_id = r["id"]
+    try:
+        act = api("POST", "/api/activate",
+                  {"code": test_code,
+                   "fingerprint": "verifyfp-" + secrets.token_hex(16)})
+        if act.get("code") == 200 and act.get("server_config"):
+            sc = act["server_config"]
+            log(f"  ✓ activation OK -> {sc['server']}:{sc['server_port']} "
+                f"{sc['method']} udp_relay={act.get('udp_relay')} "
+                f"uot_port={sc.get('uot_port', 0)}")
+            return True
+        log(f"  ✗ activation FAILED -> {json.dumps(act)[:300]}")
+        return False
+    finally:
+        # Always clean up, even if the assertion above raised — a leftover test
+        # code would inflate the live code count and pollute the middleman's
+        # inventory.
+        api("DELETE", f"/api/collections/codes/records/{test_id}")
+        log("  test code deleted")
+
+
+def make_test_code():
+    """A valid Luhn-mod-N code in the RQ-XXXX-XXXX-XXXX-C form.
+
+    Must pass the same checksum the hooks enforce, or the activation test would
+    fail on 'Invalid code format' and look like a hub fault.
+    """
+    def segment():
+        return "".join(secrets.choice(CHARSET) for _ in range(4))
+    body = "RQ" + segment() + segment() + segment()
+    digits = [CHARSET.index(ch) for ch in body]
+    total, alt = 0, False
+    for d in reversed(digits):
+        v = d * 2 if alt else d
+        if v >= N:
+            v = v - N + 1
+        total += v
+        alt = not alt
+    check = CHARSET[(N - (total % N)) % N]
+    return f"{body[:2]}-{body[2:6]}-{body[6:10]}-{body[10:14]}-{check}"
+
+
 log("✓ Bootstrap complete")
+
+# End-to-end verification. Opt-in via VERIFY=1 because it writes a temporary
+# code; the default deploy path should not mutate the codes collection.
+if SCHEMA_ERRORS == 0 and os.environ.get("VERIFY", "0") == "1":
+    if verify_end_to_end():
+        log("✓ End-to-end activation verified")
+    else:
+        log("✗ End-to-end activation FAILED — the hub seeds but does not serve.")
+        SCHEMA_ERRORS += 1
+elif SCHEMA_ERRORS == 0:
+    log("  (skipping end-to-end verification; set VERIFY=1 to run it)")
 
 if SCHEMA_ERRORS:
     log(f"✗ Bootstrap finished with {SCHEMA_ERRORS} error(s) — the hub is NOT usable.")

@@ -75,18 +75,6 @@ export async function getVersion(): Promise<string> {
   return wrap(() => go().GetVersion())
 }
 
-export async function getHubURL(): Promise<string> {
-  return wrap(() => go().GetHubURL())
-}
-
-export async function getCodeCharset(): Promise<string> {
-  return wrap(() => go().GetCodeCharset())
-}
-
-export async function getCodePrefix(): Promise<string> {
-  return wrap(() => go().GetCodePrefix())
-}
-
 export async function validateCode(code: string): Promise<ValidateResult> {
   // Local-only Luhn checksum — fast.
   return wrap(() => go().ValidateCode(code), RPC_TIMEOUT_QUICK_MS)

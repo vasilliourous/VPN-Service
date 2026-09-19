@@ -383,6 +383,64 @@ deploy.
 
 ---
 
+### 36. Two seed scripts described the same schema; one is now retired
+
+`seed-pb.py` (398 lines) and `seed-live.py` (291 lines) had the same
+`COLLECTIONS` list, the same tier-seeding loop, the same `update_config` and
+`tier_configs` upserts, and the same `uot_port` handling. Only one of them is
+wired into the deploy path — `06-pocketbase.sh` calls `seed-pb.py` — so the other
+could drift indefinitely without anyone noticing, and "which do I run?" had no
+answer in the repo.
+
+Checked against the live host before deciding which to keep:
+
+- `seed-pb.py` knows that PB 0.22.x has **no public API to create the first
+  admin** (`POST /api/collections/_superusers/records` returns 404) and
+  bootstraps via the CLI, then authenticates against `/api/admins`. Verified on
+  `170.64.196.179` (PB 0.22.21): `/api/admins/auth-with-password` answers 400
+  for bad credentials, while `/api/collections/_superusers/auth-with-password`
+  answers 404 — the endpoint does not exist.
+- The claim that `seed-live.py` was "broken on 0.22" was **wrong**, and worth
+  recording as such: it does handle `_superusers`. It was simply the unmainted
+  duplicate.
+
+Both were schema-compatible with the live database (all four collections' columns
+matched the running SQLite schema exactly).
+
+**`seed-live.py`'s one unique behaviour was a throwaway end-to-end activation
+test** — create a temporary eco code, activate it through the public
+`/api/activate` with a synthetic fingerprint, print the returned `server_config`,
+delete the code. That is the only thing in the deploy path that proves the hub
+*serves* rather than merely *seeds*, so it was ported into `seed-pb.py` behind
+`VERIFY=1` (opt-in: the default deploy should not write to `codes`).
+
+The generator was cross-checked against the Go implementation the client and
+hooks use — 20 generated codes, 20 accepted by `internal/activation`'s
+`luhnModNCheck`. A generator that produced invalid codes would make the
+verification fail on "Invalid code format" and look like a hub fault.
+
+Exercised on the live host: activation returned
+`networkingguides.duckdns.org:8443 aes-256-gcm`, and the code count was 11 before
+and 11 after, so cleanup is reliable.
+
+`seed-live.py` now exits immediately with a pointer to the replacement. It is not
+deleted, so an existing runbook or a shell-history recall lands on an explanation
+instead of "no such file".
+
+### 37. Dead exports removed from the client's bridge
+
+`getHubURL`, `getCodeCharset` and `getCodePrefix` were exported from
+`frontend/src/lib/bridge.ts` and imported by nothing. The corresponding Go
+methods stay — they are bound to the frontend by Wails and callable from a
+devtools console — but the wrappers were surface a reader would assume was live.
+
+Added a check that `AppBindings` in `types/index.ts` matches the exported `App`
+methods in `app.go`: all 14 public methods are declared, and no declared method
+is missing from Go. (The rest of `app.go`'s methods are Wails lifecycle hooks or
+private helpers, which correctly have no frontend binding.)
+
+---
+
 ## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
 
 ### 26. The console could silently publish the wrong binary
