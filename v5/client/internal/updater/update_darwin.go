@@ -18,13 +18,17 @@ func init() {
 func swapDarwin(newPath, currentPath string) error {
 	// On Darwin, we can atomically rename the new binary over the current one.
 	// The old binary is still backed up in .locus-backups/
-	if err := os.Rename(newPath, currentPath); err != nil {
-		return fmt.Errorf("rename failed: %w", err)
+	//
+	// The chmod happens BEFORE the rename for the same reason as Linux: renaming
+	// first and then failing the chmod would report a failure for an update that
+	// is already committed on disk, leaving the sentinel state inconsistent with
+	// the installed binary.
+	if err := os.Chmod(newPath, 0755); err != nil {
+		return fmt.Errorf("chmod of the downloaded binary failed: %w", err)
 	}
 
-	// Ensure the binary is executable
-	if err := os.Chmod(currentPath, 0755); err != nil {
-		return fmt.Errorf("chmod failed: %w", err)
+	if err := os.Rename(newPath, currentPath); err != nil {
+		return fmt.Errorf("rename failed: %w", err)
 	}
 
 	return nil

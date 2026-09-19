@@ -58,11 +58,33 @@ export type FailureKind = 'offline' | 'elevation' | 'engine' | 'server' | 'unkno
 
 // ── Updates ──
 
+// Outcome codes returned by the backend update check. These mirror the
+// UpdateStatus* constants in app.go and must be kept in sync — the UI switches
+// on them to explain *why* there is no update instead of showing a dead button.
+export type UpdateStatus =
+  | 'available'
+  | 'up_to_date'
+  | 'no_release'
+  | 'unreachable'
+  | 'uninstrumented_build'
+  | 'not_activated'
+  | 'no_asset'
+
 export interface UpdateCheckResult {
   available: boolean
   version?: string
   url?: string
   sha256?: string
+
+  // Why the check produced this result, and the client's own identity at the
+  // moment of checking. All optional so an older backend still type-checks.
+  status?: UpdateStatus
+  reason?: string
+  currentVersion?: string
+  currentInstrumented?: boolean
+  platform?: string
+  advertisedVersion?: string
+  heartbeatError?: string
 }
 
 export interface UpdateResult {
@@ -76,6 +98,10 @@ export type UpdatePhase = 'idle' | 'downloading' | 'verifying' | 'applying' | 'a
 export interface UpdateStatusEvent {
   phase: UpdatePhase
   message?: string
+  // from/to name the versions involved, so progress text and the UI banner can
+  // say "2.0.0 → 2.1.0" rather than showing a bare phase label.
+  from?: string
+  to?: string
 }
 
 // ── Go backend binding surface (mirrors the bound App methods) ──

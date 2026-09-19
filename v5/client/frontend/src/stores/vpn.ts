@@ -3,7 +3,7 @@
 
 import { reactive, readonly } from 'vue'
 import * as bridge from '@/lib/bridge'
-import type { StatusResult, UpdateCheckResult, UpdatePhase, FailureKind } from '@/types'
+import type { StatusResult, UpdateCheckResult, UpdatePhase, UpdateStatus, FailureKind } from '@/types'
 
 // offlineMessage mirrors the constant in lib/bridge (re-exported there for the
 // components); kept as a single source via import so wording never drifts.
@@ -54,6 +54,20 @@ interface State {
   // Background apply flow (ApplyUpdate): 'idle' until a download starts.
   updatePhase: UpdatePhase
   updateMessage: string
+  // updateStatus/updateReason explain the most recent check. "No update
+  // available" used to be the only information the UI had, which made an
+  // unconfigured server, an offline laptop and a fully-patched client look
+  // identical. The reason string is shown verbatim.
+  updateStatus: UpdateStatus
+  updateReason: string
+  // updateFrom/updateTo name the versions in play so the banner can read
+  // "2.0.0 → 2.1.0" during an apply.
+  updateFrom: string
+  updateTo: string
+  // platform is the artifact this client would fetch (e.g. "windows/amd64").
+  // Shown in the footer so support can tell which build a student is running
+  // without asking them to open Diagnostics.
+  platform: string
 }
 
 const state = reactive<State>({
@@ -81,6 +95,11 @@ const state = reactive<State>({
   updateSha256: '',
   updatePhase: 'idle',
   updateMessage: '',
+  updateStatus: 'no_release',
+  updateReason: '',
+  updateFrom: '',
+  updateTo: '',
+  platform: '',
 })
 
 // setFailure records a failure in both places the UI needs it: the transient
@@ -273,13 +292,31 @@ async function checkUpdate(): Promise<void> {
   try {
     const result: UpdateCheckResult = await bridge.checkForUpdate()
     state.updateAvailable = result.available
+    // Record why, so the UI can explain a negative result instead of silently
+    // doing nothing (the previous behaviour, which made every "no update"
+    // cause look identical).
+    state.updateStatus = result.status || (result.available ? 'available' : 'no_release')
+    state.updateReason = result.reason || ''
+    if (result.platform) {
+      state.platform = result.platform
+    }
+    if (result.currentVersion) {
+      // Trust the backend's own report of the running version over the
+      // one loaded at startup — they should agree, and this keeps the
+      // footer honest if a check races a rebuild.
+      state.version = result.currentVersion
+    }
     if (result.available) {
       state.updateVersion = result.version || ''
       state.updateUrl = result.url || ''
       state.updateSha256 = result.sha256 || ''
     }
-  } catch {
-    // Updates are non-critical — never block the UI over a failed check.
+  } catch (err: any) {
+    // Updates are non-critical — never block the UI over a failed check, but
+    // do record that the check itself failed so the UI does not imply
+    // "up to date".
+    state.updateStatus = 'unreachable'
+    state.updateReason = err?.message || 'Could not check for updates.'
   }
 }
 
@@ -330,14 +367,27 @@ export function setupEventListeners(): void {
 
   bridge.onUpdateAvailable((event) => {
     state.updateAvailable = true
+    state.updateStatus = 'available'
     state.updateVersion = event.version
     state.updateUrl = event.url
     state.updateSha256 = event.sha256
+    state.updateFrom = state.version
+    state.updateTo = event.version
+    // A heartbeat-delivered signal is a positive result; clear any stale
+    // negative reason from an earlier check.
+    state.updateReason = ''
   })
 
   bridge.onUpdateStatus((event) => {
     state.updatePhase = event.phase
     state.updateMessage = event.message || ''
+    // Carry the version pair through the whole apply flow so the banner can
+    // read "2.0.0 → 2.1.0" instead of a bare phase.
+    if (event.from) state.updateFrom = event.from
+    if (event.to) {
+      state.updateTo = event.to
+      state.updateVersion = event.to
+    }
     if (event.phase === 'applied') {
       // The backend quits ~1.5s after emitting this — the forked new binary
       // takes over. Clear the stale availability flag so a re-render during

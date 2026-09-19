@@ -84,6 +84,19 @@
       <button class="btn btn-secondary" @click="handleDiagnostics">
         Diagnostics
       </button>
+      <!-- Check for updates.
+           A negative result must be *visible*: the previous UI only rendered
+           anything when an update existed, so "check for updates" appeared to
+           do nothing at all. The result line below states the outcome (and the
+           reason) in plain language. -->
+      <button
+        class="btn btn-secondary"
+        :disabled="checkingUpdate || updateActive"
+        @click="handleCheckUpdate"
+      >
+        <span v-if="checkingUpdate" class="spinner"></span>
+        <span v-else>Check for updates</span>
+      </button>
       <!-- Update button: applies the staged update when one is available. While
            the background apply flow runs it shows progress; the backend quits
            the app after applying so the forked new binary takes over. -->
@@ -101,9 +114,15 @@
       </button>
     </div>
 
+    <!-- Update check result. Rendered only after a check has run, so it never
+         adds noise to the normal connect flow. -->
+    <p v-if="updateNotice" class="update-notice" :class="updateNoticeClass">
+      {{ updateNotice }}
+    </p>
+
     <!-- Version footer (helps with support diagnostics in the field) -->
     <div class="version-footer" aria-label="App version">
-      Locus{{ version ? ' v' + version : '' }}
+      Locus{{ version ? ' v' + version : '' }}<span v-if="platform"> · {{ platform }}</span>
     </div>
 
     <!-- Diagnostics modal -->
@@ -133,6 +152,7 @@ const emit = defineEmits<{
   'retry-connect': []
   'show-diagnostics': []
   'apply-update': []
+  'check-update': []
 }>()
 
 const props = defineProps<{
@@ -150,6 +170,12 @@ const props = defineProps<{
   updateVersion: string
   updatePhase: string
   updateMessage: string
+  // updateStatus/updateReason explain the last update check; platform is the
+  // artifact this client would fetch. Together they let a negative check say
+  // *why* instead of rendering nothing.
+  updateStatus: string
+  updateReason: string
+  platform: string
   // reconnectRequested / lastActionable come from the store so the button and
   // the persistent error banner stay in sync with live engine state.
   reconnectRequested: boolean
@@ -164,6 +190,51 @@ const props = defineProps<{
 const showDiagnostics = ref(false)
 const diagnosticsText = ref('')
 const copied = ref(false)
+// checkingUpdate distinguishes "the check is in flight" from "the check
+// returned nothing", so the button can show a spinner and the notice only
+// appears once there is a real result.
+const checkingUpdate = ref(false)
+const lastCheckAt = ref('')
+
+// updateNotice turns the backend's machine-readable update outcome into one
+// plain sentence for the student. It stays empty until a check has actually
+// run, so it never adds noise to the normal flow.
+const updateNotice = computed(() => {
+  if (checkingUpdate.value) return 'Checking for updates…'
+  if (props.updatePhase === 'downloading' || props.updatePhase === 'verifying' || props.updatePhase === 'applying') {
+    return props.updateMessage || 'Installing update…'
+  }
+  if (props.updatePhase === 'applied') return props.updateMessage || 'Update installed — restarting…'
+  // A failed apply is reported through the error banner, not here.
+  if (!lastCheckAt.value) return ''
+  if (props.updateAvailable) {
+    return `Update ${props.updateVersion} is available.`
+  }
+  switch (props.updateStatus) {
+    case 'up_to_date':
+      return props.updateReason || 'You are running the newest version.'
+    case 'no_release':
+      return props.updateReason || 'You are running the newest published version.'
+    case 'unreachable':
+      return 'Could not reach the update server — check your connection and try again.'
+    case 'uninstrumented_build':
+      return 'This is a development build, so update checks are informational only.'
+    case 'no_asset':
+      return props.updateReason || 'An update exists but has no build for this device.'
+    case 'not_activated':
+      return 'Activate Locus first — updates are delivered with your activation.'
+    default:
+      return props.updateReason || 'No update available.'
+  }
+})
+
+// updateNoticeClass lets a "could not check" result read as a warning rather
+// than a reassuring success.
+const updateNoticeClass = computed(() => {
+  if (props.updateAvailable) return 'update-notice--action'
+  if (props.updateStatus === 'unreachable' || props.updateStatus === 'no_asset') return 'update-notice--warn'
+  return ''
+})
 
 // A tunnel that is connected but not passing traffic (watchdog flagged it) is
 // shown as degraded (amber) rather than a healthy green "Connected".
@@ -338,6 +409,24 @@ const updateLabel = computed(() => {
 
 async function handleApplyUpdate(): Promise<void> {
   emit('apply-update')
+}
+
+// handleCheckUpdate runs an on-demand update check and records that one ran, so
+// the notice below the buttons can report the outcome. Without the timestamp,
+// a negative result is indistinguishable from "never checked".
+//
+// The parent's 'check-update' handler is asynchronous; Vue's emit does not
+// return a promise, so this stays a fire-and-forget that only owns the spinner
+// and the "a check happened" flag. The notice reads the store's own state,
+// which the parent updates.
+function handleCheckUpdate(): void {
+  if (checkingUpdate.value) return
+  checkingUpdate.value = true
+  lastCheckAt.value = new Date().toISOString()
+  emit('check-update')
+  // The store's check resolves quickly (one heartbeat round-trip); release the
+  // spinner on the next tick boundary that lets the result paint.
+  window.setTimeout(() => { checkingUpdate.value = false }, 1500)
 }
 
 async function handleDiagnostics(): Promise<void> {
@@ -584,6 +673,26 @@ async function copyDiagnostics(): Promise<void> {
   font-size: 11px;
   color: #3A5344;
   user-select: text;
+}
+
+/* Update check result line. Low-key by default so it reads as information;
+   amber when the check could not complete, so "unreachable" never looks like
+   the reassuring "you are up to date" case. */
+.update-notice {
+  margin-top: -6px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #5C7A66;
+  overflow-wrap: anywhere;
+}
+
+.update-notice--action {
+  color: #4ADE80;
+}
+
+.update-notice--warn {
+  color: #FBBF24;
 }
 
 /* ── Diagnostics Modal ── */

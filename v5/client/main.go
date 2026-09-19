@@ -35,6 +35,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
+	"locus/internal/buildinfo"
 	"locus/internal/updater"
 )
 
@@ -53,7 +54,7 @@ import (
 // The fallback below is deliberately kept in sync with v5/VERSION so an
 // uninstrumented `go build` reports something meaningful — bump v5/VERSION
 // (not this literal) before a release.
-var version = "2.0.0"
+var version = "2.1.0"
 
 // Windows executables carry an embedded manifest (rsrc_windows_amd64.syso /
 // rsrc_windows_arm64.syso) that sets requestedExecutionLevel="requireAdministrator" —
@@ -67,7 +68,7 @@ var version = "2.0.0"
 // If the .syso files are missing, Go builds a Windows exe with the default
 // asInvoker manifest and Connect() falls back to a runtime UAC relaunch.
 //
-//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name Locus --file-description "Locus secure school VPN" --product-version 2.0.0 --file-version 2.0.0
+//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name Locus --file-description "Locus secure school VPN" --product-version 2.1.0 --file-version 2.1.0
 
 func main() {
 	// Route Go's stderr (panic traces) and the standard logger to a file so
@@ -77,7 +78,12 @@ func main() {
 		defer func() { _ = logFile.Close() }()
 		os.Stderr = logFile
 		log.SetOutput(logFile)
-		log.Printf("Locus starting (version %s)", version)
+		// Log full build provenance as the FIRST line. Support logs arrive as
+		// screenshots of this file, so the very first thing in it must identify
+		// the build — including whether the version was actually injected by
+		// the release pipeline, which determines whether an update decision
+		// based on it means anything.
+		log.Println(buildinfo.Detect(version).Describe())
 	}
 
 	// ── `--revert`: manual rollback to the pre-update binary ──

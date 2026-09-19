@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 )
 
 var (
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
 	advapi32         = syscall.NewLazyDLL("advapi32.dll")
 	shell32          = syscall.NewLazyDLL("shell32.dll")
 	openProcessToken = advapi32.NewProc("OpenProcessToken")
@@ -38,7 +38,10 @@ func isElevated() bool {
 	if ok == 0 {
 		return false
 	}
-	defer syscall.CloseHandle(hToken)
+	// Best-effort close: a leaked token handle is harmless for a
+	// short-lived elevation probe, and the linter rightly complains about an
+	// unchecked call in a defer.
+	defer func() { _ = syscall.CloseHandle(hToken) }()
 
 	var elevated uint32
 	var retLen uint32
@@ -75,16 +78,36 @@ func relaunchElevated(argsToAdd ...string) error {
 	allArgs = append(allArgs, argsToAdd...)
 	cmdLine := quoteCommandLine(allArgs)
 
+	// UTF16PtrFromString replaces the deprecated StringToUTF16Ptr and returns
+	// an error instead of panicking, so a bad path is reported rather than
+	// crashing the app mid-elevation.
+	verbPtr, err := syscall.UTF16PtrFromString("runas")
+	if err != nil {
+		return fmt.Errorf("cannot encode elevation verb: %w", err)
+	}
+	exePtr, err := syscall.UTF16PtrFromString(exe)
+	if err != nil {
+		return fmt.Errorf("cannot encode executable path: %w", err)
+	}
+	argsPtr, err := syscall.UTF16PtrFromString(cmdLine)
+	if err != nil {
+		return fmt.Errorf("cannot encode command line: %w", err)
+	}
+	dirPtr, err := syscall.UTF16PtrFromString(exeDir)
+	if err != nil {
+		return fmt.Errorf("cannot encode working directory: %w", err)
+	}
+
 	// ShellExecuteW(hwnd=0, "runas", exe, cmdLine, dir=exeDir, showCmd=SW_SHOWNORMAL).
 	// Passing the executable directory as the working directory ensures the
 	// elevated copy can find its own resources (sing-box etc.) regardless of
 	// how it was launched.
 	res, _, _ := shellExecuteW.Call(
 		0,
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("runas"))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exe))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(cmdLine))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exeDir))),
+		uintptr(unsafe.Pointer(verbPtr)),
+		uintptr(unsafe.Pointer(exePtr)),
+		uintptr(unsafe.Pointer(argsPtr)),
+		uintptr(unsafe.Pointer(dirPtr)),
 		1, // SW_SHOWNORMAL
 	)
 
@@ -103,6 +126,11 @@ func elevationRequestRejected() error {
 	// all indicate the user declined or elevation couldn't begin.
 	return errElevationCancelled
 }
+
+// elevationUnsupportedReason returns "" on Windows: elevation IS supported
+// (UAC), so a non-elevated process simply relaunches. Kept for build parity
+// with elevate_unix.go — the Unix build is where this can be non-empty.
+func elevationUnsupportedReason() string { return "" }
 
 // errElevationCancelled is returned when the UAC prompt is declined or cannot be
 // shown. Its numeric value is ERROR_CANCELLED for diagnostics.

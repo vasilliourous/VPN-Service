@@ -15,8 +15,9 @@
 4. [Package: `heartbeat`](#4-package-heartbeat)
 5. [Package: `updater`](#5-package-updater)
 6. [Package: `tunnel`](#6-package-tunnel)
-7. [Dependency Graph](#7-dependency-graph)
-8. [Platform-Specific Files](#8-platform-specific-files)
+7. [Package: `buildinfo`](#7-package-buildinfo)
+8. [Dependency Graph](#8-dependency-graph)
+9. [Platform-Specific Files](#9-platform-specific-files)
 
 ---
 
@@ -483,15 +484,29 @@ const MinDownloadSize  = 1024 * 1024        // 1MB
 
 ```go
 type UpdateInfo struct {
-    Version                string
-    SHA256              string
-    DownloadURL         string  // generic/fallback
-    DownloadURLLinux    string
-    DownloadURLWindows  string
+    Version               string
+    SHA256                string  // legacy single hash — fallback only
+    DownloadURL           string  // generic/fallback
+    DownloadURLLinux      string
+    DownloadURLWindows    string
+    DownloadURLMacOSIntel string
+    DownloadURLMacOSARM   string
+
+    // Per-platform checksums (preferred when set). A release publishes four
+    // different binaries, so one SHA256 cannot describe them all; the client
+    // verifies the artifact it actually downloads.
+    SHA256Linux      string
+    SHA256Windows    string
+    SHA256MacOSIntel string
+    SHA256MacOSARM   string
 }
 
 // PlatformDownloadURL returns the right URL for the current OS/arch.
 func (ui *UpdateInfo) PlatformDownloadURL() string
+
+// PlatformSHA256 returns the checksum for the artifact PlatformDownloadURL
+// would fetch, falling back to the legacy SHA256.
+func (ui *UpdateInfo) PlatformSHA256() string
 
 type RecoveryState struct {
     RolledBack      bool
@@ -645,7 +660,69 @@ func KillSwitch(enable bool, tunInterfaceName string) error
 
 ---
 
-## 7. Dependency Graph
+## 7. Package: `buildinfo`
+
+**Files:** `internal/buildinfo/buildinfo.go`
+**Import:** `"locus/internal/buildinfo"`
+**Purpose:** What the running binary knows about itself — the version and, crucially,
+whether that version was actually injected by the release pipeline.
+
+This package exists because the client previously knew only its ldflags version
+string. A dev/scratch build (no `-ldflags`) falls back to a literal in `main.go`,
+which can drift from the source tree; without a way to tell the two apart, an
+update check could refuse a real release while believing it was "up to date".
+
+### Types
+
+```go
+type Info struct {
+    Version      string  // runtime version (ldflags, or the fallback)
+    Instrumented bool    // true when Version came from the release pipeline
+    Commit       string  // VCS revision (Go 1.18+ records it in a git checkout)
+    CommitShort  string  // abbreviated revision
+    CommitDirty  bool    // built from a modified working tree
+    BuiltAt      string  // commit time (RFC3339)
+    GoVersion    string  // toolchain
+    Platform     string  // "GOOS/GOARCH"
+    Modified     bool
+}
+```
+
+### Functions
+
+```go
+// Detect assembles the Info. version is the ldflags-injected value ("" when the
+// build was not instrumented); an empty value falls back to fallbackVersion but
+// leaves Instrumented=false.
+func Detect(version string) Info
+
+// FallbackVersion exposes the compile-time fallback literal so the repo's
+// version-consistency test can assert it matches v5/VERSION.
+func FallbackVersion() string
+
+// Describe returns a one-line summary for logs and support reports, e.g.
+//   Locus 2.0.1 (instrumented) linux/amd64 go1.22.12 commit a1b2c3d clean
+func (i Info) Describe() string
+func (i Info) String() string
+
+// Warning returns a note when the build is not a release build, or "".
+func (i Info) Warning() string
+```
+
+### Where it is used
+
+- `main.go` — logs `Describe()` as the first line of `locus.log`, so every
+  support log identifies its build.
+- `app.go` (`GetDiagnostics`, `CheckForUpdate`) — reports whether the running
+  version can be trusted, and distinguishes `uninstrumented_build` from
+  `up_to_date` in the update check result.
+- `version_consistency_test.go` (package `main`) and the CI "Check version
+  consistency" step — fail the build when `v5/VERSION`, `main.go`,
+  `internal/buildinfo`, `wails.json` and `frontend/package.json` disagree.
+
+---
+
+## 8. Dependency Graph
 
 ```
 main.go (entry point)
@@ -681,7 +758,7 @@ rewrite.
 
 ---
 
-## 8. Platform-Specific Files
+## 9. Platform-Specific Files
 
 These files use build tags and must be included in any build:
 

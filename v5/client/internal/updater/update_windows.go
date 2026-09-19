@@ -16,6 +16,12 @@ func init() {
 
 // swapWindows renames the current binary to .old, then renames the new one in place.
 // Windows doesn't support atomic rename of a running executable, so we use the .old trick.
+//
+// CRITICAL: the rollback path must not be silent. If the second rename fails
+// AND the restore rename also fails, the install is left with NO runnable
+// binary (the old one is stranded as ".old" and the new one never landed). That
+// is unrecoverable for a student, so the error must say exactly where the
+// backup is rather than being discarded.
 func swapWindows(newPath, currentPath string) error {
 	oldPath := currentPath + ".old"
 
@@ -29,8 +35,15 @@ func swapWindows(newPath, currentPath string) error {
 
 	// Move new binary into place
 	if err := os.Rename(newPath, currentPath); err != nil {
-		// Attempt to restore old binary
-		os.Rename(oldPath, currentPath)
+		// Attempt to restore old binary.
+		if restoreErr := os.Rename(oldPath, currentPath); restoreErr != nil {
+			// Both renames failed: there is no binary at currentPath. Report
+			// the backup location so support can recover the machine by hand
+			// instead of leaving them with a renamed-away executable.
+			return fmt.Errorf("cannot move new binary (%w), and restoring the previous "+
+				"binary also failed (%v) — the previous build is preserved at %s; "+
+				"rename it back to %s to recover", err, restoreErr, oldPath, currentPath)
+		}
 		return fmt.Errorf("cannot move new binary: %w", err)
 	}
 

@@ -121,6 +121,43 @@ jobs:
         # webkit2_41 matches the WebKitGTK version on ubuntu-latest.
         run: go build -tags "frontend desktop production webkit2_41" ./...
 
+      # Version consistency. The client version is duplicated in v5/VERSION
+      # (canonical), main.go's fallback, internal/buildinfo's fallback,
+      # wails.json and frontend/package.json. When they drift, the binary's
+      # diagnostics, installer metadata and update comparisons disagree — and
+      # the failure surfaces as an unexplainable client behaviour weeks later.
+      # Fail the build here instead. (Also covered by version_consistency_test.go.)
+      - name: Check version consistency
+        working-directory: ${{ github.workspace }}
+        run: |
+          V=$(tr -d '[:space:]' < v5/VERSION)
+          echo "v5/VERSION = $V"
+          fail=0
+          grep -q "\"version\": \"$V\"" v5/client/wails.json || {
+            echo "::error::v5/client/wails.json version does not match v5/VERSION ($V)"; fail=1; }
+          grep -q "\"version\": \"$V\"" v5/client/frontend/package.json || {
+            echo "::error::v5/client/frontend/package.json version does not match v5/VERSION ($V)"; fail=1; }
+          grep -q "var version = \"$V\"" v5/client/main.go || {
+            echo "::error::main.go fallback version does not match v5/VERSION ($V)"; fail=1; }
+          grep -q "fallbackVersion = \"$V\"" v5/client/internal/buildinfo/buildinfo.go || {
+            echo "::error::internal/buildinfo fallback version does not match v5/VERSION ($V)"; fail=1; }
+          # The go:generate directive rebuilds the Windows .syso (which stamps the
+          # exe's file/product version). A stale number here ships a Windows
+          # binary whose Properties tab disagrees with the app's own version.
+          grep -q -- "--product-version $V --file-version $V" v5/client/main.go || {
+            echo "::error::main.go go:generate product/file version does not match v5/VERSION ($V)"; fail=1; }
+          # On a v* tag the tag itself must match v5/VERSION, or CI would publish
+          # a release whose binary reports a different version than its tag.
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              TAG="${GITHUB_REF_NAME#v}"
+              if [ "$TAG" != "$V" ]; then
+                echo "::error::tag ${{ github.ref_name }} does not match v5/VERSION ($V)"
+                fail=1
+              fi ;;
+          esac
+          exit $fail
+
       - name: Run unit tests
         run: go test ./... -v -count=1
 

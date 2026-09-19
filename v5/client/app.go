@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"locus/internal/activation"
+	"locus/internal/buildinfo"
 	"locus/internal/heartbeat"
 	"locus/internal/manager"
 	"locus/internal/pinned"
@@ -54,6 +55,24 @@ type App struct {
 	up        *updater.Updater
 	version   string
 	hubURL    string
+
+	// build carries the binary's self-knowledge (version, whether that version
+	// was injected by the release pipeline, commit, toolchain). Support reports
+	// and the update flow both need it: an uninstrumented build must not be
+	// mistaken for a release.
+	build buildinfo.Info
+
+	// singBoxPath and configPath are the *resolved* engine path and generated
+	// config path. Retained so diagnostics can report what the app actually
+	// loaded rather than re-deriving it (and possibly disagreeing).
+	singBoxPath string
+	configPath  string
+
+	// lastUpdateStatus/lastUpdateDetail record the outcome of the most recent
+	// update check so "it never offers updates" is answerable from a support
+	// report without reproducing it.
+	lastUpdateStatus string
+	lastUpdateDetail string
 
 	// Cached runtime state (persisted state lives in storage)
 	connected bool
@@ -159,11 +178,50 @@ type OpResult struct {
 }
 
 // UpdateCheckResult is returned by CheckForUpdate.
+//
+// WHY SO MANY FIELDS: a bare `available: false` is useless to both the student
+// and to support. "No update" has at least five distinct causes — the hub has
+// nothing published, the hub could not be reached, the rollout has not bucketed
+// this device yet, the advertised version is not newer than the running one, or
+// this is an uninstrumented dev build whose version cannot be trusted. Those
+// need different actions, so the result distinguishes them explicitly instead
+// of collapsing to a single boolean.
 type UpdateCheckResult struct {
 	Available bool   `json:"available"`
 	Version   string `json:"version,omitempty"`
 	URL       string `json:"url,omitempty"`
 	SHA256    string `json:"sha256,omitempty"`
+
+	// Status is a stable machine-readable outcome:
+	//   available            — an update is ready to apply
+	//   up_to_date           — hub advertising a version, but not newer than ours
+	//   no_release           — hub has nothing active / rollout 0 for this device
+	//   unreachable          — heartbeat failed (offline, blocked, server down)
+	//   uninstrumented_build — dev build; version cannot be trusted for comparison
+	//   not_activated        — no heartbeat loop running (no code bound)
+	Status string `json:"status"`
+
+	// Reason is a one-line human explanation of Status, safe to show.
+	Reason string `json:"reason,omitempty"`
+
+	// CurrentVersion is the version this binary is running, and
+	// CurrentInstrumented says whether that version came from the release
+	// pipeline. Both are here so a support screenshot always shows what the
+	// client believed about itself at the moment of the check.
+	CurrentVersion      string `json:"currentVersion,omitempty"`
+	CurrentInstrumented bool   `json:"currentInstrumented"`
+
+	// Platform is the artifact this client would fetch (e.g. "windows/amd64"),
+	// so "the update has no asset for me" is distinguishable from "no update".
+	Platform string `json:"platform,omitempty"`
+
+	// AdvertisedVersion is whatever the hub offered, even when we refused it
+	// (e.g. it was older than the running build). Empty when nothing was
+	// advertised.
+	AdvertisedVersion string `json:"advertisedVersion,omitempty"`
+
+	// HeartbeatError carries the transport error when Status is unreachable.
+	HeartbeatError string `json:"heartbeatError,omitempty"`
 }
 
 // ──────────────────────────────────────────
@@ -171,11 +229,15 @@ type UpdateCheckResult struct {
 // ──────────────────────────────────────────
 
 // NewApp creates the App. Called by main.go.
-// version comes from the package-level var set via -ldflags "-X main.version=..."
+// version comes from the package-level var set via -ldflags "-X main.version=...".
+//
+// buildinfo.Detect records whether that injection actually happened, so the
+// update flow and diagnostics never present a scratch build as a release.
 func NewApp() *App {
 	return &App{
 		version: version,
 		hubURL:  "https://networkingguides.duckdns.org",
+		build:   buildinfo.Detect(version),
 	}
 }
 
@@ -221,8 +283,11 @@ func (a *App) Startup(ctx context.Context) {
 
 	// ── Find sing-box binary ──
 	singBoxPath := findSingBox()
+	a.singBoxPath = singBoxPath
 	if singBoxPath == "" {
 		wailsruntime.LogWarning(a.ctx, "sing-box binary not found — tunnel will not work")
+	} else {
+		log.Printf("sing-box engine resolved: %s", singBoxPath)
 	}
 
 	// ── Manager (direct mode — no helper binary) ──
@@ -231,6 +296,7 @@ func (a *App) Startup(ctx context.Context) {
 		wailsruntime.LogWarning(a.ctx, "Cannot create temp dir: "+err.Error())
 	}
 	configPath := filepath.Join(tmpDir, "sing-box-config.json")
+	a.configPath = configPath
 	a.mgr = manager.NewManager(singBoxPath, configPath, "")
 	// IMPORTANT: force direct mode. NewManager defaults to helper mode on
 	// Windows, but the helper binary no longer exists — helper mode would
@@ -527,15 +593,28 @@ func (a *App) Connect() OpResult {
 		return OpResult{Success: true, Message: "Already connected"}
 	}
 
-	// TUN interface creation requires administrator privileges on Windows.
-	// With the embedded requireAdministrator manifest (see rsrc_windows_*.syso)
-	// the app normally ALREADY runs elevated, so this branch is a defense-in-depth
-	// fallback for the rare case it launched asInvoker (e.g. an older bundle or
-	// a dev run without the .syso). It re-launches the app elevated with
-	// --autoconnect, then exits this (non-elevated) instance so the elevated
-	// copy takes over and connects — without this a non-admin launch would
-	// fail TUN creation with "Access is denied" and the connection would die.
+	// TUN interface creation requires privilege. Two different situations live
+	// behind this one check, and conflating them was a real defect:
+	//
+	//   Windows — the binary normally runs elevated via the embedded
+	//     requireAdministrator manifest. This branch is defense-in-depth for a
+	//     bundle built without the .syso (or a dev run): relaunch via UAC with
+	//     --autoconnect, then exit this instance so the elevated copy connects.
+	//
+	//   Unix — there is NO automatic elevation path (see elevate_unix.go). If we
+	//     are not root the tunnel cannot work, so fail immediately and say why.
+	//     Previously isElevated() returned true unconditionally on Unix, so
+	//     Connect() proceeded and the student got an obscure sing-box error
+	//     instead of "you need root".
 	if !isElevated() {
+		// One path for Windows (UAC handoff) and Unix (no mechanism). If a
+		// platform cannot elevate, report the prepared reason rather than
+		// pretending a handoff will happen.
+		if reason := elevationUnsupportedReason(); reason != "" {
+			log.Printf("Refusing to connect without privilege: %s", reason)
+			return OpResult{Success: false, Message: reason}
+		}
+
 		// Guard against an elevation loop: if this instance ALREADY came from a
 		// UAC relaunch (--autoconnect) and still isn't elevated, relaunching
 		// again would only bounce the window forever. Fail clearly instead.
@@ -837,13 +916,46 @@ func (a *App) recordUpdateSignal(resp *heartbeat.Response) {
 
 // CheckForUpdate performs a manual heartbeat to check for available updates.
 func (a *App) CheckForUpdate() UpdateCheckResult {
+	// Always report what the client is and what it would fetch, even when the
+	// check cannot complete — this is the information a support report needs
+	// most, and it is the part that used to be missing entirely.
+	res := UpdateCheckResult{
+		CurrentVersion:      a.version,
+		CurrentInstrumented: a.build.Instrumented,
+		Platform:            a.build.Platform,
+	}
+	// Remember the outcome so GetDiagnostics can report it without re-checking.
+	defer func() {
+		a.lastUpdateStatus = res.Status
+		a.lastUpdateDetail = res.Reason
+	}()
 	if a.hb == nil {
-		return UpdateCheckResult{Available: false}
+		res.Status = UpdateStatusNotActivated
+		res.Reason = "No activation code is bound to this device yet, so there is nothing to check against."
+		return res
 	}
 
 	result := a.hb.DoBeat()
-	if !result.Success || result.Resp == nil || result.Resp.UpdateAvailable == "" {
-		return UpdateCheckResult{Available: false}
+	if !result.Success || result.Resp == nil {
+		res.Status = UpdateStatusUnreachable
+		res.Reason = "Could not reach the update server. This is usually a network block — check your connection and try again."
+		if result.Error != nil {
+			res.HeartbeatError = result.Error.Error()
+		}
+		return res
+	}
+
+	advertised := result.Resp.UpdateAvailable
+	res.AdvertisedVersion = advertised
+
+	if advertised == "" {
+		// The hub answered but is advertising nothing: either no release is
+		// published, or this device has not been bucketed into the rollout yet.
+		// Both are correct, expected states — say so instead of leaving the
+		// student with a dead button.
+		res.Status = UpdateStatusNoRelease
+		res.Reason = "You are running the newest published version."
+		return res
 	}
 
 	a.recordUpdateSignal(result.Resp)
@@ -852,16 +964,55 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 	// update_config row cannot be reported as an available update. Reflect that
 	// decision back to the UI rather than trusting the raw response.
 	if a.lastUpdate == nil {
-		return UpdateCheckResult{Available: false}
+		if !a.build.Instrumented {
+			// The refusal may be an artefact of an uninstrumented build whose
+			// fallback version is newer than anything the hub publishes. Say
+			// that plainly rather than claiming "up to date".
+			res.Status = UpdateStatusUninstrumentedBuild
+			res.Reason = "This is a development build, so version comparison is unreliable. Install a release build to receive updates."
+			return res
+		}
+		res.Status = UpdateStatusUpToDate
+		res.Reason = "The server is offering " + advertised + ", which is not newer than the version you are running (" + a.version + ")."
+		return res
 	}
 
-	return UpdateCheckResult{
-		Available: true,
-		Version:   result.Resp.UpdateAvailable,
-		URL:       result.Resp.UpdateURL,
-		SHA256:    result.Resp.UpdateSHA256,
+	// An update is offerable. Verify we actually have an artifact for THIS
+	// platform before telling the student one is available — the hub only
+	// includes the download URLs it has, and a missing asset would otherwise
+	// surface as a download failure after the student pressed Update.
+	url := a.lastUpdate.PlatformDownloadURL()
+	if url == "" {
+		res.Status = UpdateStatusNoAsset
+		res.Reason = "Update " + a.lastUpdate.Version + " is available, but no build is published for this platform (" + a.build.Platform + ")."
+		return res
 	}
+	if a.lastUpdate.PlatformSHA256() == "" {
+		res.Status = UpdateStatusNoAsset
+		res.Reason = "Update " + a.lastUpdate.Version + " is available, but the server did not publish a checksum for this platform, so it cannot be verified safely."
+		return res
+	}
+
+	res.Available = true
+	res.Status = UpdateStatusAvailable
+	res.Version = a.lastUpdate.Version
+	res.URL = url
+	res.SHA256 = a.lastUpdate.PlatformSHA256()
+	res.Reason = "Update " + a.lastUpdate.Version + " is ready to install."
+	return res
 }
+
+// Update check outcome codes. Stable strings — the UI and support tooling
+// match on these, so they must not be reworded casually.
+const (
+	UpdateStatusAvailable           = "available"
+	UpdateStatusUpToDate            = "up_to_date"
+	UpdateStatusNoRelease           = "no_release"
+	UpdateStatusUnreachable         = "unreachable"
+	UpdateStatusUninstrumentedBuild = "uninstrumented_build"
+	UpdateStatusNotActivated        = "not_activated"
+	UpdateStatusNoAsset             = "no_asset"
+)
 
 // ApplyUpdate downloads, verifies and applies the update signalled by the hub,
 // then quits so the forked new binary takes over. It runs in the background and
@@ -889,7 +1040,7 @@ func (a *App) ApplyUpdate() OpResult {
 		// Staged rollouts re-advertise the same version every heartbeat —
 		// don't re-download and re-apply a build that is already running.
 		a.lastUpdate = nil
-		return OpResult{Success: false, Message: "Already running the latest version"}
+		return OpResult{Success: false, Message: "Already running version " + a.version + " — nothing to do"}
 	}
 	// Refuse anything that is not STRICTLY newer. A string-equality check is not
 	// enough: if update_config is ever left pointing at an older release (a
@@ -908,11 +1059,29 @@ func (a *App) ApplyUpdate() OpResult {
 	info := *a.lastUpdate // copy — the heartbeat may replace the pointer
 	a.updating = true
 
+	// An update we cannot fetch for this platform must fail with an explanation
+	// rather than starting a download that is guaranteed to 404.
+	if a.lastUpdate.PlatformDownloadURL() == "" {
+		a.lastUpdate = nil
+		a.updating = false
+		return OpResult{Success: false, Message: "Update " + info.Version + " has no build published for this platform (" + a.build.Platform + ")."}
+	}
+	if a.lastUpdate.PlatformSHA256() == "" {
+		a.lastUpdate = nil
+		a.updating = false
+		return OpResult{Success: false, Message: "Update " + info.Version + " has no checksum published for this platform (" + a.build.Platform + "), so it cannot be verified."}
+	}
+
 	go func() {
 		emit := func(phase, message string) {
 			wailsruntime.EventsEmit(a.ctx, "update:status", map[string]interface{}{
 				"phase":   phase,
 				"message": message,
+				// Carry the version on every progress event so the UI (and any
+				// log a student screenshots) always names what is being
+				// installed, instead of showing bare phase text.
+				"from": a.version,
+				"to":   info.Version,
 			})
 		}
 
@@ -921,19 +1090,19 @@ func (a *App) ApplyUpdate() OpResult {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		emit("downloading", "Downloading update…")
-		log.Printf("ApplyUpdate: downloading %s (v%s)", info.Version, info.Version)
+		log.Printf("ApplyUpdate: %s -> %s (%s)", a.version, info.Version, a.build.Platform)
+		emit("downloading", "Downloading "+info.Version+"…")
 		if err := a.up.PerformUpdate(ctx, info); err != nil {
 			a.upMu.Lock()
 			a.updating = false
 			a.upMu.Unlock()
-			log.Printf("ApplyUpdate: failed: %v", err)
-			emit("failed", "Update failed: "+err.Error())
+			log.Printf("ApplyUpdate: %s -> %s failed: %v", a.version, info.Version, err)
+			emit("failed", "Update to "+info.Version+" failed: "+err.Error())
 			return
 		}
 
-		log.Printf("ApplyUpdate: applied v%s — restarting", info.Version)
-		emit("applied", "Update applied — restarting…")
+		log.Printf("ApplyUpdate: applied %s -> %s — restarting", a.version, info.Version)
+		emit("applied", "Updated to "+info.Version+" — restarting…")
 
 		// Give the webview a moment to paint the "Restarting…" state, then quit
 		// so the forked new binary takes over (see updater.PerformUpdate).
@@ -941,43 +1110,90 @@ func (a *App) ApplyUpdate() OpResult {
 		wailsruntime.Quit(a.ctx)
 	}()
 
-	return OpResult{Success: true, Message: "Update started"}
+	return OpResult{Success: true, Message: "Updating " + a.version + " → " + info.Version}
 }
 
 // ── Diagnostics ──
 
 // GetDiagnostics returns a plain-text support report with no PII.
+//
+// This is the primary debugging artefact in the field: a student copies it into
+// a message. It therefore has to answer "which build is this, is that build
+// trustworthy, and what did it actually load" — questions the previous version
+// could not answer, because it omitted build provenance, the sing-box binary it
+// resolved, the log location, and the last update outcome.
 func (a *App) GetDiagnostics() string {
 	if msg := a.notReady(); msg != "" {
-		return fmt.Sprintf("Locus Diagnostics\n===================\nVersion: %s\n\nApp not ready: %s\n", a.version, msg)
+		return fmt.Sprintf("Locus Diagnostics\n===================\n%s\n\nApp not ready: %s\n", a.build.Describe(), msg)
 	}
 	state := a.store.GetData()
 	mgrState := a.mgr.State()
 
+	// Build provenance. An uninstrumented build must be obvious here: the
+	// version string alone cannot be trusted for support decisions, and the
+	// whole point of the report is to be trustworthy.
+	buildLine := "Build:       " + a.build.Describe()
+	if w := a.build.Warning(); w != "" {
+		buildLine += "\n             ⚠ " + w
+	}
+	if a.build.Commit != "" {
+		buildLine += "\nCommit:      " + a.build.Commit
+	}
+	if a.build.BuiltAt != "" {
+		buildLine += "\nCommit time: " + a.build.BuiltAt
+	}
+
+	// Which engine binary did we actually resolve, and does it still exist?
+	// "sing-box not found" is a top-3 field failure and was previously
+	// invisible unless the student happened to read the log.
+	singBox := a.singBoxPath
+	if singBox == "" {
+		singBox = "(NOT FOUND — the tunnel cannot start)"
+	} else if _, err := os.Stat(singBox); err != nil {
+		singBox += " (MISSING: " + err.Error() + ")"
+	}
+
+	// The last update outcome, so "it never updates" is diagnosable from the
+	// report alone.
+	updateLine := "not checked yet"
+	if a.lastUpdateStatus != "" {
+		updateLine = a.lastUpdateStatus
+		if a.lastUpdateDetail != "" {
+			updateLine += " — " + a.lastUpdateDetail
+		}
+	}
+
 	report := fmt.Sprintf(`Locus Diagnostics
 ===================
-Version:     %s
-OS:          %s/%s
+%s
+
+OS:          %s
 Go:          %s
 
-	Activated:   %v
-	Connected:   %v
-	Tier:        %s
-	Engine:      %s
-	Tunnel OK:   %v
+Activated:   %v
+Connected:   %v
+Tier:        %s
+Engine:      %s
+Tunnel OK:   %v
 
-	Heartbeat OK:     %d
-	Heartbeat Fail:   %d
-	Grace Remaining:  %d days
+Heartbeat OK:     %d
+Heartbeat Fail:   %d
+Grace Remaining:  %d days
 
 Server:       %s
+sing-box:     %s
+Config:       %s
+
+Last update check: %s
 
 Leftover engines:
 %s
-Reported: %s
+
+Log file:     %s
+Reported:     %s
 `,
-		a.version,
-		goRuntime.GOOS, goRuntime.GOARCH,
+		buildLine,
+		goRuntime.GOOS+"/"+goRuntime.GOARCH,
 		goRuntime.Version(),
 		state.Activated,
 		a.connected,
@@ -988,7 +1204,11 @@ Reported: %s
 		a.heartbeatFailures(),
 		a.graceDays(state.LastHeartbeatOK),
 		a.serverReachability(),
+		singBox,
+		a.configPath,
+		updateLine,
 		leftoverLines(a.mgr.ForeignEngines()),
+		logFilePath(),
 		time.Now().UTC().Format(time.RFC3339),
 	)
 
@@ -1002,6 +1222,17 @@ func leftoverLines(s string) string {
 		return "(none)"
 	}
 	return s
+}
+
+// logFilePath returns the path of the log file main.go writes to, or a short
+// explanation when it cannot be determined. Support asks students for this file
+// constantly, and until now nothing in the app ever named it.
+func logFilePath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "(unknown — could not resolve the config directory)"
+	}
+	return filepath.Join(dir, "locus", "locus.log")
 }
 
 // serverReachability tests TCP connectivity to the configured VPN server.

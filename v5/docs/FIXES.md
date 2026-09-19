@@ -1,7 +1,129 @@
 
 ---
 
-## ADMIN CONSOLE + RELEASE UPLOADS (2026-09-19)
+## CLIENT AUDIT — VERSION/DEBUG SURFACE, ELEVATION, UPDATE CORRECTNESS (2026-09-19)
+
+The client had drifted into being a black box: it could not reliably say which
+build it was, "no update available" had five indistinguishable causes, and the
+Linux TUN gap was disguised as a mysterious engine failure. This pass fixes the
+class of problem rather than the symptoms.
+
+### 17. `isElevated()` returned `true` unconditionally on Unix
+
+`elevate_unix.go` claimed non-Windows platforms "have no separate elevation
+model", so `Connect()`'s privilege gate was skipped entirely on Linux. TUN needs
+root or `CAP_NET_ADMIN`; the privileged helper is no longer shipped and direct
+mode is forced, so on any non-root Linux session the tunnel was **guaranteed**
+to fail — and it surfaced as a raw sing-box error deep in a log rather than
+"you need root".
+
+**Fix:** `isElevated()` now performs a real check (`os.Geteuid() == 0`) on Unix,
+and `elevationUnsupportedReason()` supplies an actionable message. `Connect()`
+fails immediately and explains the requirement instead of starting an engine
+that cannot work. Windows behaviour is unchanged (real token check, UAC
+handoff).
+
+*Track A (shipping a real Linux elevation mechanism — pkexec/polkit or a
+revived helper) is deliberately NOT in this change; the gap is now declared
+honestly instead of hidden. See `ENGINE-SWAP-ANALYSIS.md`.*
+
+### 18. Permission failures were reported as opaque engine errors
+
+`startDirect` translated only Windows' "Access is denied". A Linux
+"operation not permitted" (the exact output of the elevation gap above) fell
+through to `"sing-box exited immediately: <raw text>"`, which tells a student
+nothing. A shared `looksLikePermissionError` classifier now maps both dialects
+to an actionable message.
+
+### 19. Which build is this? The client could not answer
+
+The version existed only as an ldflags string with no runtime introspection. A
+dev build (`go build`, no flags) reported the `main.go` fallback literal —
+which can drift from the source tree — and nothing anywhere distinguished it
+from a release. That made update decisions unexplainable.
+
+**Fix:** new `internal/buildinfo` package records the version, whether it was
+injected by the pipeline, the commit/commit time, whether the tree was dirty,
+and the toolchain. `main.go` writes it as the **first line of `locus.log`** so
+every support log identifies its build; diagnostics and the update flow consume
+it. An uninstrumented build is now flagged (`UNINSTRUMENTED`) rather than
+silently trusted.
+
+### 20. The version was duplicated in five places with nothing keeping them in sync
+
+`v5/VERSION`, `main.go`'s fallback, `internal/buildinfo`'s fallback,
+`wails.json` and `frontend/package.json`. Drift produces a binary whose
+diagnostics, installer metadata and update comparisons all disagree — and it
+surfaces weeks later as inexplicable client behaviour.
+
+**Fix:** `version_consistency_test.go` fails the build when they disagree, and a
+CI step does the same (including checking that a `v*` tag matches `v5/VERSION`,
+so a release can never ship a binary reporting a different version than its
+tag).
+
+### 21. "No update available" collapsed five distinct causes into one boolean
+
+`CheckForUpdate` returned `{available: false}` for: nothing published, rollout
+has not bucketed this device, the advertised version is not newer, the network
+is blocked, and every platform asset is missing. The UI rendered **nothing at
+all** in every case — clicking "check for updates" appeared to do nothing.
+
+**Fix:** the result now carries a machine-readable `status`
+(`available`, `up_to_date`, `no_release`, `unreachable`,
+`uninstrumented_build`, `not_activated`, `no_asset`), a human `reason`,
+the client's own `currentVersion`/`currentInstrumented`/`platform`, and the
+`advertisedVersion`. The UI renders the outcome, styles it (amber when the
+check could not complete, so it never reads as a reassuring success), and shows
+the platform in the footer. `ApplyUpdate` gained the same treatment: it refuses
+an update with no asset/checksum for this platform *before* starting a doomed
+download, and every `update:status` event now carries `from`/`to` versions so
+progress reads "2.0.0 → 2.1.0" instead of a bare phase.
+
+### 22. Update binary-swap failures could destroy the installation
+
+Windows: if `os.Rename` of the new binary failed **and** the restore rename also
+failed, the error was discarded and the machine was left with no runnable
+binary (the old one stranded as `.old`). Linux/darwin: the `chmod` ran *after*
+the rename, so a chmod failure reported a failed update for a swap that was
+already committed — leaving the two-phase sentinel inconsistent with the
+binary on disk.
+
+**Fix:** Windows reports the salvage path explicitly ("the previous build is
+preserved at `<path>`…"); Linux/darwin chmod the downloaded binary **before**
+the rename, making the rename the single commit point.
+
+### 23. Diagnostics could not answer the common support questions
+
+`GetDiagnostics` omitted the resolved sing-box path (and whether it still
+exists), the generated config path, the log file location, build provenance, and
+the last update outcome. It also had broken indentation in the template.
+
+**Fix:** the report now includes all of the above. A support report is
+self-contained.
+
+### 24. Windows-only code was never linted
+
+CI lints on Ubuntu, so `//go:build windows` files were invisible to
+golangci-lint. Running it against a Windows target surfaced pre-existing
+findings: an unused `kernel32` var, three unchecked `syscall.CloseHandle`/
+`messageBox.Call` error returns, and three uses of the deprecated
+`syscall.StringToUTF16Ptr`. The unchecked `MessageBoxW` call was in the
+**last-resort startup-error box** — a failure there shows no dialog at all,
+which is precisely the "app silently does nothing" symptom that file exists to
+prevent.
+
+**Fix:** all fixed; `golangci-lint` is now clean for both Windows and Linux
+targets. `internal/tray/tray.go` also passed `gofmt` again (the documented
+pre-existing formatting failure is resolved).
+
+### Not fixed (still open, by decision)
+
+1. **Linux TUN elevation mechanism** — the gap is declared, not closed.
+2. macOS builds unsigned (Gatekeeper) — unchanged.
+3. sing-box is not updated by the release pipeline — unchanged.
+4. `/update.json` remains a stale placeholder; the updater reads `update_config`.
+
+---
 
 Running the hub required SSH, Python and sqlite. That is fine for an engineer
 and hopeless day-to-day, so the operations an operator actually performs now

@@ -78,6 +78,22 @@ var (
 	errEngineAlreadyRunning = fmt.Errorf("sing-box engine is already running")
 )
 
+// looksLikePermissionError reports whether sing-box's output indicates the
+// engine could not obtain the privileges TUN creation needs. Kept as a small
+// shared helper because both the startup probe and the watchdog path need the
+// same classification, and the wording differs between Windows and Unix.
+func looksLikePermissionError(detail string) bool {
+	d := strings.ToLower(detail)
+	return strings.Contains(d, "operation not permitted") ||
+		strings.Contains(d, "permission denied") ||
+		strings.Contains(d, "access is denied") ||
+		strings.Contains(d, "not permitted") ||
+		strings.Contains(d, "permission") ||
+		strings.Contains(d, "cap_net_admin") ||
+		strings.Contains(d, "needs root") ||
+		strings.Contains(d, "must be root")
+}
+
 // boundedBuffer is a thread-safe writer that keeps only the last max bytes
 // written — used to capture sing-box stderr without unbounded memory growth.
 type boundedBuffer struct {
@@ -624,6 +640,14 @@ func (m *Manager) startDirect(startupCtx context.Context, procCtx context.Contex
 		}
 		if strings.Contains(detail, "Access is denied") {
 			return fmt.Errorf("TUN interface creation was denied — run Locus as administrator: %s", detail)
+		}
+		// Unix permission failures surface as "operation not permitted" /
+		// "permission denied" when the engine cannot open /dev/net/tun or
+		// install routes. Translate them, because the raw text ("sing-box exited
+		// immediately: ...") tells a student nothing actionable. This is the
+		// failure mode produced by the known Linux elevation gap.
+		if looksLikePermissionError(detail) {
+			return fmt.Errorf("TUN interface creation was denied — Locus needs root privileges on this system: %s", detail)
 		}
 		return fmt.Errorf("sing-box exited immediately: %s", detail)
 	case <-probeTimer.C:
