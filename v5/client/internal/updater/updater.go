@@ -67,6 +67,36 @@ type UpdateInfo struct {
 	DownloadURLWindows    string
 	DownloadURLMacOSIntel string
 	DownloadURLMacOSARM   string
+
+	// Per-platform checksums (preferred over SHA256 when set).
+	SHA256Linux      string
+	SHA256Windows    string
+	SHA256MacOSIntel string
+	SHA256MacOSARM   string
+}
+
+// PlatformSHA256 returns the checksum for the artifact PlatformDownloadURL
+// would fetch. Falls back to the legacy single SHA256 so older update_config
+// rows (which only ever set one hash) keep working.
+func (ui *UpdateInfo) PlatformSHA256() string {
+	switch runtime.GOOS {
+	case "linux":
+		if ui.SHA256Linux != "" {
+			return ui.SHA256Linux
+		}
+	case "windows":
+		if ui.SHA256Windows != "" {
+			return ui.SHA256Windows
+		}
+	case "darwin":
+		if runtime.GOARCH == "arm64" && ui.SHA256MacOSARM != "" {
+			return ui.SHA256MacOSARM
+		}
+		if ui.SHA256MacOSIntel != "" {
+			return ui.SHA256MacOSIntel
+		}
+	}
+	return ui.SHA256
 }
 
 // PlatformDownloadURL returns the download URL for the current platform.
@@ -123,7 +153,11 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 	if info.Version == "" {
 		return fmt.Errorf("update info has empty version")
 	}
-	if info.SHA256 == "" {
+	// Resolve the checksum for the artifact we will actually fetch. Each
+	// release publishes a different binary per platform, so the generic
+	// SHA256 is only a fallback for older update_config rows.
+	expectedSHA := info.PlatformSHA256()
+	if expectedSHA == "" {
 		return fmt.Errorf("update info has empty SHA256 checksum")
 	}
 
@@ -142,14 +176,14 @@ func (u *Updater) PerformUpdate(ctx context.Context, info UpdateInfo) error {
 
 	// Step 2: Download new binary
 	newPath := filepath.Join(u.appDir, u.binaryName+".new")
-	if err := u.downloadBinary(ctx, downloadURL, newPath, info.SHA256); err != nil {
+	if err := u.downloadBinary(ctx, downloadURL, newPath, expectedSHA); err != nil {
 		// Clean up failed download
 		_ = os.Remove(newPath)
 		return fmt.Errorf("download failed: %w", err)
 	}
 
 	// Step 3: Verify SHA256
-	if err := verifyChecksum(newPath, info.SHA256); err != nil {
+	if err := verifyChecksum(newPath, expectedSHA); err != nil {
 		_ = os.Remove(newPath)
 		return fmt.Errorf("checksum verification failed: %w", err)
 	}

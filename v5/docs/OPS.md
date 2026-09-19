@@ -13,6 +13,12 @@ export PB_TOKEN="your-pocketbase-admin-token"
 export ADMIN_TOKEN="your-admin-api-token"
 ```
 
+> **Live host (from 2026-09-19):** `170.64.196.179` (DigitalOcean, Ubuntu
+> 22.04, 1 vCPU / 512MB + 1GB swap, Sydney) — `networkingguides.duckdns.org`
+> now resolves here. Previous hosts `114.23.136.59` and `134.199.155.166` are
+> retired; the latter is fully offline. On a 512MB box, watch memory:
+> `free -m` and `systemctl status <svc> | grep Memory`.
+
 ---
 
 ## Server Health
@@ -123,15 +129,70 @@ PB_TOKEN=$(ssh root@your-vps "grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2"
 
 ### Deploy a New VPS
 
+Deploying to a **blank** box is a tested path (validated 2026-09-19 on a fresh
+Ubuntu 22.04, 1 vCPU / 512MB droplet). Work through these steps in order.
+
 ```bash
-# 1. Copy server code
+# 1. Copy server code (secrets.env.age + age-key.txt are required —
+#    setup.sh auto-decrypts them; without the key it hard-fails).
 scp -r v5/server root@new-vps:/root/
 
-# 2. Run setup
+# 2. Run setup. DNS must already point at this host or Caddy cannot get a
+#    certificate; SKIP_DNS_CHECK=1 only skips the pre-flight, it does NOT
+#    make TLS work. Setup is idempotent — safe to re-run.
+ssh root@new-vps "apt-get install -y age"   # required for secret decryption
 ssh root@new-vps "DOMAIN=networkingguides.duckdns.org /root/server/setup.sh"
 
-# 3. Create PocketBase collections, seed tier configs, generate codes
-# See DEPLOY.md for detailed steps
+# 3. Only needed if step 2 ran before DNS resolved: re-issue the certificate.
+ssh root@new-vps "systemctl restart caddy && journalctl -u caddy -n 30 --no-pager | grep -i 'certificate obtained'"
+
+# 4. Verify (expect: 23 passed / 0 failed / 0 warnings)
+ssh root@new-vps "DOMAIN=networkingguides.duckdns.org bash /root/server/scripts/smoke-test.sh"
+
+# 5. Seed activation codes — a fresh DB has an EMPTY codes collection, so
+#    every activation fails until this is done. codes.json holds the RQ- set.
+```
+
+#### Blank-VPS gotchas (all previously caused failed deploys)
+
+- **`/root/server/` is a stale staging copy.** `setup.sh` deploys hooks from
+  `/root/server/pb_hooks/` (not from the repo), so after changing a hook you
+  must update **both** the staging dir and the live dir, then restart
+  PocketBase:
+  ```bash
+  scp v5/server/pb_hooks/code_lookup.pb.js root@$VPS:/root/server/pb_hooks/
+  ssh $VPS "cp /root/server/pb_hooks/code_lookup.pb.js /opt/pocketbase/pb_hooks/ \
+            && chown pocketbase:pocketbase /opt/pocketbase/pb_hooks/code_lookup.pb.js \
+            && systemctl restart pocketbase"
+  ```
+  Re-running `setup.sh` copies staging → live, so a stale staging dir silently
+  **reverts** live hook fixes (this happened on 2026-09-19).
+- **512MB droplets**: the memory guard allows them, but add swap. No module
+  creates it; `00-env.sh` warns if it is missing.
+- **PocketBase admin**: `06-pocketbase.sh` now creates the first admin via the
+  CLI (`pocketbase admin create`) because PB 0.22 has **no API** for it. If you
+  ever bootstrap by hand, use the CLI — `/api/collections/_superusers/records`
+  returns 404 on 0.22.x.
+- **Secrets**: `setup.sh` needs `age` installed *and* `age-key.txt` beside
+  `secrets.env.age`. Missing either aborts immediately (by design).
+- **SSH**: UFW allows 22/tcp plainly; brute-force protection is fail2ban
+  (see below). **Do not** re-add `ufw limit 22/tcp` — 6 conns/30s breaks
+  scripted deployment — and do not hand-inject limiter chains into
+  `/etc/ufw/before.rules` (this locks SSH out entirely and needs console
+  recovery). See FIXES.md 2026-09-19.
+- **DNS/TLS**: confirm `dig +short networkingguides.duckdns.org` returns this
+  host's IP before expecting HTTPS.
+
+### Verify SSH Protection (fail2ban)
+
+```bash
+ssh $VPS "fail2ban-client status sshd"
+# Expect: log lines and a non-empty 'Journal matches'.
+# Ban policy lives in /etc/fail2ban/jail.d/locus-sshd.local
+# (6 failures / 10m -> 1h ban, banaction=ufw).
+
+# Unban an IP you locked out of by testing:
+ssh $VPS "fail2ban-client set sshd unbanip 203.0.113.10"
 ```
 
 ### Disaster Recovery (Restore from B2 Backup)
@@ -164,31 +225,115 @@ ssh $VPS "systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap"
 
 ---
 
-## Staged Rollouts
+## Client Update System
 
-### Create or Update rollout config
+Fully wired and verified end-to-end (2026-09-19). Releasing an update is:
+tag → wait for CI → run one script.
 
-In PocketBase admin UI → `update_config` collection → create record:
+### How it works
 
-```json
-{
-  "version": "1.1.0",
-  "rollout_percent": 5,
-  "active": true,
-  "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
-  "update_sha256": "sha256-of-the-binary",
-  "download_windows": "https://...myvpn-windows-amd64.exe"
-}
+1. **CI** (`.github/workflows/build.yml`) builds on a `v*` tag and attaches to a
+   GitHub Release:
+   - `locus-<OS>-<arch>.zip` + `checksums.sha256` — for humans downloading the
+     installer from a website.
+   - **raw** `locus-linux-amd64`, `locus-windows-amd64.exe`,
+     `locus-darwin-amd64`, `locus-darwin-arm64` — for the auto-updater.
+   - `manifest.json` — version, per-platform filename + SHA256. The build
+     **fails** if any platform artifact is missing.
+2. **`v5/server/scripts/publish-release.sh`** copies the raw binaries to the VPS
+   (`/var/www/updates/<version>/`), verifies each is downloadable over HTTPS
+   with a matching hash, then points `update_config` at them.
+3. **`heartbeat.pb.js`** reads `update_config` and, only when
+   `hash(fingerprint) % 100 < rollout_percent`, adds `update_available`, the
+   per-platform `update_<platform>` URLs and `update_sha256_<platform>` hashes.
+4. **`internal/updater`** downloads, verifies SHA256, writes `.update-pending`,
+   swaps the binary, forks, and auto-reverts if the new build fails to confirm.
+   It refuses anything that is not **strictly newer** than the running version.
+
+Serving is done by Caddy: `handle_path /updates/*` → `file_server` on
+`/var/www/updates`, listings disabled. Update URLs are therefore
+`https://<domain>/updates/<version>/<file>` — clients never depend on GitHub
+being reachable from inside a school network.
+
+### Publishing a release
+
+```bash
+# 1. Tag — CI builds, creates the GitHub Release and manifest.json
+git tag v1.1.0 && git push origin v1.1.0
+
+# 2. Download the raw artifacts + manifest from the release into ./release-artifacts
+#    (the files named locus-linux-amd64, locus-windows-amd64.exe,
+#     locus-darwin-amd64, locus-darwin-arm64, manifest.json)
+
+# 3. Check it before you ship it
+RELEASE_DIR=./release-artifacts DRY_RUN=1 \
+  v5/server/scripts/publish-release.sh 1.1.0
+
+# 4. Publish, starting at a small rollout
+RELEASE_DIR=./release-artifacts \
+PB_ADMIN_EMAIL=admin@networkingguides.duckdns.org PB_ADMIN_PASS=... \
+  v5/server/scripts/publish-release.sh 1.1.0      # ROLLOUT_PERCENT defaults to 5
 ```
 
-### Rollout Progression
+Useful env: `ROLLOUT_PERCENT`, `VPS`, `PB_API`, `PB_TOKEN` (skips login),
+`DRY_RUN=1`.
+
+**The script refuses to publish** when an artifact is under 1MB (truncated
+download / Git LFS pointer), or when a file's hash disagrees with
+`manifest.json` — so a mismatched or partial release cannot reach clients.
+
+### Rollout progression
 
 ```text
-Day 1:  rollout_percent = 5   (internal testers)
-Day 3:  rollout_percent = 25  (early adopters)
-Day 7:  rollout_percent = 100 (everyone)
-Day 8:  rollout_percent = 0   (mark complete; set active=false)
+Day 1:  rollout_percent = 5    (internal testers)
+Day 3:  rollout_percent = 25   (early adopters)
+Day 7:  rollout_percent = 100  (everyone)
+Day 8:  active = false         (stop advertising; keeps the version recorded)
 ```
+
+Update `update_config` in the admin UI or with:
+`sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=25;"`
+
+The gate is deterministic per device: `hash(fingerprint) % 100`, so a client
+cannot flip in and out of the rollout between heartbeats.
+
+### Verify it is actually working
+
+```bash
+# A fingerprint inside the rollout gets update fields; one outside does not.
+ssh $VPS 'curl -s -X POST http://127.0.0.1:8090/api/heartbeat \
+  -H "Content-Type: application/json" \
+  -d "{\"code\":\"<valid-code>\",\"fingerprint\":\"<16+ chars>\"}"' | python3 -m json.tool
+
+# Confirm a published artifact is served with the expected hash
+curl -s https://$DOMAIN/updates/1.1.0/locus-linux-amd64 | sha256sum
+```
+
+### Rollback
+
+```bash
+# Stop OFFERING the update (clients already updated stay updated):
+sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=0;"
+```
+
+**There is no server-driven downgrade.** The in-client `.update-pending`
+sentinel protects the machine that installed a broken build, but a bad build
+that reached 100% can only be recovered by publishing a higher version. Treat
+the first hours at a low `rollout_percent` as the safety net.
+
+### Notes & limitations
+
+- **sing-box is not updated** by this pipeline — it is bundled in the installer.
+  Updating it means shipping a new installer and re-publishing.
+- **macOS builds are unsigned**, so Gatekeeper blocks first launch
+  (right-click → Open). Tracked as gap #3, out of scope.
+- `update_config.version` must match the git tag (CI derives the in-binary
+  version from the tag; `publish-release.sh` sets the column from its argument).
+- `/update.json` is still a static placeholder written by `05-caddy.sh`. The
+  updater reads `update_config`, **not** this file — it is informational only.
+- `update_sha256` (the legacy single field) is populated with the **Linux**
+  hash so any client predating the per-platform fields still verifies
+  something sane.
 
 ---
 

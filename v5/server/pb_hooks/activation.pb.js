@@ -29,11 +29,18 @@ routerAdd("POST", "/api/activate", function(e) {
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE created < datetime('now','-10 minutes')").execute();
         // rateKey is SHA256 hex or IP — strip anything non-alphanumeric for query safety
         var rateKey = (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
-        // rateKey is SHA256 hex or IP — already sanitized to [a-zA-Z0-9_]
-        // Using findRecordsByFilter with inline value because PocketBase 0.22
-        // doesn't support {:param} binding in this API — the value is safe via regex.
-        var recents = $app.dao().findRecordsByFilter("activation_attempts","rate_key='"+rateKey+"'","",0,0);
-        if (recents.length >= 5) return e.json(429,{code:429, message:"Too many attempts"});
+        // NOTE: findRecordsByFilter is broken in this PB build (0.22.21) — it
+        // returns zero rows for every filter, which silently DISABLED this rate
+        // limit entirely (5 attempts / 10 min was never enforced). We count with
+        // findRecordsByExpr, which works. Verified live 2026-09-19.
+        var recentCount = 0;
+        try {
+            recentCount = $app.dao().findRecordsByExpr("activation_attempts",
+                $dbx.exp("rate_key = {:k}", { k: rateKey })).length;
+        } catch (countErr) {
+            recentCount = 0; // fail open on a counting error rather than blocking users
+        }
+        if (recentCount >= 5) return e.json(429,{code:429, message:"Too many attempts"});
 
         // Log attempt
         var c2 = $app.dao().findCollectionByNameOrId("activation_attempts");
@@ -49,7 +56,17 @@ routerAdd("POST", "/api/activate", function(e) {
         var canonical = (s.length === 15)
             ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
-        var rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        // NOTE: findFirstRecordByData THROWS "sql: no rows in result set" when
+        // the code is absent — it does not return null. Catching it here turns
+        // a perfectly ordinary "no such code" into a clean 404 instead of a 500
+        // (the previous `if (!rec)` check was unreachable). See code_lookup.pb.js
+        // for the same fix, found live on 2026-09-19.
+        var rec = null;
+        try {
+            rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        } catch (notFound) {
+            rec = null;
+        }
         if (!rec) return e.json(404, {code:404, message:"Code not found"});
 
         // Check binding
@@ -59,8 +76,10 @@ routerAdd("POST", "/api/activate", function(e) {
             // Same-device re-activation: return the current tier config too, so
             // clients can refresh stale connection parameters (see FIXES.md).
             var tierVal2 = rec.getString("tier").replace(/[^a-zA-Z0-9_]/g, "_");
-            var cfgRecs2 = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal2+"'", "-created", 1, 0);
-            var cfgRec2 = cfgRecs2.length > 0 ? cfgRecs2[0] : null;
+            // findFirstRecordByFilter (NOT findRecordsByFilter — see the rate-limit
+            // note above; the list variant returns nothing on this PB build).
+            var cfgRec2 = null;
+            try { cfgRec2 = $app.dao().findFirstRecordByFilter("tier_configs", "tier = '" + tierVal2 + "'"); } catch (e2) { cfgRec2 = null; }
             var resp2 = {code:200, message:"Already activated", tier:rec.getString("tier"), device_fingerprint:boundFp};
             if (cfgRec2) {
                 try { resp2.server_config = JSON.parse(cfgRec2.get("config")); } catch(ex) { resp2.server_config = cfgRec2.get("config"); }
@@ -80,12 +99,14 @@ routerAdd("POST", "/api/activate", function(e) {
         // Clean rate limiting
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE rate_key={:key}").bind({key:rateKey}).execute();
 
-        // Get tier config — newest record wins (defends against duplicate
-        // records from older seed runs — see FIXES.md).
-        // NOTE: inline filter value — {:param} binding is unreliable on PB 0.22.
+        // Get tier config.
+        // findFirstRecordByFilter, not findRecordsByFilter: the list variant
+        // silently returns zero rows on this PB build, which would hand the
+        // client a successful activation with NO server_config — a "connected"
+        // app that cannot reach the internet.
         var tierVal = rec.getString("tier").replace(/[^a-zA-Z0-9_]/g, "_");
-        var cfgRecs = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal+"'", "-created", 1, 0);
-        var cfgRec = cfgRecs.length > 0 ? cfgRecs[0] : null;
+        var cfgRec = null;
+        try { cfgRec = $app.dao().findFirstRecordByFilter("tier_configs", "tier = '" + tierVal + "'"); } catch (e3) { cfgRec = null; }
         var resp = {code:200, message:"Activation successful", tier:rec.getString("tier"), device_fingerprint:fp};
         if (cfgRec) {
             try { resp.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { resp.server_config = cfgRec.get("config"); }

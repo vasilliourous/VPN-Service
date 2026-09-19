@@ -805,6 +805,21 @@ func (a *App) startHeartbeatLoop(code string) {
 func (a *App) recordUpdateSignal(resp *heartbeat.Response) {
 	a.upMu.Lock()
 	defer a.upMu.Unlock()
+
+	// Only store a signal we would be willing to act on. The hub gates which
+	// clients SEE an update, but it cannot be trusted to only ever advertise
+	// versions that are actually newer — a mis-set update_config row would
+	// otherwise show an "Update available" prompt for a downgrade. Ignoring it
+	// here keeps the UI honest and stops ApplyUpdate from being reachable.
+	if !updater.IsNewer(resp.UpdateAvailable, a.version) {
+		if resp.UpdateAvailable != "" {
+			log.Printf("Ignoring update signal for %s (running %s) — not newer",
+				resp.UpdateAvailable, a.version)
+		}
+		a.lastUpdate = nil
+		return
+	}
+
 	a.lastUpdate = &updater.UpdateInfo{
 		Version:               resp.UpdateAvailable,
 		SHA256:                resp.UpdateSHA256,
@@ -813,6 +828,10 @@ func (a *App) recordUpdateSignal(resp *heartbeat.Response) {
 		DownloadURLWindows:    resp.UpdateWindows,
 		DownloadURLMacOSIntel: resp.UpdateMacOSIntel,
 		DownloadURLMacOSARM:   resp.UpdateMacOSARM,
+		SHA256Linux:           resp.UpdateSHA256Linux,
+		SHA256Windows:         resp.UpdateSHA256Windows,
+		SHA256MacOSIntel:      resp.UpdateSHA256MacOSIntel,
+		SHA256MacOSARM:        resp.UpdateSHA256MacOSARM,
 	}
 }
 
@@ -828,6 +847,13 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 	}
 
 	a.recordUpdateSignal(result.Resp)
+
+	// recordUpdateSignal drops anything that is not strictly newer, so a stale
+	// update_config row cannot be reported as an available update. Reflect that
+	// decision back to the UI rather than trusting the raw response.
+	if a.lastUpdate == nil {
+		return UpdateCheckResult{Available: false}
+	}
 
 	return UpdateCheckResult{
 		Available: true,
@@ -864,6 +890,20 @@ func (a *App) ApplyUpdate() OpResult {
 		// don't re-download and re-apply a build that is already running.
 		a.lastUpdate = nil
 		return OpResult{Success: false, Message: "Already running the latest version"}
+	}
+	// Refuse anything that is not STRICTLY newer. A string-equality check is not
+	// enough: if update_config is ever left pointing at an older release (a
+	// rollback, a typo, a stale row), we must not silently downgrade the client.
+	// There is no server-driven downgrade in this system, so guarding here
+	// makes that class of mistake harmless.
+	if !updater.IsNewer(a.lastUpdate.Version, a.version) {
+		advertised := a.lastUpdate.Version
+		a.lastUpdate = nil
+		log.Printf("ApplyUpdate: ignoring non-newer version %s (running %s)", advertised, a.version)
+		return OpResult{
+			Success: false,
+			Message: "The server is advertising " + advertised + ", which is not newer than the version you are running (" + a.version + "). No update applied.",
+		}
 	}
 	info := *a.lastUpdate // copy — the heartbeat may replace the pointer
 	a.updating = true

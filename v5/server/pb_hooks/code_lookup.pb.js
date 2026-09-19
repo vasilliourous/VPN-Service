@@ -49,8 +49,17 @@ routerAdd("POST", "/api/code-lookup", function(e) {
         // and threshold as /api/activate.
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE created < datetime('now','-10 minutes')").execute();
         var rateKey = (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
-        var recents = $app.dao().findRecordsByFilter("activation_attempts","rate_key='"+rateKey+"'","",0,0);
-        if (recents.length >= 10) {
+        // findRecordsByExpr, not findRecordsByFilter — the list variant returns
+        // zero rows on this PB build, which silently disabled the rate limit
+        // (making this endpoint an unbounded code-enumeration oracle).
+        var recentCount = 0;
+        try {
+            recentCount = $app.dao().findRecordsByExpr("activation_attempts",
+                $dbx.exp("rate_key = {:k}", { k: rateKey })).length;
+        } catch (countErr) {
+            recentCount = 0;
+        }
+        if (recentCount >= 10) {
             return e.json(429, {status:"not_found", message:"Too many attempts — please wait a few minutes"});
         }
         // Log the attempt. NB: unlike /api/activate we do NOT delete this row
@@ -66,7 +75,19 @@ routerAdd("POST", "/api/code-lookup", function(e) {
         var canonical = (s.length === 15)
             ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
-        var rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        // IMPORTANT: findFirstRecordByData THROWS "sql: no rows in result set"
+        // when nothing matches — it does not return null. Without this catch, a
+        // well-formed but unknown code escaped to the outer handler and was
+        // reported as HTTP 500 {"status":"unknown"}, i.e. exactly the wrong
+        // signal: the client treats 5xx as "cannot tell" and re-checks, instead
+        // of telling the student the code is simply not recognised.
+        // (Observed live 2026-09-19 against a freshly seeded, empty codes table.)
+        var rec = null;
+        try {
+            rec = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        } catch (notFound) {
+            rec = null;
+        }
         if (!rec) return e.json(200, {status:"not_found", message:"Code not found"});
 
         // ── Describe the code WITHOUT binding anything ──

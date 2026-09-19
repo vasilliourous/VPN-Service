@@ -182,6 +182,29 @@ ${DOMAIN} {
         file_server
     }
 
+    # ── Release binaries for the auto-updater ──
+    # Layout on disk: /var/www/updates/<version>/<filename>, e.g.
+    #   /var/www/updates/1.1.0/locus-linux-amd64
+    #   /var/www/updates/1.1.0/locus-linux-amd64.sha256
+    # handle_path strips the /updates/ prefix, so root points AT the releases
+    # directory. Directory browsing stays off: clients never need to enumerate
+    # builds, and listings would expose the naming convention.
+    # NOTE: this heredoc is UNQUOTED (it interpolates ${DOMAIN}), so no shell
+    # substitution syntax may appear anywhere inside it — bash would execute it
+    # as a command while writing the file. Keep comments backtick-free.
+    handle_path /updates/* {
+        root * /var/www/updates
+        header {
+            Cache-Control "public, max-age=300"
+            X-Content-Type-Options "nosniff"
+        }
+        # Directory listing is off by default in Caddy; do NOT add
+        # `browse <arg>` — Caddy 2 parses that argument as a TEMPLATE FILE
+        # path, so both `browse false` and `browse off` fail at request time
+        # with HTTP 500 ("open off: no such file or directory").
+        file_server
+    }
+
     # ── Logging ──
     log {
         output file /var/log/caddy/access.log
@@ -268,6 +291,20 @@ SERVICE
         warn "Could not set cap_net_bind_service (Caddy will need root to bind :80/:443)"
 }
 
+# ── Create the release-binaries directory ──
+# Published update artifacts live here, served by the /updates/* handler above.
+# Created unconditionally so a fresh deploy does not 404 the auto-updater before
+# the first release is published. Ownership stays root:root and the directory is
+# world-readable (0755) — these are public release binaries, but the deploy user
+# needs write access to push new versions.
+deploy_updates_dir() {
+    local updates_dir="/var/www/updates"
+    mkdir -p "$updates_dir"
+    chown root:root "$updates_dir"
+    chmod 755 "$updates_dir"
+    log "✓ Updates directory ready at ${updates_dir}"
+}
+
 # ═══════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════
@@ -276,6 +313,7 @@ install_caddy
 create_systemd_service
 deploy_caddyfile
 deploy_update_json
+deploy_updates_dir
 
 # ── Enable and start Caddy ──
 systemctl daemon-reload

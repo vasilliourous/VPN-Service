@@ -69,6 +69,14 @@ type Response struct {
 	UpdateMacOSIntel string `json:"update_macos_intel,omitempty"`
 	UpdateMacOSARM   string `json:"update_macos_arm,omitempty"`
 
+	// Per-platform checksums. Each release publishes four different binaries,
+	// so one update_sha256 cannot describe them all; the client verifies the
+	// artifact it actually downloads.
+	UpdateSHA256Linux      string `json:"update_sha256_linux,omitempty"`
+	UpdateSHA256Windows    string `json:"update_sha256_windows,omitempty"`
+	UpdateSHA256MacOSIntel string `json:"update_sha256_macos_intel,omitempty"`
+	UpdateSHA256MacOSARM   string `json:"update_sha256_macos_arm,omitempty"`
+
 	// Config refresh
 	ServerConfig *ServerConfig `json:"server_config,omitempty"`
 	UDPRelay     bool          `json:"udp_relay,omitempty"`

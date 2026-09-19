@@ -93,12 +93,33 @@ fi
 log "✓ Disk space: $((AVAIL_KB / 1024)) MB available"
 
 # ── Memory ──
+# ── Memory ──
+# NOTE: a "512MB" droplet reports MemTotal well under 524288 KB, because the
+# kernel reserves a slice for itself (464972 KB / 454 MB observed on a
+# DigitalOcean 512MB droplet, 2026-09-19). Comparing against the nominal size
+# made this check impossible to pass on the exact hardware it was written for,
+# so deployments aborted before module 01 on every fresh 512MB box.
+# We now compare against ~85% of the nominal figure, which still catches the
+# genuine 256MB-class droplets while allowing 512MB ones through.
+MIN_MEM_KB=380000   # ~371 MB — comfortably below a 512MB droplet, above a 256MB one
 TOTAL_MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-if [ "${TOTAL_MEM_KB}" -lt 524288 ]; then
-    fail "Less than 512MB RAM. Minimum 512MB required."
+if [ "${TOTAL_MEM_KB}" -lt "${MIN_MEM_KB}" ]; then
+    fail "Less than $((${MIN_MEM_KB} / 1024))MB RAM (found $((TOTAL_MEM_KB / 1024))MB). Minimum 512MB-class VPS required."
 fi
 if [ "${TOTAL_MEM_KB}" -lt 1048576 ]; then
-    warn "Low memory (<1GB): 957MB-class VPS is tight but supported (validated 2026-08-14 on a 1vCPU/1GB droplet)."
+    warn "Low memory ($((TOTAL_MEM_KB / 1024))MB total): supported but tight for Caddy + PocketBase + 3x shadowsocks-rust."
+    # Swap is a strong recommendation, not a hard requirement: without it a
+    # transient spike (Caddy TLS issuance, PocketBase migrations) can OOM-kill
+    # a service on a 512MB box. 08-firewall.sh does not create swap, so we
+    # surface it here rather than silently proceeding.
+    SWAP_KB=$(awk '/SwapTotal/ {print $2}' /proc/meminfo)
+    if [ "${SWAP_KB:-0}" -lt 262144 ]; then
+        warn "No/low swap detected ($((SWAP_KB / 1024))MB). Recommended: 1GB swap —"
+        warn "  fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+        warn "  echo '/swapfile none swap sw 0 0' >> /etc/fstab"
+    else
+        log "✓ Swap: $((SWAP_KB / 1024)) MB"
+    fi
 fi
 log "✓ Memory: $((TOTAL_MEM_KB / 1024)) MB total"
 

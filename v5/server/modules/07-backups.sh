@@ -124,13 +124,36 @@ b2 upload-file "$B2_BUCKET" "${TMP_DIR}/${COMPRESSED}.sha256" "${B2_PATH}.sha256
     EXIT_CODE=1
 }
 
-# ── 7. Verify upload ──
+# ── 7. Verify upload (round-trip) ──
+# We download the artifact BACK from B2 and hash THAT, so the check proves the
+# stored object is intact rather than re-hashing the local source.
+#
+# Two bugs fixed here (2026-09-19):
+#   1. `b2 download-file-by-name` is removed in b2 CLI v5 — it failed with
+#      "File not present", so nothing was ever downloaded. The command is now
+#      `b2 file download b2://bucket/path localfile`.
+#   2. The old code ran `sha256sum -c "${TMP_DIR}/${COMPRESSED}.sha256"`, which
+#      checks the LOCAL source file, not the downloaded copy. It therefore
+#      printed "✓ Backup verified" even when the download had failed. We now
+#      hash the downloaded bytes and compare against the uploaded .sha256.
 if [ "$EXIT_CODE" -eq 0 ]; then
-    log "Verifying upload..."
-    b2 download-file-by-name "$B2_BUCKET" "${B2_PATH}" "${TMP_DIR}/verify.db.gz" 2>/dev/null
-    sha256sum -c "${TMP_DIR}/${COMPRESSED}.sha256" >> "$LOG_FILE" 2>&1 && \
-        log "✓ Backup verified: ${B2_PATH}" || \
-        warn "Backup verification FAILED for ${B2_PATH}"
+    log "Verifying upload (downloading from B2)..."
+    if b2 file download "b2://${B2_BUCKET}/${B2_PATH}" "${TMP_DIR}/verify.db.gz" >> "$LOG_FILE" 2>&1; then
+        REMOTE_SUM=$(sha256sum "${TMP_DIR}/verify.db.gz" | awk '{print $1}')
+        LOCAL_SUM=$(sha256sum "${TMP_DIR}/${COMPRESSED}" | awk '{print $1}')
+        if [ "$REMOTE_SUM" = "$LOCAL_SUM" ]; then
+            log "✓ Backup verified (remote SHA256 matches: ${REMOTE_SUM:0:16}…)"
+            echo "[$(date +%H:%M:%S)] Remote checksum verified: ${REMOTE_SUM}" >> "$LOG_FILE"
+        else
+            warn "Backup verification FAILED for ${B2_PATH}"
+            echo "[$(date +%H:%M:%S)] MISMATCH local=${LOCAL_SUM} remote=${REMOTE_SUM}" >> "$LOG_FILE"
+            EXIT_CODE=1
+        fi
+    else
+        warn "Could not download ${B2_PATH} back from B2 for verification"
+        echo "[$(date +%H:%M:%S)] Verification download failed" >> "$LOG_FILE"
+        EXIT_CODE=1
+    fi
 fi
 
 log "Backup completed (exit ${EXIT_CODE})"

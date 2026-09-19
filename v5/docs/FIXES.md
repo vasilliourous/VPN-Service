@@ -1,6 +1,353 @@
 
 ---
 
+## CLIENT UPDATE SYSTEM — BUILT END-TO-END + PB HIDDEN BREAKAGE (2026-09-19)
+
+The update pipeline was implemented in code but had **never worked in
+production**: the gate was a silent no-op and there was no way to publish an
+artifact. Both are now fixed and verified against the live hub.
+
+### 10. `findRecordsByFilter` is broken — the update gate never fired
+
+The single most consequential finding. In PocketBase 0.22.21's JS hook runtime,
+**`$app.dao().findRecordsByFilter()` always returns an empty array**, for every
+collection and every filter — including `1=1` and `id!=''` on a populated
+table. It raises **no error**, so the surrounding `try/catch` never fires and
+the caller simply sees "no records".
+
+Proven with a temporary probe hook (since removed):
+
+| Call | Result |
+|---|---|
+| `findRecordsByFilter("update_config", "active=true", "", 0, 1)` | **0 rows** |
+| `findRecordsByFilter("update_config", "1=1", "-created", 0, 5)` | **0 rows** |
+| `findRecordsByFilter("tier_configs", "tier='eco'", "-created", 1, 0)` | **0 rows** |
+| `findFirstRecordByFilter("update_config", "active = true")` | **1 row** ✅ |
+| `findRecordsByExpr("update_config", $dbx.exp("version = {:v}", …))` | **1 row** ✅ |
+| `findFirstRecordByData("tier_configs", "tier", "eco")` | record ✅ |
+
+Impact — silently broken, all in production:
+
+- **Update gate ignored rollout entirely** → no client was ever offered an
+  update no matter what `rollout_percent` said. This is why "we never saw an
+  update arrive" was not a rollout-tuning problem.
+- **Activation rate limiting (5/10 min) never enforced** — an unbounded
+  enumeration oracle.
+- **`/api/code-lookup` rate limiting (10/10 min) never enforced.**
+- **`server_config` lookups** could return nothing, leaving a client
+  "successfully activated" with no tunnel settings.
+
+Also found in the same sweep: **top-level function declarations are not visible
+inside `routerAdd` handlers** (`helperFn is not defined`). `hiddify.pb.js`
+defined `sanitizeFilter()` at file scope, so the entire `/api/hiddify` endpoint
+returned **HTTP 500**; it also called `$app.findRecordsByFilter`, which does not
+exist on the `$app` object at all.
+
+**Fix applied to all five hooks:** use `findFirstRecordByFilter` for single-row
+lookups and `findRecordsByExpr` for counts; inline helper functions inside the
+handler; verify each endpoint live.
+
+### 11. Per-platform checksums were missing (updates could never verify)
+
+`update_config` carried a single `update_sha256` but a release publishes four
+different binaries, and `PerformUpdate` **refuses to apply an update whose
+SHA256 is empty**. A single hash can only ever match one platform, so every
+other platform would download successfully and then fail verification.
+
+**Fix:** added `sha256_{linux,windows,macos_intel,macos_arm}` columns,
+`UpdateInfo.PlatformSHA256()` (falling back to the legacy single hash), and
+per-platform `update_sha256_*` fields in the heartbeat response. `PerformUpdate`
+now resolves the hash for the artifact it is actually about to fetch.
+
+### 12. The version gate could downgrade clients
+
+`ApplyUpdate` compared with string equality (`Version == a.version`), so a
+stale/rolled-back `update_config` row advertising an *older* release would
+downgrade every client — and there is **no server-driven downgrade** in this
+system, so recovery would mean shipping a new version. Also, `"1.9.0" >
+"1.10.0"` under string comparison.
+
+**Fix:** new `internal/updater/version.go` with `CompareVersions`/`IsNewer`
+(numeric segments, zero-padding, pre-release ordering, build metadata ignored).
+`recordUpdateSignal` now drops any signal that is not strictly newer (so the UI
+never offers a downgrade) and `ApplyUpdate` refuses one regardless.
+
+### 13. No way to publish an artifact (and `/updates/` was not served)
+
+CI published only `.zip` bundles, which the updater cannot consume — writing
+zip bytes over the running binary would brick the install. `update_config` was
+all defaults with an empty `update_url`, and Caddy served no `/updates/` path
+(404).
+
+**Fix, in four parts:**
+1. **CI** stages raw per-platform binaries (`locus-linux-amd64`,
+   `locus-windows-amd64.exe`, `locus-darwin-amd64`, `locus-darwin-arm64`) plus
+   per-file `.sha256`, and emits a `manifest.json`. The manifest generator
+   **fails the build** if any platform artifact is missing, rather than
+   publishing a partially-updatable release.
+2. **Caddy** gained `handle_path /updates/*` → `file_server` on
+   `/var/www/updates`, with directory listings disabled and a short cache TTL.
+3. **`publish-release.sh`** uploads artifacts (atomic temp-name move so a
+   client never fetches a half-written binary), re-downloads each one to verify
+   the served hash matches, then updates `update_config` with per-platform URLs
+   and hashes. It refuses to publish sub-1MB files or artifacts whose hashes
+   disagree with `manifest.json`.
+4. **Schema migration:** `seed-pb.py` now reconciles collections, *adding*
+   columns that a pre-existing deployment lacks (this is how the missing macOS
+   and `sha256_*` columns reach an already-provisioned hub). It never removes or
+   retypes, so it cannot destroy data.
+
+### Live verification (2026-09-19)
+
+| Step | Result |
+|---|---|
+| Publish 4 artifacts via `publish-release.sh` | uploaded, and **each re-downloaded over HTTPS with a matching SHA256** |
+| `update_config` after publish | version, rollout, 4 download URLs + 4 per-platform hashes |
+| Heartbeat `rollout_percent=0` | no update fields ✅ |
+| Heartbeat `rollout_percent=100` | `update_available` + all 4 URL/hash pairs ✅ |
+| `active=0` | no update fields ✅ |
+| **Client simulation**: download every advertised URL, hash it | **all 4 platforms match the advertised hash** ✅ |
+| Directory listing `/updates/<v>/` | 404 (no listing) |
+| Missing artifact | 404 |
+| Guard rail: tampered artifact vs manifest | publish **refused** |
+| Guard rail: truncated (<1MB) artifact | publish **refused** |
+| `go test ./internal/updater/...` | 7 test funcs pass |
+| Rollout restored to 0; test artifacts + test codes removed | ✅ hub left clean |
+
+**Route note:** the hook registers `GET /api/hiddify` (not POST); testing it the
+wrong way yields a 404 that looks like a missing route.
+
+---
+
+## SECRETS WIRING & BACKUP VERIFICATION — TWO MORE BUGS (2026-09-19, later pass)
+
+Found while answering "are all secrets inserted, and are backups working?" on the
+live hub. Both are silent-failure class: the system reported success while
+doing the wrong thing.
+
+### 8. `seed-pb.py` — creds file could disagree with the live admin password
+
+`/root/.pb_admin_creds` recorded a password that **did not authenticate**
+(`HTTP 400 Failed to authenticate`), so the admin UI could not be logged into
+with the credential the deploy documented.
+
+Two compounding causes:
+
+1. **`os.environ` clobbering.** Step 1 copied *every* key from
+   `/root/.pb_admin_creds` straight into `os.environ`. That silently overwrote
+   `PB_ADMIN_PASS` (sourced from `secrets.env.age` by `setup.sh`) with the
+   file's value. Any "is the env authoritative?" check therefore always saw the
+   file's value — so a wrong recorded password could never be repaired.
+2. **Random-password fallback.** When `PB_ADMIN_PASS` was absent, the script
+   generated a random password and wrote *that* to the creds file, while the
+   admin record had been created earlier with the secrets password.
+
+Net effect: the recorded credential was wrong, and re-running could not fix it
+(the CLI `admin create` only creates; it never updates an existing password).
+
+**Fix:** read only `PB_TOKEN` from the creds file (into a local, not
+`os.environ`); resolve the password env-first, then creds, then random; and
+when the resolved password is the *environment* value and login still fails,
+force a reset via `pocketbase admin update` so the recorded credential becomes
+truthful. Verified by deliberately breaking the password and the creds file,
+then confirming one run converges both back to the secrets value
+(`creds == secrets`, login `HTTP 200`).
+
+### 9. `07-backups.sh` — "✓ Backup verified" did not verify the backup
+
+The verify step relied on `b2 download-file-by-name`, which was **removed in b2
+CLI v5** and fails with `ERROR: File not present`. Worse, the checksum command
+that followed was:
+
+```bash
+sha256sum -c "${TMP_DIR}/${COMPRESSED}.sha256"   # hashes the LOCAL source file
+```
+
+so it re-hashed the file that had just been uploaded — not the downloaded copy.
+Result: `✓ Backup verified` printed even when nothing was retrieved. A backup
+whose integrity check cannot fail is not an integrity check.
+
+**Fix:** download with `b2 file download "b2://…" <local>` and compare the
+SHA256 of the **downloaded bytes** against the local sum; set `EXIT_CODE=1` and
+warn on mismatch or failed download. Verified live: remote and local hashes now
+match (`4be5f822…`), and B2 reports `Checksum matches`.
+
+### Round-trip restore proven (2026-09-19)
+
+Separately confirmed that a backup is genuinely restorable, not merely
+uploadable:
+
+| Step | Result |
+|---|---|
+| Download newest `backups/*.db.gz` from B2 | OK (8809 bytes) |
+| SHA256 vs the stored `.sha256` object | **exact match** |
+| `gunzip` | OK (143360 bytes) |
+| `PRAGMA integrity_check` | **ok** |
+| Tables present | all 9 (`codes`, `tier_configs`, `activation_attempts`, `update_config`, `users`, `_admins`, …) |
+| `tier_configs` rows survive | 3, with intact server/port/password JSON |
+| Lifecycle rule | hide after 5 days, delete after 7, prefix `backups/` |
+
+> Note: that snapshot contained `update_config` = **2 rows**, which is the exact
+> duplication bug fixed as item 6 — independent confirmation that the fix was
+> needed.
+
+**Secrets audit (all green):** all 10 keys present in `secrets.env.age`;
+`/root/.tier_passwords`, `/root/.pb_admin_creds`, `/root/.b2-creds`,
+`/root/.admin_api_token` all mode `600`; the three tier passwords match
+`/etc/shadowsocks/*.json` exactly; `ADMIN_API_TOKEN` matches both the file and
+PocketBase's process environment and is accepted by `/api/admin/unbind-code`.
+
+---
+
+## BLANK-VPS DEPLOY — SEVEN BUGS FIXED (2026-09-19)
+
+Validated `v5/server/setup.sh` end-to-end against a **fresh** DigitalOcean
+Ubuntu 22.04 droplet (`170.64.196.179`, 1 vCPU / 512MB / Sydney). This box is
+now the live hub for `networkingguides.duckdns.org`. Previously the scripts had
+only ever been exercised against an already-provisioned host, so several bugs
+that only bite on a *blank* box went unnoticed. Every one below was reproduced,
+fixed, re-run, and verified.
+
+Summary: (1) `00-env.sh` memory guard rejected 512MB droplets; (2)
+`seed-pb.py` used a PocketBase admin API that does not exist in 0.22, so **no
+schema was ever created**; (3) `06-pocketbase.sh` downgraded that failure to a
+warning; (4) `08-firewall.sh` used a 6-conns/30s `ufw limit` that locked out
+deployment automation; (5) `smoke-test.sh` reported false tc failures via
+`grep -q` SIGPIPE; (6) `update_config` duplicated on every deploy; (7) unknown
+codes returned HTTP 500 instead of 404/not-found in all four hooks.
+
+### 1. `00-env.sh` — 512MB droplets could never pass the memory guard
+
+The guard compared `MemTotal` against `524288` KB (512 MiB) and hard-failed:
+```
+[00-env][FAIL] Less than 512MB RAM. Minimum 512MB required.
+```
+A "512MB" droplet reports **464972 KB (454MB)** because the kernel reserves a
+slice — so the check was impossible to satisfy on the exact hardware it was
+written for. Deployments aborted before module 01.
+**Fix:** compare against `MIN_MEM_KB=380000` (~371MB), which still catches
+256MB-class boxes. Also warn (not fail) on absent/small swap, with the exact
+`fallocate`/`mkswap`/`fstab` recipe, since no module creates swap and a
+transient spike can OOM a 512MB host.
+
+### 2. `seed-pb.py` — wrong PocketBase admin API; nothing was ever seeded
+
+```
+Superuser creation returned: The requested resource wasn't found.
+Could not obtain admin token. Trying existing creds...
+```
+The script POSTed to `/api/collections/_superusers/records` to create the first
+admin. **That endpoint does not exist in PocketBase 0.22.x.** 0.22 uses the
+legacy `_admins` table and `/api/admins/auth-with-password`, and offers **no
+public API at all** for creating the first admin — only the CLI
+(`pocketbase admin create <email> <pass>`). Consequence: no admin ⇒ no token ⇒
+**zero collections created**, while `06-pocketbase.sh` downgraded the failure to
+a warning and still printed "✓ Setup complete". The hub served 500s to every
+client and looked successfully deployed.
+**Fix:** create the first admin via the CLI; authenticate against
+`/api/admins/auth-with-password` with a `_superusers` fallback so the same
+script works on 0.22.x and 0.23+. Added a `SCHEMA_ERRORS` counter that exits
+non-zero if collections or tiers fail to seed.
+
+### 3. `06-pocketbase.sh` — bootstrap failure was only a warning
+
+`PocketBase bootstrap encountered errors — check output above` was followed by
+`✓ PocketBase setup complete`. A hub with no schema is not a successful deploy.
+**Fix:** treat a failed bootstrap as fatal (`fail`), and replace the fixed
+`sleep 3` after start with a 30-second health-poll (the fixed sleep was racy on
+512MB hosts where first-start migration is slow).
+
+### 4. `08-firewall.sh` — SSH rate limit locked out legitimate automation
+
+`ufw limit 22/tcp` hardcodes **6 new connections / 30s per IP** (see
+`backend_iptables.py`: `--seconds 30 --hitcount 6` — there is no config knob).
+Back-to-back deploy commands tripped it, producing repeated
+`ssh: connect to host ... port 22: Connection refused` mid-deployment.
+**Fix:** drop the limiter entirely and use **fail2ban** (`/etc/fail2ban/jail.d/
+locus-sshd.local`, 6 failures/10m → 1h ban, `banaction=ufw`), keeping UFW as
+plain allow/deny. UFW's own limiter cannot be re-tuned — patching
+`user.rules` is futile because `ufw reload` re-renders it from the hardcoded
+value.
+
+> **Warning — do not attempt to re-add a custom limiter chain.** An earlier
+> attempt injected `recent`-based rules into `/etc/ufw/before.rules`. This
+> locked SSH out **completely** (port 22 timed out while 80/443 kept serving)
+> and required a provider-console recovery. `after.rules` is worse: referencing
+> `ufw-user-input` there fails with `Problem running '/etc/ufw/after.rules'`
+> because UFW creates that chain *after* processing the file. Both approaches
+> are recorded here so they are not retried.
+
+Also normalised `/etc/ufw/ufw.conf` `ENABLED=no` → `yes`: some images ship the
+flag off while rules are already loaded, which makes `ufw status` report
+"active" while `ufw reload` silently does nothing ("Firewall not enabled
+(skipping reload)").
+
+### 5. `smoke-test.sh` — `grep -q` SIGPIPE caused false tc failures
+
+```
+⚠️  WARN: tc Stealth class (1:20) not found
+```
+on a host where `tc class show` clearly listed it. `tc ... | grep -q` makes
+`grep` exit at the first match, SIGPIPE-ing `tc`; under `set -o pipefail` the
+pipeline then reports **141** and the `if` takes the failure branch. The same
+latent pattern existed in the UFW and `ss` checks.
+**Fix:** capture command output once (`TC_NOW=$(...)`, `UFW_NOW=$(...)`,
+`SS_NOW=$(...)`) and match against the captured text.
+
+### 6. `update_config` duplicate rows on every deploy
+
+`seed-pb.py` POSTed a new `update_config` record unconditionally, so a second
+`setup.sh` run left **2 rows** (client reads the first, so mostly harmless, but
+rollout state becomes ambiguous and rows grow per deploy).
+**Fix:** same idempotent upsert used for `tier_configs` — delete older
+duplicates, PATCH the newest, create only if none exists.
+
+### 7. `findFirstRecordByData` throws — unknown codes returned HTTP 500
+
+Affected **`code_lookup.pb.js`** (new), `activation.pb.js`, `heartbeat.pb.js`,
+`admin_unbind.pb.js`. Every file guarded the lookup with `if (!rec)` as if the
+DAO returned null. It does not — it **throws** `sql: no rows in result set`, so
+the guard was unreachable and a well-formed but unknown code escaped to the
+catch-all:
+```
+POST /api/code-lookup  →  500 {"status":"unknown","message":"sql: no rows in result set"}
+```
+For a student who mistypes a code this is the worst possible signal: the client
+treats 5xx as "cannot tell" and retries, instead of saying "not recognised".
+**Fix:** wrap each lookup in `try/catch` and treat a throw as not-found
+(lookup → `200 not_found`; activate/heartbeat/unbind → `404`).
+
+### Verification performed on the live hub
+
+| Check | Result |
+|---|---|
+| `setup.sh` full run, then **complete re-run** | exit 0, all 8 modules ✓ (idempotent) |
+| `smoke-test.sh` | **23 passed / 0 failed / 0 warnings** |
+| TLS (Let's Encrypt, Caddy) | valid, 2026-09-19 → 2026-12-18 |
+| `GET /api/health`, `/update.json` over HTTPS | 200 |
+| `POST /api/activate` (all 3 tiers) | 200 + correct tier password/port, `udp_relay:false` |
+| `POST /api/code-lookup` unbound / bound-same / bound-other / bad-checksum / unknown | `unbound` / `bound_this_device` / `bound_other` / `Invalid code format` / `not_found` |
+| `POST /api/heartbeat` (valid + unknown) | 200 `status:ok` / 404 |
+| **Real HTTP through each tier** (`sslocal` → `curl https://example.com`) | **200 + real content on 8443, 8444, 8445** |
+| Wrong tier password | correctly fails (no data) |
+| BBR + tc caps | BBR default; classes `1:10` 5Mbit, `1:20` 100Mbit, `1:30` 200Mbit |
+| Reboot persistence | caddy, pocketbase, 3× ss, 3× tc, ufw, fail2ban, backup timer all enabled |
+| `tier_configs` / `update_config` row counts after re-runs | 1 per tier / 1 total |
+
+**Deploy notes:** the hub must be seeded with codes (`codes.json` holds the
+`RQ-` set) — a fresh DB has an empty `codes` collection. `SKIP_DNS_CHECK=1` is
+required until DNS points at the new host; Caddy only obtains a certificate
+once the A record resolves here.
+
+**Deploy-flow trap found during final verification:** `setup.sh` installs hooks
+from the **staging copy at `/root/server/pb_hooks/`**, not from the repo. After
+fixing a hook in the repo, re-running `setup.sh` with a stale staging dir
+silently reverts the live fix (the `code-lookup` 500 reappeared this way after a
+clean re-run). Always update `/root/server/pb_hooks/` (or re-`scp` the tree)
+before re-running setup, then `systemctl restart pocketbase`.
+
+---
+
 ## CODE FORMAT MIGRATION — MYVPN- → RQ- (2026-08-17)
 
 **All activation codes now use `RQ-XXXX-XXXX-XXXX-C` (15 chars) instead of

@@ -12,6 +12,47 @@ if not DOMAIN:
     sys.exit("DOMAIN environment variable required")
 ADMIN_CREDS = "/root/.pb_admin_creds"
 ADMIN_EMAIL = f"admin@{DOMAIN}"
+PB_BINARY = os.environ.get("PB_BINARY", "/opt/pocketbase/pocketbase")
+PB_DATA_DIR = os.environ.get("PB_DATA_DIR", "/opt/pocketbase/pb_data")
+
+# ── PocketBase 0.22.x quirk: admin auth lives at /api/admins, NOT
+# /api/collections/_superusers. The `_superusers` collection (and its
+# auth-with-password endpoint) only exists in PB >= 0.23. Worse, in 0.22.x
+# there is NO public API to create the FIRST admin at all — POST
+# /api/collections/_superusers/records returns 404. The only supported
+# bootstrap is the CLI: `pocketbase admin create <email> <pass>`.
+# This was the cause of every fresh deploy failing to seed any collection
+# (observed 2026-09-19: bootstrap aborted, tier_configs/codes/update_config
+# never created, but setup.sh still reported success).
+ADMIN_LOGIN_PATH = "/api/admins/auth-with-password"
+SUPERUSERS_LOGIN_PATH = "/api/collections/_superusers/auth-with-password"
+
+def create_admin_via_cli(email, password):
+    """Create the first PB admin using the binary CLI (0.22.x has no API for it).
+    Returns True on success. Idempotent-safe: an existing admin makes the CLI
+    exit non-zero and we treat that as 'already present'."""
+    if not os.path.exists(PB_BINARY):
+        log(f"  PB binary not found at {PB_BINARY}; cannot create admin")
+        return False
+    r = subprocess.run(
+        [PB_BINARY, "admin", "create", email, password, "--dir", PB_DATA_DIR],
+        capture_output=True, text=True)
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0:
+        log(f"  ✓ Admin created via CLI: {email}")
+        return True
+    log(f"  CLI admin create: {out.strip()[:200]}")
+    return False
+
+def admin_login(email, password):
+    """Authenticate as admin, trying the 0.22 (/api/admins) endpoint first and
+    falling back to the 0.23+ (_superusers) one. Returns a token or ''."""
+    for path in (ADMIN_LOGIN_PATH, SUPERUSERS_LOGIN_PATH):
+        resp = api("POST", path, {"identity": email, "password": password})
+        tok = resp.get("token") or resp.get("adminToken") or ""
+        if tok:
+            return tok
+    return ""
 
 def api(method, path, data=None):
     """Make PocketBase API request using temp file to avoid shell issues."""
@@ -33,20 +74,31 @@ def api(method, path, data=None):
 def log(msg):
     print(msg)
 
+# Counts collections that FAILED to create. A silent schema failure used to
+# leave the hub looking "successful" while having no tables at all, so clients
+# got 500s from the hooks. We now exit non-zero and setup.sh surfaces it.
+SCHEMA_ERRORS = 0
+
 TOKEN = ""
 
 # ── Step 1: Create or authenticate admin ──
+# NOTE: read the saved token into a LOCAL variable. This block used to copy
+# every key from /root/.pb_admin_creds straight into os.environ, which silently
+# CLOBBERED PB_ADMIN_PASS (sourced from secrets.env.age by setup.sh) with the
+# possibly-stale value recorded in the file. That made the "is the env password
+# authoritative?" check below always see the file's value, so a wrong recorded
+# password could never be repaired — the script would keep "resetting" the
+# admin to the same wrong value. (Diagnosed live 2026-09-19.)
+saved_token = ""
 if os.path.exists(ADMIN_CREDS):
-    with open(ADMIN_CREDS) as f:
-        for line in f:
-            if "=" in line and not line.startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ[k] = v
-    token = os.environ.get("PB_TOKEN", "")
-    # Set the global BEFORE the verify call — the token check itself is an
-    # authenticated request (collections are admin-only in PB 0.22).
-    TOKEN = token
-    # Verify token still works
+    try:
+        with open(ADMIN_CREDS) as f:
+            for line in f:
+                if line.startswith("PB_TOKEN="):
+                    saved_token = line.strip().split("=", 1)[1]
+    except OSError:
+        saved_token = ""
+    TOKEN = saved_token
     test = api("GET", "/api/collections")
     if test.get("items") is not None:
         log("✓ Existing admin credentials valid")
@@ -58,33 +110,68 @@ else:
     token_valid = False
 
 if not token_valid:
-    # Create the first superuser (PB 0.22+ — the old /api/admins endpoint
-    # was removed in 0.22; the first superuser may be created WITHOUT an
-    # Authorization header via _superusers).
-    admin_pass = subprocess.run(
-        ["openssl", "rand", "-base64", "24"],
-        capture_output=True, text=True).stdout.strip()
-    resp = api("POST", "/api/collections/_superusers/records", {
-        "email": ADMIN_EMAIL,
-        "password": admin_pass,
-        "passwordConfirm": admin_pass,
-    })
-    token = resp.get("token", resp.get("adminToken", ""))
+    # Resolve the admin password. Precedence:
+    #   1. PB_ADMIN_PASS from the environment (sourced from secrets.env.age) —
+    #      this is authoritative, since it is what the operator has recorded.
+    #   2. The value already recorded in /root/.pb_admin_creds.
+    #   3. A freshly generated random password (last resort).
+    #
+    # We track whether the value came from the environment, because only then
+    # may we OVERWRITE the server-side password. Reading a stale value out of
+    # creds and pushing it back is what made a mismatch permanent — the earlier
+    # code reset the live admin to whatever the (wrong) creds file held, then
+    # re-wrote that same wrong value, so re-running never converged.
+    env_pass = os.environ.get("PB_ADMIN_PASS", "")
+    admin_pass = env_pass
+    if not admin_pass and os.path.exists(ADMIN_CREDS):
+        try:
+            with open(ADMIN_CREDS) as f:
+                for line in f:
+                    if line.startswith("PB_ADMIN_PASS="):
+                        admin_pass = line.strip().split("=", 1)[1]
+        except OSError:
+            pass
+    if not admin_pass:
+        admin_pass = subprocess.run(
+            ["openssl", "rand", "-base64", "24"],
+            capture_output=True, text=True).stdout.strip()
+        log("  WARN: PB_ADMIN_PASS not provided — generated a random password")
+
+    # 1. Can we log in with the resolved password?
+    token = admin_login(ADMIN_EMAIL, admin_pass)
+
+    # 2. No admin yet -> create it with the resolved password.
     if not token:
-        log(f"Superuser creation returned: {resp.get('message', '')}")
-        # Try auth with the SAVED password (creation only succeeds on a
-        # truly fresh DB; if a superuser already exists, the saved password
-        # is the one that matches).
-        saved_pw = os.environ.get("PB_ADMIN_PASS", admin_pass)
-        resp = api("POST", "/api/collections/_superusers/auth-with-password", {
-            "identity": ADMIN_EMAIL,
-            "password": saved_pw,
-        })
-        token = resp.get("token", "")
+        if create_admin_via_cli(ADMIN_EMAIL, admin_pass):
+            token = admin_login(ADMIN_EMAIL, admin_pass)
+        if not token:
+            resp = api("POST", "/api/collections/_superusers/records", {
+                "email": ADMIN_EMAIL,
+                "password": admin_pass,
+                "passwordConfirm": admin_pass,
+            })
+            token = resp.get("token", resp.get("adminToken", "")) or \
+                admin_login(ADMIN_EMAIL, admin_pass)
+
+    # 3. Admin exists but our password does not match. Only force-reset when the
+    #    password came from the environment (the operator's intended value) —
+    #    overwriting a live password with a possibly-stale creds value is worse
+    #    than reporting the mismatch.
+    if not token and env_pass:
+        log("  Admin password does not match PB_ADMIN_PASS — resetting to the intended value")
+        subprocess.run(
+            [PB_BINARY, "admin", "update", ADMIN_EMAIL, env_pass,
+             "--dir", PB_DATA_DIR],
+            capture_output=True, text=True)
+        admin_pass = env_pass
+        token = admin_login(ADMIN_EMAIL, admin_pass)
+
     if not token:
-        log("Could not obtain admin token. Trying existing creds...")
+        log(f"Could not authenticate admin {ADMIN_EMAIL}. "
+            "Set PB_ADMIN_PASS to the correct value, or reset it with: "
+            f"{PB_BINARY} admin update {ADMIN_EMAIL} <newpass> --dir {PB_DATA_DIR}")
         sys.exit(1)
-    log(f"✓ Admin created: {ADMIN_EMAIL}")
+    log(f"✓ Admin ready: {ADMIN_EMAIL}")
     # Write with restrictive permissions atomically (0o600 = owner read/write only)
     fd = os.open(ADMIN_CREDS, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
@@ -92,7 +179,7 @@ if not token_valid:
                 f"PB_ADMIN_EMAIL={ADMIN_EMAIL}\n"
                 f"PB_ADMIN_PASS={admin_pass}\n"
                 f"PB_TOKEN={token}\n")
-TOKEN = token
+    TOKEN = token
 
 # ── Step 2: Create collections ──
 collections = [
@@ -124,8 +211,21 @@ collections = [
         {"name":"active","type":"bool"},
         {"name":"update_url","type":"text"},
         {"name":"update_sha256","type":"text"},
-            {"name":"download_linux","type":"text"},
-            {"name":"download_windows","type":"text"},
+        {"name":"download_linux","type":"text"},
+        {"name":"download_windows","type":"text"},
+        # macOS columns: heartbeat.pb.js reads these. They were missing from the
+        # schema, so every macOS client silently received no update signal at
+        # all — the hook's get() returned undefined and the field was omitted.
+        {"name":"download_macos_intel","type":"text"},
+        {"name":"download_macos_arm","type":"text"},
+        # Per-platform checksums. A single update_sha256 cannot describe four
+        # different binaries, and the updater refuses to apply an update whose
+        # SHA256 is empty — so without these, every non-matching platform would
+        # download and then fail verification.
+        {"name":"sha256_linux","type":"text"},
+        {"name":"sha256_windows","type":"text"},
+        {"name":"sha256_macos_intel","type":"text"},
+        {"name":"sha256_macos_arm","type":"text"},
     ]),
 ]
 
@@ -143,6 +243,23 @@ for name, schema in collections:
     found = any(c.get("name") == name for c in existing.get("items", []))
     if found:
         log(f"  {name}: already exists")
+        # Reconcile columns. A collection created by an older deploy can be
+        # missing fields added later — e.g. update_config gained the macOS
+        # download columns, without which macOS clients silently received no
+        # update signal. Only ever ADD missing fields; never remove or retype,
+        # so this cannot destroy existing data.
+        cur = api("GET", f"/api/collections/{name}")
+        cur_schema = cur.get("schema") or []
+        have = {f.get("name") for f in cur_schema}
+        missing = [f for f in schema if f["name"] not in have]
+        if missing:
+            merged = cur_schema + missing
+            resp = api("PATCH", f"/api/collections/{name}", {"schema": merged})
+            if resp.get("id"):
+                log(f"    + added column(s): {', '.join(f['name'] for f in missing)}")
+            else:
+                log(f"    ✗ could not add {', '.join(f['name'] for f in missing)}: {resp.get('message', resp)}")
+                SCHEMA_ERRORS += 1
         continue
     # Create it
     body = {"name": name, "type": "base", "schema": schema}
@@ -151,15 +268,34 @@ for name, schema in collections:
     if resp.get("id"):
         log(f"  ✓ {name} created")
     else:
-        log(f"  {name}: {resp.get('message', 'unknown')}")
+        log(f"  ✗ {name}: {resp.get('message', 'unknown')}")
+        SCHEMA_ERRORS += 1
 
-# ── Step 3: Seed update_config ──
-resp = api("POST", "/api/collections/update_config/records", {
+# ── Step 3: Seed update_config (idempotent upsert) ──
+# This used to POST unconditionally, so every re-deploy appended another row
+# (observed 2026-09-19: a second full setup.sh run left 2 rows). The client
+# reads the FIRST match, so duplicates are mostly harmless today — but they
+# make rollout state ambiguous and grow unbounded across deploys. Mirror the
+# tier_configs approach: update the newest record if one exists, else create.
+uc_existing = api("GET", "/api/collections/update_config/records?perPage=100")
+uc_items = uc_existing.get("items", []) if isinstance(uc_existing, dict) else []
+uc_body = {
     "version": "1.0.0",
     "rollout_percent": 0,
     "active": True,
-})
-log(f"  update_config: {'seeded' if resp.get('id') else resp.get('message', '')}")
+}
+if len(uc_items) > 1:
+    uc_items.sort(key=lambda r: r.get("created", ""))
+    for dup in uc_items[:-1]:
+        api("DELETE", f"/api/collections/update_config/records/{dup['id']}")
+        log(f"  update_config: removed duplicate {dup['id'][:12]}")
+if uc_items:
+    uc_id = uc_items[-1]["id"]
+    resp = api("PATCH", f"/api/collections/update_config/records/{uc_id}", uc_body)
+    log(f"  update_config: {'updated ' + uc_id[:12] if resp.get('id') else 'UPDATE FAILED: ' + str(resp.get('message', resp))}")
+else:
+    resp = api("POST", "/api/collections/update_config/records", uc_body)
+    log(f"  update_config: {'seeded' if resp.get('id') else 'CREATE FAILED: ' + str(resp.get('message', resp))}")
 
     # ── Step 4: Seed tier configs ──
     # udp_relay + uot_port are ONLY set when the sing-box UoT endpoint is
@@ -228,4 +364,13 @@ else:
     log("  This is expected on a fresh deploy without secrets.env.age.")
     log("  Run 02-shadowsocks.sh first or provide secrets.env.age with tier passwords.")
 
+if tiers_seeded == 0:
+    log("  ✗ No tier configs were seeded.")
+    SCHEMA_ERRORS += 1
+
 log("✓ Bootstrap complete")
+
+if SCHEMA_ERRORS:
+    log(f"✗ Bootstrap finished with {SCHEMA_ERRORS} error(s) — the hub is NOT usable.")
+    log("  Collections missing or unseeded; hooks will fail with 500s.")
+    sys.exit(1)

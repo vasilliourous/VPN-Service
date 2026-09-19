@@ -12,7 +12,15 @@ routerAdd("POST", "/api/admin/unbind-code", function(e) {
         if (adminToken !== validToken) return e.json(403, {code:403, message:"Invalid admin token"});
         if (!code) return e.json(400, {code:400, message:"Missing code"});
 
-        var record = $app.dao().findFirstRecordByData("codes", "code", code);
+        // NOTE: findFirstRecordByData THROWS "sql: no rows in result set" when the
+        // code is absent, so the null-check below needs the try/catch to be
+        // reachable (otherwise an unknown code becomes a 500, not a 404).
+        var record = null;
+        try {
+            record = $app.dao().findFirstRecordByData("codes", "code", code);
+        } catch (notFound) {
+            record = null;
+        }
         if (!record) return e.json(404, {code:404, message:"Code not found"});
 
         var boundFp = record.getString("bound_fingerprint");

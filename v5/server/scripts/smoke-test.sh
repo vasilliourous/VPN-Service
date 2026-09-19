@@ -42,7 +42,12 @@ done
 # ── 2. Verify Stealth tc cap ──
 log "Step 2/9: Checking Stealth tc cap..."
 IFACE=$(ip -4 route show default | awk '{print $5}' | head -1)
-if [ -n "$IFACE" ] && tc class show dev "$IFACE" 2>/dev/null | grep -q "1:20"; then
+# NOTE: do not write this as `tc class show ... | grep -q ...`.
+# `grep -q` exits at the first match, which SIGPIPEs `tc`; under `set -o pipefail`
+# the pipeline then reports 141 and the check fails even though the class exists.
+# Capture once, then test the captured text (observed 2026-09-19).
+TC_NOW=$(tc class show dev "$IFACE" 2>/dev/null || true)
+if [ -n "$IFACE" ] && printf '%s\n' "$TC_NOW" | grep -q "1:20"; then
     pass "tc Stealth class (1:20) exists — 100 Mbps cap"
 else
     warn "tc Stealth class (1:20) not found — check: systemctl status tc-stealth-cap.service"
@@ -62,7 +67,12 @@ log "Step 4/9: Checking tc traffic shaping..."
 IFACE=$(ip -4 route show default | awk '{print $5}' | head -1)
 if [ -n "$IFACE" ]; then
     log "  Primary interface: ${IFACE}"
-    TC_CLASSES=$(tc -s class show dev "$IFACE" 2>/dev/null | head -20)
+    # NOTE: must NOT pipe through `head -20`. `tc -s class show` prints a
+    # multi-line stats block per class, so the first class alone can consume
+    # 10+ lines and 1:20/1:30 fell outside the window — producing bogus
+    # "class not found" warnings on a perfectly healthy host (2026-09-19).
+    # Match against the full output instead.
+    TC_CLASSES=$(tc class show dev "$IFACE" 2>/dev/null)
     echo "$TC_CLASSES" | grep -q "1:10" && pass "tc Eco class (1:10) exists" || warn "tc Eco class not found"
     echo "$TC_CLASSES" | grep -q "1:20" && pass "tc Stealth class (1:20) exists" || warn "tc Stealth class not found"
     echo "$TC_CLASSES" | grep -q "1:30" && pass "tc Strike class (1:30) exists" || warn "tc Strike class not found"
@@ -72,12 +82,17 @@ fi
 
 # ── 5. Verify UFW is active ──
 log "Step 5/9: Checking firewall..."
-if ufw status 2>/dev/null | grep -q "Status: active"; then
+# Capture once and match on the text: piping a live command into `grep -q` can
+# SIGPIPE the producer and (under `set -o pipefail`) report a false failure.
+UFW_NOW=$(ufw status 2>/dev/null || true)
+if printf '%s\n' "$UFW_NOW" | grep -q "Status: active"; then
     pass "UFW is active"
     for port in 22 80 443 8443 8444 8445; do
-        ufw status 2>/dev/null | grep -q "${port}/tcp" && \
-            pass "  Port ${port}/tcp allowed" || \
+        if printf '%s\n' "$UFW_NOW" | grep -q "${port}/tcp"; then
+            pass "  Port ${port}/tcp allowed"
+        else
             warn "  Port ${port}/tcp rule not found"
+        fi
     done
 else
     fail "UFW is NOT active"
@@ -123,9 +138,11 @@ fi
 
 # ── 8. Verify Pingora firewall rules for Shadowsocks ──
 log "Step 8/9: Checking Shadowsocks port reachability..."
-# Only check locally since external access depends on DNS
+# Only check locally since external access depends on DNS.
+# Capture the listener list once (see the SIGPIPE note in step 2).
+SS_NOW=$(ss -tln 2>/dev/null || true)
 for port in 8443 8444 8445; do
-    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+    if printf '%s\n' "$SS_NOW" | grep -q ":${port} "; then
         pass "Shadowsocks port ${port} is listening"
     else
         fail "Shadowsocks port ${port} is NOT listening"

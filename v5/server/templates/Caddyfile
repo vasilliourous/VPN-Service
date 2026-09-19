@@ -64,6 +64,35 @@ ${DOMAIN} {
         file_server
     }
 
+    # Release binaries for the auto-updater.
+    #
+    # Layout on disk: /var/www/updates/<version>/<filename>
+    #   e.g. /var/www/updates/1.1.0/locus-linux-amd64
+    #        /var/www/updates/1.1.0/locus-linux-amd64.sha256
+    #
+    # Notes:
+    #   * `file_server` on a subtree requires an explicit root, otherwise it
+    #     would fall back to the site root and 404.
+    #   * Directory listings are DISABLED. Without this, an exposed directory
+    #     lists every published build and its naming convention; there is no
+    #     reason for a client to browse.
+    #   * Binaries are content-addressed by version, so caching is safe and
+    #     polite — but a short TTL keeps a mistaken publish recoverable.
+    #   * No rate limit: these are large one-shot downloads, and throttling a
+    #     student mid-update on school wifi is worse than the bandwidth cost.
+    handle_path /updates/* {
+        root * /var/www/updates
+        header {
+            Cache-Control "public, max-age=300"
+            X-Content-Type-Options "nosniff"
+        }
+        # Directory listing is off by default in Caddy; do NOT add
+        # `browse <arg>` — Caddy 2 parses that argument as a TEMPLATE FILE
+        # path, so both `browse false` and `browse off` fail at request time
+        # with HTTP 500 ("open off: no such file or directory").
+        file_server
+    }
+
     log {
         output file /var/log/caddy/access.log
         format json

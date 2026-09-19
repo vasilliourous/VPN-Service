@@ -10,12 +10,21 @@
 // Usage from any HTTP client (curl, browser, Hiddify import):
 //   curl "https://networkingguides.duckdns.org/api/hiddify?code=RQ-XXXX-XXXX-XXXX-X"
 
-function sanitizeFilter(val) {
-    if (typeof val !== "string") return "";
-    return val.replace(/\\/g, "").replace(/'/g, "");
-}
-
+// NOTE on scope: PocketBase's JS hook runtime does NOT expose top-level
+// function declarations to the route handler — a helper defined at file scope
+// throws "is not defined" at request time (verified live 2026-09-19; this had
+// made the whole /api/hiddify endpoint return HTTP 500). Helpers must be
+// declared INSIDE the handler, or replaced with inline expressions.
+//
+// Also: `$app.findRecordsByFilter` does not exist, and the DAO's
+// `findRecordsByFilter` silently returns zero rows on this build. Use
+// `findFirstRecordByFilter` / `findRecordsByExpr` instead.
 routerAdd("GET", "/api/hiddify", function(e) {
+    // Inline re-implementation of the former file-scope helper.
+    function sanitizeFilter(val) {
+        if (typeof val !== "string") return "";
+        return val.replace(/\\/g, "").replace(/'/g, "");
+    }
     try {
         var req = e.request();
         var code = req.url.query().get("code") || "";
@@ -31,14 +40,13 @@ routerAdd("GET", "/api/hiddify", function(e) {
             ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
         var safeCode = sanitizeFilter(canonical);
-        var records = $app.findRecordsByFilter(
-            "codes",
-            "code={:code}",
-            "", 0, 1,
-            { code: safeCode }
-        );
-        if (records.length === 0) return e.json(404, {code: 404, message: "Code not found"});
-        var record = records[0];
+        var record = null;
+        try {
+            record = $app.dao().findFirstRecordByFilter("codes", "code = '" + safeCode + "'");
+        } catch (noCode) {
+            record = null;
+        }
+        if (!record) return e.json(404, {code: 404, message: "Code not found"});
 
         // ── Check suspension & expiry ──
         if (record.getBool("suspended")) return e.json(403, {code: 403, message: "Code suspended"});
@@ -48,7 +56,7 @@ routerAdd("GET", "/api/hiddify", function(e) {
         var userTier = record.getString("tier");
 
         // ── Resolve server domain ──
-        var allCfgs = $app.findRecordsByFilter("tier_configs", "active={:active}", "", 0, 0, { active: true });
+        var allCfgs = $app.dao().findRecordsByExpr("tier_configs", $dbx.exp("active = true"));
         var domain = "";
         if (allCfgs.length > 0) {
             try {
@@ -66,12 +74,14 @@ routerAdd("GET", "/api/hiddify", function(e) {
         if (allTiers) {
             configs = allCfgs;
         } else {
-            var tierCfgs = $app.findRecordsByFilter(
-                "tier_configs",
-                "tier={:tier} && active={:active}",
-                "", 0, 1,
-                { tier: sanitizeFilter(userTier), active: true }
-            );
+            var tierCfgs = [];
+            try {
+                var one = $app.dao().findFirstRecordByFilter("tier_configs",
+                    "tier = '" + sanitizeFilter(userTier) + "' && active = true");
+                tierCfgs = [one];
+            } catch (noTier) {
+                tierCfgs = [];
+            }
             if (tierCfgs.length > 0) configs = [tierCfgs[0]];
         }
 

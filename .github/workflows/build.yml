@@ -256,11 +256,34 @@ jobs:
               sing-box
           fi
 
+      # The auto-updater downloads a RAW EXECUTABLE and swaps it in place — it
+      # cannot consume the .zip above (writing zip bytes over the running binary
+      # would brick the install). So we also publish the bare client binary plus
+      # its own .sha256 sidecar, in exactly the naming the server's release
+      # layout expects: locus-<os>-<arch>[.exe] and the same name + .sha256.
+      #
+      # A DETERMINISTIC filename matters: the publish script derives the
+      # update_config URLs from version + platform, so these names are a
+      # contract between CI and the hub, not an implementation detail.
+      - name: Stage raw updater artifacts
+        run: |
+          mkdir -p dist/raw
+          SRC="locus-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          cp "$SRC" "dist/raw/$SRC"
+          # sha256sum prints "<hash>  <path>"; keep the bare name so it can be
+          # uploaded verbatim next to the binary.
+          ( cd dist/raw && sha256sum "$SRC" > "$SRC.sha256" )
+          echo "Staged raw artifacts:"
+          ls -l dist/raw
+          cat dist/raw/*.sha256
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: locus-${{ matrix.label }}
-          path: ${{ env.CLIENT_DIR }}/dist/*.zip
+          path: |
+            ${{ env.CLIENT_DIR }}/dist/*.zip
+            ${{ env.CLIENT_DIR }}/dist/raw/*
 
   # ── Release (tag pushes only) ──
   release:
@@ -280,12 +303,60 @@ jobs:
           sha256sum *.zip > checksums.sha256
           cat checksums.sha256
 
+      # Emit the per-version manifest the publish script uploads to the hub.
+      # Keeping this in CI guarantees the hashes come from the same build that
+      # produced the binaries, rather than being recomputed (and potentially
+      # mismatched) at publish time.
+      - name: Generate updater manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" <<'PY' > manifest.json
+          import hashlib, json, os, sys
+          version = sys.argv[1]
+          out = {"version": version, "platforms": {}}
+          # NOTE: these keys are built from the LOWERCASE goos/goarch the build
+          # step uses for -o (`locus-${{ matrix.goos }}-${{ matrix.goarch }}`),
+          # e.g. "locus-linux-amd64" — they are NOT the artifact/zip labels
+          # ("locus-Linux-amd64"). Getting this wrong yields an empty manifest
+          # while still exiting 0, so the mapping is asserted below.
+          mapping = {
+              "locus-linux-amd64":   "linux",
+              "locus-windows-amd64": "windows",
+              "locus-darwin-amd64":  "macos_intel",
+              "locus-darwin-arm64":  "macos_arm",
+          }
+          for base in sorted(os.listdir(".")):
+              if not base.startswith("locus-") or base.endswith(".zip"):
+                  continue
+              if base.endswith(".sha256"):
+                  continue
+              stem, ext = os.path.splitext(base)
+              if stem in mapping:
+                  h = hashlib.sha256(open(base, "rb").read()).hexdigest()
+                  out["platforms"][mapping[stem]] = {
+                      "file": base,
+                      "sha256": h,
+                      "size": os.path.getsize(base),
+                  }
+          missing = sorted(set(mapping.values()) - set(out["platforms"]))
+          if missing:
+              # Fail loudly: a partial manifest would silently withhold updates
+              # from the missing platforms.
+              sys.stderr.write("ERROR: no artifact found for: %s\n" % ", ".join(missing))
+              sys.stderr.write("Files present: %s\n" % ", ".join(sorted(os.listdir("."))))
+              sys.exit(1)
+          print(json.dumps(out, indent=2, sort_keys=True))
+          PY
+          cat manifest.json
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             *.zip
+            *.exe
             checksums.sha256
+            manifest.json
           generate_release_notes: true
           body: |
             ## Locus ${{ github.ref_name }}
