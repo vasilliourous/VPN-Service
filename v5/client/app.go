@@ -373,10 +373,6 @@ func (a *App) Startup(ctx context.Context) {
 		a.startHeartbeatLoop(canonical)
 	}
 
-	// ── Auto-connect after UAC elevation ──
-	// When relaunched elevated via the Connect() elevation gate, we pass
-	// "--autoconnect". The elevated instance connects on startup so the student
-	// doesn't have to click Connect again after accepting the UAC prompt.
 	// ── Auto-connect after elevation ──
 	// When relaunched elevated via the Connect() elevation gate, we pass
 	// --autoconnect. The elevated instance connects on startup so the student
