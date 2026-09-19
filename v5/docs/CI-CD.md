@@ -52,21 +52,82 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
 
 ## Triggering a Release
 
-Simply push a tag starting with `v`:
+A release is four steps. Only the first is new — the version used to be edited by
+hand in six files, which is how 2.1.0 shipped Windows executables stamped
+`2.0.0` / product name `MyVPN`.
 
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+# 1. Bump every copy of the version and regenerate the Windows resources.
+#    Nothing is committed; the script prints the git commands when it is done.
+./bump.sh                 # patch (2.2.0 -> 2.2.1);  also: minor, major, x.y.z
+./bump.sh --dry-run       # see what would change
+
+# 2. Commit and tag (the commands bump.sh prints).
+git add -A && git commit -m "chore(release): 2.2.1"
+git tag -a v2.2.1 -m "Locus 2.2.1"
+git push origin main
+git push origin v2.2.1
 ```
 
 The pipeline will:
 1. Lint and vet all Go code (and build the admin console, to catch a broken
    `/admin/` base before deploy)
-2. Build the Vue frontend, then the client — 4 platform targets in parallel
-3. Download the matching sing-box engine binary (1.12.1) for each
-4. Bundle into 4 platform ZIPs
-5. Publish the raw per-platform executables + `manifest.json` + checksums,
+2. Assert every copy of the version agrees — including the npm lockfile — and
+   that no *unaccounted* copy exists
+3. Build the Vue frontend, then the client — 4 platform targets in parallel
+4. Download the matching sing-box engine binary (1.12.1) for each
+5. Bundle into 4 platform ZIPs
+6. Publish the raw per-platform executables + `manifest.json` + checksums,
    then create a GitHub Release
+
+**CI does not touch the hub.** It builds and attaches artifacts to the GitHub
+Release. Publishing to the live server is a separate, deliberate step — see
+below — so a build cannot put a binary on students' machines by itself.
+
+---
+
+## Publishing a Release to the Hub
+
+```bash
+# Downloads this version's artifacts from its GitHub Release, uploads them to
+# /var/www/updates/<version>/, verifies the served bytes, writes update_config
+# at ROLLOUT_PERCENT (default 5).
+v5/server/scripts/publish-release.sh 2.2.1 --from-github
+
+# Inspect first — uploads nothing, touches nothing:
+DRY_RUN=1 v5/server/scripts/publish-release.sh 2.2.1 --from-github
+
+# Offer the release to nobody yet (the safe default for a first publish):
+ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 2.2.1 --from-github
+
+# Then confirm it is actually shippable:
+v5/server/scripts/verify-release.sh 2.2.1
+```
+
+`publish-release.sh` is the **only** thing that writes `update_config`. It
+refuses to run with no usable artifacts, and refuses a partial platform set
+unless you pass `ALLOW_PARTIAL=1` — because a row with empty `download_*` fields
+advertises a release no client can fetch, and that is invisible from the
+operator's seat. It has already happened once; see FIXES.md 44.
+
+Raise `rollout_percent` deliberately, in steps, once you have watched a first
+publish behave.
+
+### Deploying hook changes
+
+PocketBase hooks are **not** deployed by CI and are **not** applied by rebuilding
+the client. They are separate:
+
+```bash
+v5/server/scripts/hooks-sync.sh --dry-run   # show what differs from the host
+v5/server/scripts/hooks-sync.sh             # upload, restart, verify
+v5/server/scripts/hooks-sync.sh --check     # verify only
+```
+
+This exists because `release.pb.js` was committed and never deployed, leaving
+`GET /api/release` as a 404 in production with nothing to detect it (FIXES.md
+43). Hooks are loaded at startup, so a restart is required — the script does it
+and then proves the hub still serves.
 
 ---
 
