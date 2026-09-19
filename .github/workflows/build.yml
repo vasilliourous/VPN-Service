@@ -370,8 +370,23 @@ jobs:
             exit 1
           }
 
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          & $iscc "/DAppVersion=$version" "..\..\build\windows\locus.iss"
+          # Pass absolute paths for both the inputs and the output.
+          #
+          # Inno Setup resolves a relative Source: and a relative OutputDir
+          # against SourceDir, which defaults to the directory containing the
+          # .iss script (v5/client/build/windows) — NOT the directory ISCC is
+          # invoked from. This step runs from v5/client, where the binaries are
+          # and where dist/ is expected, so relative paths made ISCC look for
+          # the binaries in build/windows/ and write its output there too. Both
+          # are passed as fully-qualified paths to remove the ambiguity.
+          #
+          # Built from github.workspace rather than the current location: an
+          # absolute literal cannot silently resolve to the wrong directory
+          # whatever the runner does when it starts pwsh.
+          $clientDir = Join-Path "${{ github.workspace }}" "v5\client"
+          $buildDir  = Join-Path $clientDir "dist"
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          & $iscc "/DAppVersion=$version" "/DBuildDir=$clientDir" "/DOutputDirAbs=$buildDir" "..\..\build\windows\locus.iss"
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Inno Setup compilation failed (exit $LASTEXITCODE)"
             exit 1

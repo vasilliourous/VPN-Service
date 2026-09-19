@@ -41,6 +41,33 @@
   #define AppVersion "0.0.0"
 #endif
 
+; PATHS — WHY THESE ARE PASSED IN RATHER THAN WRITTEN RELATIVELY
+;
+; Inno Setup resolves a relative OutputDir against SourceDir, and SourceDir
+; defaults to the directory holding this script, i.e. v5/client/build/windows.
+; The [Files] Source parameters resolve the same way (the compiler "prepends
+; the path of your installation's source directory" to a relative Source).
+;
+; CI, however, compiles this script from v5/client, where the freshly built
+; locus-windows-amd64.exe and sing-box.exe actually live, and then looks for
+; the result in v5/client/dist. Writing the paths relatively therefore works
+; only by accident of which directory the compiler happens to be invoked from.
+; It did not work: relative Source looked in build/windows/ (no binaries) and
+; relative OutputDir would have written build/windows/dist (not where CI looks
+; for *.exe). Passing both in as fully-qualified paths makes the script correct
+; regardless of the invoking directory.
+; BuildDir and OutputDirAbs are fully-qualified paths supplied by CI. The
+; fallbacks exist so the script can still be compiled by hand from
+; v5/client/build/windows (where the binaries are two levels up and dist/ is a
+; sibling of this directory); they are plain directory names resolved the
+; ordinary way, deliberately avoiding string-building in a #define.
+#ifndef BuildDir
+  #define BuildDir "..\\.."
+#endif
+#ifndef OutputDirAbs
+  #define OutputDirAbs "..\\..\\dist"
+#endif
+
 [Setup]
 AppId={{8E4C1F52-3A7B-4D9E-9C21-5F6A0D7B2E14}
 AppName={#AppName}
@@ -50,7 +77,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-OutputDir=dist
+OutputDir={#OutputDirAbs}
 OutputBaseFilename=locus-setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
@@ -83,8 +110,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; The client and its engine. sing-box is bundled rather than downloaded because
 ; the whole reason the client exists is a network where downloads are blocked —
 ; a bootstrap download would fail exactly where the app is needed most.
-Source: "locus-windows-amd64.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
-Source: "sing-box.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\locus-windows-amd64.exe"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+Source: "{#BuildDir}\sing-box.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
