@@ -17,7 +17,15 @@
 > keeps legacy `myvpn-*` artifact/path names** (`/etc/myvpn`, `myvpn-*.sh`,
 > `myvpn-*.log`, `networkingguides.duckdns.org/…/myvpn-*`) because it has not been
 > redeployed — treat those literal server paths as still-current until a fresh
-> `setup.sh`/`restore.sh` run renames them.
+> `setup.sh`/`restore.sh` run renames them. Note the modules themselves still
+> *install* under `/etc/myvpn` and `/usr/local/bin/myvpn-*`, so a re-run does not
+> rename anything either — the legacy names are not going away on their own.
+
+> **⚠️ Live data (2026-09-19):** the hub carries **11 real `strike` activation
+> codes for middleman "Wanzhen"** (one already bound to a device). They are in
+> daily use. **Never bulk-delete `codes` or `code_events` rows** — earlier in the
+> project's life test-data cleanup was safe; it is not any more. To revoke access
+> use **Suspend** (reversible); to move a student to a new laptop use **Unbind**.
 
 ---
 
@@ -33,7 +41,17 @@ The service has three tiers:
 |------|-------|:----:|:---:|:---:|:---------:|----------|
 | Eco | $2/mo | 8443 | BBR | 5 Mbps tc | TCP only | Text, browsing |
 | Stealth | $4/mo | 8444 | BBR | 100 Mbps tc | TCP only | Streaming |
-| Strike | $8/mo | 8445 | BBR | 200 Mbps tc | TCP+UDP | Gaming |
+| Strike | $8/mo | 8445 | BBR | 200 Mbps tc | TCP+UDP (raw) | Gaming |
+
+**Activation codes are `RQ-XXXX-XXXX-XXXX-C`** (15 chars: `RQ` prefix + 3×4
+random charset chars + 1 Luhn check char; charset
+`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, no `I/O/0/1`). The pre-2026-08-17
+`MYVPN-XXXX-XXXX-XXXX-C` form is **dead** — codes were migrated, and no live code
+uses the old prefix. The Luhn-mod-N checksum covers the whole body **including**
+the `RQ` prefix, so any code generator, hook or validator must agree on that or
+generated codes will fail on the device. (This detail is easy to get wrong from a
+code read — the client validates the full 15-char string, while the server-side
+checksum helper is fed the full body too.)
 
 **Distribution model:** Middlemen hand out physical activation code cards for cash.
 Students pay cash (no credit card needed). Middlemen take ~20-30% commission.
@@ -45,11 +63,13 @@ The business and sales docs are kept privately — not in this repo.
 
 ```
 VPN-Service/
-├── v5/                 ← DEFINITIVE VERSION (hardened client + server + docs)
+├── v5/                 ← DEFINITIVE VERSION (hardened client + server + console + docs)
 │   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.0.0)
 │   ├── server/         ← VPS deployment modules + PocketBase hooks
+│   ├── console/        ← Admin console SPA (Vue 3 + Vite), served at /admin/
 │   ├── docs/           ← Architecture, deploy, ops, API, fixes
 │   │   └── history/    ← Curated pre-V5 research archive (business model, N4L threat analysis)
+│   ├── VERSION         ← THE client version (single source of truth, one line)
 │   ├── README.md       ← V5 overview
 │   └── CONTEXT.md      ← THIS FILE
 ├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
@@ -63,6 +83,7 @@ VPN-Service/
 |-----------|---------|----------|
 | `v5/` | Definitive version — start here | **Everyone** |
 | `v5/client/` | Hardened Go + Wails/Vue 3 client source code | **Client developers** |
+| `v5/console/` | Admin console SPA — day-to-day hub operations in a browser | Operators |
 | `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
 | `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
 | `v5/docs/history/` | Curated pre-V5 research archive (business model, N4L threat analysis) | Reference only — read CONTEXT/ARCHITECTURE first |
@@ -115,7 +136,17 @@ from real-world testing, with comprehensive documentation.
 3. **Permanent device binding** — one activation code = one device forever.
    SHA256 of MAC + disk serial + motherboard UUID. Admin can suspend, not deactivate.
 4. **Crash-safe updates** — two-phase sentinel handshake. No signing keys needed.
+   The updater also refuses anything that is **not strictly newer** than the
+   running build, so a stale `update_config` row cannot downgrade the fleet.
 5. **No TLS in the tunnel** — Shadowsocks AEAD is indistinguishable from random data.
+6. **The tunnel is self-healing** — a 10s watchdog probes real traffic and escalates
+   (restart → kill foreign engines + drop the stale `locus0` TUN → start fresh),
+   then hands control back to the student rather than churning forever.
+7. **Hub TLS is pinned by SPKI** — activation, heartbeat and update downloads
+   reject a leaf key that is not on the allow-list. Pinning the *key* (not the
+   cert) survives Let's Encrypt renewals. Empty pin list = fail-open with a
+   warning, so a factory build still works until an operator sets
+   `LOCUS_HUB_PINS`.
 
 ### Client Hardening (v5/client/ vs v4/)
 
@@ -132,25 +163,59 @@ The v5/client/ codebase is a hardened evolution of the v4 source:
 - **Heartbeat jitter** (±10%) to prevent thundering herd
 - **Error wrapping** throughout with `fmt.Errorf("...: %w", err)`
 - **Callback timeout guard** (5s max for heartbeat callbacks)
+- **Tunnel watchdog** — independent 10s probe loop that verifies traffic actually
+  flows, with an escalation ladder and a bounded retry count (see §3)
+- **Downgrade-proof updater** — numeric version comparison (`1.10.0 > 1.9.0`;
+  build metadata ignored), so only strictly-newer builds are ever applied
+- **Hub TLS pinning** — SPKI allow-list on every hub connection (`internal/pinned`)
+- **Stale-host self-heal** — on start and on connect, orphaned `sing-box`
+  processes are killed and a leftover `locus0` TUN is removed, rather than
+  telling a student to go use Task Manager
+- **Code normalisation** — stored/seeded codes are rewritten to the canonical
+  `RQ-XXXX-XXXX-XXXX-C` form at startup, so legacy installs keep heartbeating
 
 ---
 
 ## 4. VPS Testing Results
 
-All modules tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
+All modules were originally proven on a Voyager VPS (Ubuntu 22.04,
+kernel 5.15.0-161-generic). They were then **re-proven on a completely blank
+box** on 2026-09-19 — which found seven further bugs that only bite on a fresh
+host (see `docs/FIXES.md` → "Blank-VPS deploy"). That blank-box run is the more
+meaningful result, because a deploy script that only works on an
+already-provisioned host is not a deploy script.
+
+**Current live host:** `170.64.196.179` (DigitalOcean, Ubuntu 22.04.5, 1 vCPU /
+454 MB RAM + 1 GB swap, Sydney) serving `networkingguides.duckdns.org`.
+Earlier hosts `114.23.136.59` and `134.199.155.166` are retired — the latter is
+offline. Run `free -m` on any change; 454 MB is tight and the memory guard in
+`00-env.sh` is deliberately tuned for it.
 
 | Module | Status | Notes |
 |--------|:------:|-------|
-| 00-env | ✅ | OS, arch, root, disk, memory all validated |
+| 00-env | ✅ | OS, arch, root, disk, memory all validated (**memory guard fixed** — it rejected 512MB droplets) |
 | 01-bbr | ✅ | BBR active, TCP tuning params set |
 | 02-shadowsocks | ✅ | 3 instances installed and enabled |
-| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active |
-| 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
-| 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
-| 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
-| 08-firewall | ✅ | UFW active, all ports open, SSH rate-limited |
+| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active (+ fq_codel leaf qdiscs) |
+| 05-caddy | ✅ | Caddy with ratelimit plugin; now also `/admin/` SPA + `/updates/` file server. Console bundle is a **required** deploy input |
+| 06-pocketbase | ✅ | 0.22.21 installed; bootstrap failure is now **fatal**, not a warning |
+| 07-backups | ✅ | Timer enabled; verification now hashes the **downloaded** artifact |
+| 08-firewall | ✅ | UFW active, all ports open, SSH protected by **fail2ban** |
 
-### 8 Issues Found & Fixed
+End state of the blank-box run: all 8 modules exit 0, full `setup.sh` re-runs are
+idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
+
+**Zero-touch deploy (since the 2026-09 config pass):** a fresh `setup.sh` needs
+no follow-up. It deploys the admin console and the release uploader (both now
+**required** — a missing bundle fails the deploy instead of warning), installs
+the Strike UDP-over-TCP endpoint on 8446 and opens it in the firewall, seeds
+tier configs with `uot_port` advertised, and installs everything enabled at
+boot. Optional extras: `FIRST_BATCH=<n>` (+ `FIRST_BATCH_MIDDLEMAN`,
+`FIRST_BATCH_EXPIRES`) mints a first batch of codes once, recorded in
+`/root/.first_batch_done` so a re-run cannot create duplicate inventory. Opt
+outs: `ENABLE_UOT=0`, `SKIP_CONSOLE=1`, `SKIP_DNS_CHECK=1`.
+
+### 9 Issues Found & Fixed (first VPS round)
 
 All documented in `v5/docs/FIXES.md`:
 
@@ -164,6 +229,35 @@ All documented in `v5/docs/FIXES.md`:
 | S6 | 🔴 | `!$double` bash bug | Replaced with if/else |
 | S7 | 🔴 | PB 0.22 JS hook API incompatibility | All hooks rewritten |
 | S8 | 🟡 | Smoke test IP detection off by one | Fixed awk pattern |
+| S9 | 🟡 | Secrets decryption via process substitution failed silently | Temp file instead of `source <(cmd)` |
+
+### Blank-VPS deploy — 7 further bugs (2026-09-19)
+
+A fresh host is a different test from a re-run, and it found bugs that had been
+invisible for months. Full write-ups in `docs/FIXES.md`; the headlines:
+
+| # | Issue | Consequence |
+|:-:|-------|-------------|
+| 1 | `00-env.sh` memory guard compared against 512 **MiB** | A "512MB" droplet reports 454MB — impossible to pass on the hardware it targeted |
+| 2 | `seed-pb.py` used `/api/collections/_superusers/` (404 on PB 0.22) | **No admin, no collections, no schema** — while printing "✓ complete" |
+| 3 | `06-pocketbase.sh` treated that as a warning | A hub serving 500s looked deployed; now fatal + health-poll |
+| 4 | `08-firewall.sh` used `ufw limit 22/tcp` (6 conns/30s) | Locked out deployment automation; replaced with fail2ban |
+| 5 | `smoke-test.sh`: `tc … | grep -q` SIGPIPEs `tc` | Under `pipefail` → exit 141, false tc failures |
+| 6 | `update_config` duplicated a row every deploy | Multiple active rows; now reconciled |
+| 7 | `findFirstRecordByData` **throws** on a miss | Unknown codes returned HTTP 500 instead of 404 in all four hooks |
+
+The single most dangerous finding, though, was not a deploy bug at all:
+**`$app.dao().findRecordsByFilter()` silently returns an empty array** on this
+PocketBase build (0.22.21) for every collection and filter, with no error. It had
+quietly disabled the **client update gate**, the **activation rate limit** and the
+**code-lookup rate limit** — the latter two turning `/api/activate` and
+`/api/code-lookup` into unbounded code-enumeration oracles. Use
+`findFirstRecordByFilter` / `findRecordsByExpr` / `findFirstRecordByData` instead.
+See `docs/FIXES.md` → "Client update system" for the full list.
+
+⚠️ **Do not** re-add `ufw limit 22/tcp` and **do not** inject a custom limiter
+chain into `/etc/ufw/before.rules` — the latter locked SSH out completely (port
+22 timed out while 80/443 served) and needed provider-console recovery.
 
 ---
 
@@ -187,18 +281,28 @@ v5/client/
 │   │   ├── activation.go       # Activation client with retry + context + ValidateCodeFormat
 │   │   ├── fingerprint_linux.go   # Self-contained fingerprint (shared logic + Linux collector)
 │   │   ├── fingerprint_windows.go # Self-contained fingerprint (shared logic + Windows collector)
+│   │   ├── fingerprint_darwin.go  # Self-contained fingerprint (shared logic + macOS collector)
 │   │   └── luhn.go             # Luhn-mod-N checksum validation
 │   ├── heartbeat/heartbeat.go  # Periodic server health check with jitter
-│   ├── manager/process.go      # Sing-box lifecycle + config generation
-│   ├── updater/
-│   │   ├── updater.go          # Two-phase update with crash safety
-│   │   ├── recover.go          # Crash detection and auto-revert
-│   │   ├── update_linux.go     # Linux binary swap + fork
-│   │   └── update_windows.go   # Windows binary swap + fork
-│   └── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
+│   ├── manager/
+│   │   ├── process.go          # sing-box lifecycle + config generation
+│   │   ├── watchdog.go         # 10s tunnel probes + recovery ladder (restart → reset → degraded)
+│   │   ├── selfheal_{unix,windows}.go  # kill foreign engines, drop stale locus0 TUN
+│   │   └── process_{unix,windows}.go   # process-group detach / Windows specifics
+│   ├── pinned/pinned.go        # Hub TLS SPKI pinning (fail-closed once configured)
+│   ├── tray/tray.go            # OPT-IN system tray (LOCUS_TRAY=1); no-op on darwin
+│   ├── tunnel/tunnel.go        # TUN interface + kill switch (per-platform)
+│   └── updater/
+│       ├── updater.go          # Two-phase update with crash safety
+│       ├── recover.go          # Crash detection and auto-revert
+│       ├── version.go          # Numeric version compare — refuses downgrades
+│       ├── update_linux.go     # Linux binary swap + fork
+│       ├── update_windows.go   # Windows binary swap + fork
+│       └── update_darwin.go    # macOS binary swap + fork
 ├── frontend/                    # Vue 3 + TypeScript + Vite UI
 │   └── src/                    # App.vue, components/, stores/, lib/bridge.ts
 ├── engines/README.md           # Engine binary placeholder
+├── rsrc_windows_*.syso         # requireAdministrator manifest (.syso, go:generate)
 ├── go.mod
 └── Makefile                    # Wails build targets
 ```
@@ -214,12 +318,12 @@ client in `v4/`; removed files recoverable from git history)
 
 | Metric | Value |
 |--------|-------|
-| Total lines (Go) | ~4,200 across 19 files |
+| Total lines (Go) | ~7,700 across 38 files (main + 8 internal packages) |
 | Client version | `v5/VERSION` (single source; injected by Makefile/CI) |
 | Engine | sing-box 1.12.1 (client bundle + optional server UoT both pin 1.12.1) |
 | Min Go version | 1.22 |
 | Platforms | Linux, macOS (Intel+ARM, unsigned), Windows |
-| Dependencies | Wails v2 + Vue 3 (Fyne removed) |
+| Dependencies | Wails v2.12.0 + Vue 3 (Fyne removed) |
 
 ---
 
@@ -275,9 +379,9 @@ client in `v4/`; removed files recoverable from git history)
 | Component | Technology | Version |
 |-----------|-----------|:-------:|
 | Client language | Go | 1.22+ |
-| GUI toolkit | Wails v2 | 2.9.1 |
+| GUI toolkit | Wails v2 | 2.12.0 |
 | Frontend | Vue 3 + Vite + TypeScript | ^3.4.0 |
-| Tunnel engine | sing-box | 1.10.0 |
+| Tunnel engine | sing-box | 1.12.1 |
 | Server OS | Ubuntu | 22.04 |
 | Proxy protocol | Shadowsocks (ssserver-rust) | v1.23.0 |
 | Reverse proxy | Caddy (custom rate_limit) | Latest |
@@ -285,7 +389,7 @@ client in `v4/`; removed files recoverable from git history)
 | TCP CC (all tiers) | BBR | Kernel built-in |
 | Backups | Backblaze B2 | — |
 | Traffic shaping | tc (HTB qdisc) | — |
-| Firewall | UFW | — |
+| Firewall | UFW + fail2ban | — |
 
 ---
 
@@ -313,9 +417,10 @@ client in `v4/`; removed files recoverable from git history)
 5. **All tiers use BBR — no kernel modules to maintain.** Bandwidth caps are tc-based
    (Eco 5 / Stealth 100 / Strike 200 Mbps); after a kernel update, re-apply with
    `systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap`.
-6. **The server domain is `networkingguides.duckdns.org`** pointing to `114.23.136.59`
-   (verified 2026-08-01; an older note said `.47` — the VPS IP changed).
-   This is the VPS hostname — DNS is managed by the hosting provider.
+6. **The server domain is `networkingguides.duckdns.org`** pointing to `170.64.196.179`
+   (DigitalOcean, Sydney; verified 2026-09-19). DNS is managed by the hosting
+   provider — no DuckDNS updater runs on the box. Older notes cite `.59`/`.166`;
+   those hosts are retired.
 7. **Stopping PocketBase stops the backup timer.** `pocketbase-backup.timer` has
    `Requires=pocketbase.service` — systemd `Requires=` propagates stops but not
    starts, so after any `systemctl stop pocketbase` run
@@ -326,18 +431,32 @@ client in `v4/`; removed files recoverable from git history)
 9. **Use the current b2 CLI syntax.** Plain bucket names fail ("Invalid B2 URI");
    use `b2://bucket/path` URIs (`b2 ls --recursive`, `b2 file download`, `b2 file info`).
    `restore.sh` uses the current syntax.
+10. **Use the admin console for day-to-day work.** `https://…/admin/` replaces SSH +
+    Python + sqlite for issuing codes, suspending/unbinding, editing tiers and
+    publishing releases. The SSH recipes in `docs/OPS.md` remain the fallback path
+    (and are what the console itself calls).
+11. **Do not bulk-delete `codes` or `code_events`.** Real customer data lives
+    there — see the live-data warning at the top of this file.
 
-### Key credentials (live VPS as of 2026-08-01)
+### Key credentials (live VPS)
 
 ```
 PocketBase admin:   admin@networkingguides.duckdns.org
 PocketBase UI:      https://networkingguides.duckdns.org/_/
-Admin API token:    CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=
+Admin API token:    <see /root/.admin_api_token on the VPS>
 B2 bucket:          vpsvpnbackup
 ```
 
+> Earlier revisions of this file embedded the literal admin token. It has been
+> redacted, but it remains **in git history** — if that history is ever pushed
+> somewhere less trusted, rotate the token (`ADMIN_API_TOKEN` in `/etc/environment`
+> on the VPS, then update `/root/.admin_api_token` and the console's bookmark).
+> Rotating it invalidates any `/admin/?token=…` bookmark.
+
 All credentials are stored on the VPS at `/root/` — see `docs/POCKETBASE-SETUP.md` for
-the full list of credential files and locations.
+the full list of credential files and locations. Secrets never go in the repo in
+plaintext; they live age-encrypted in `v5/server/secrets.env.age`
+(see `docs/SECRETS-MANAGEMENT.md`).
 
 ### Common pitfalls
 
@@ -346,5 +465,15 @@ the full list of credential files and locations.
 - **The client code now lives in `v5/client/`** — not v4/. Always build from v5/client/.
 - **The JS hooks have been rewritten for PocketBase 0.22+** — if activation still returns a generic
   400 error after a fresh deploy, check `journalctl -u pocketbase` for hook load errors.
+- **A new hook file needs a PocketBase restart.** Editing an existing `*.pb.js`
+  hot-reloads; *adding* one does not. This is the usual reason a newly deployed
+  endpoint 404s.
+- **Never trust `findRecordsByFilter` in a hook.** It returns zero rows with no
+  error on PB 0.22.21. See the note in §4.
+- **Helper functions must be declared INSIDE a `routerAdd` handler.** File-scope
+  declarations are not visible to the callback ("helperFn is not defined") — this
+  silently 500'd an entire hook for its whole life.
 - **DNS is managed by the hosting provider** — the VPS hostname `networkingguides.duckdns.org`
   resolves to the VPS IP automatically. No DuckDNS updates needed.
+- **The live hub is production, and there is no sandbox.** Stage changes on the
+  VPS copy under `/root/server/`, never experiment on the live hooks.

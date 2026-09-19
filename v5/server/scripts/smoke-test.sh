@@ -87,7 +87,7 @@ log "Step 5/9: Checking firewall..."
 UFW_NOW=$(ufw status 2>/dev/null || true)
 if printf '%s\n' "$UFW_NOW" | grep -q "Status: active"; then
     pass "UFW is active"
-    for port in 22 80 443 8443 8444 8445; do
+    for port in 22 80 443 8443 8444 8445 "${UOT_PORT:-8446}"; do
         if printf '%s\n' "$UFW_NOW" | grep -q "${port}/tcp"; then
             pass "  Port ${port}/tcp allowed"
         else
@@ -148,6 +148,33 @@ for port in 8443 8444 8445; do
         fail "Shadowsocks port ${port} is NOT listening"
     fi
 done
+
+# ── 8b. Strike UDP-over-TCP endpoint (part of the default deploy) ──
+# Enabled with ENABLE_UOT=1, which is now the default. Verified here because
+# the failure mode is silent: the tier advertises uot_port to clients, so a
+# dead endpoint means Strike game UDP goes nowhere until it times out and
+# falls back to raw UDP.
+if [ "${ENABLE_UOT:-1}" = "1" ]; then
+    UOT_PORT="${UOT_PORT:-8446}"
+    if systemctl is-active --quiet sing-box-uot 2>/dev/null; then
+        pass "sing-box-uot is running (Strike UDP-over-TCP)"
+    else
+        fail "sing-box-uot is NOT running — Strike clients will fail over to raw UDP"
+    fi
+    SS_UDP=$(ss -uln 2>/dev/null || true)
+    if printf '%s\n' "$SS_NOW" | grep -q ":${UOT_PORT} "; then
+        pass "UoT port ${UOT_PORT}/tcp is listening"
+    else
+        fail "UoT port ${UOT_PORT}/tcp is NOT listening"
+    fi
+    if printf '%s\n' "$SS_UDP" | grep -q ":${UOT_PORT} "; then
+        pass "UoT port ${UOT_PORT}/udp is listening"
+    else
+        warn "UoT port ${UOT_PORT}/udp is not listening (TCP path still works)"
+    fi
+else
+    log "Step 8b/9: UoT disabled (ENABLE_UOT=0) — skipping"
+fi
 
 # ── 9. Generate smoke test summary ──
 log "Step 9/9: Summary"

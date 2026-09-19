@@ -450,6 +450,49 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 var collR = $app.dao().findCollectionByNameOrId("update_config");
                 recR = new Record(collR);
             }
+
+            // ── Guard: never advertise a version we cannot serve ──
+            //
+            // The heartbeat only emits update fields when rollout_percent > 0,
+            // and it sends whatever URLs sit in this row. Those URLs are NOT
+            // derived from what is on disk — they are written by
+            // publish-release.sh (which verifies the served bytes) or by this
+            // action. So raising the rollout at a moment when the URLs are
+            // empty or stale sends every eligible client to a 404, and a client
+            // that cannot download cannot update: the release silently fails
+            // for the whole fleet, with no error anywhere but the client log.
+            //
+            // This has actually happened on this hub: an old row pointed at
+            // /updates/1.0.2/* after those test artifacts were deleted.
+            //
+            // We cannot stat the filesystem from a PocketBase hook (only
+            // $os.getenv is exposed), so the check we CAN make is that every
+            // platform's URL and hash are present and that the URL version
+            // matches the version being advertised.
+            if (rollout > 0) {
+                var platKeysG = ["linux", "windows", "macos_intel", "macos_arm"];
+                var missingG = [];
+                for (var gi = 0; gi < platKeysG.length; gi++) {
+                    var gk = platKeysG[gi];
+                    var gurl = recR.getString("download_" + gk);
+                    var gsha = recR.getString("sha256_" + gk);
+                    if (!gurl || !gsha) { missingG.push(gk); continue; }
+                    // The URL must point at the version being advertised, or a
+                    // stale row (e.g. URLs for 1.0.2 while claiming 1.0.0) will
+                    // be served as if it were current.
+                    if (gurl.indexOf("/updates/" + version + "/") === -1) {
+                        missingG.push(gk + " (url is for a different version)");
+                    }
+                }
+                if (missingG.length) {
+                    return bad(400,
+                        "refusing to offer " + version + " at " + rollout + "% — no usable artifact for: " +
+                        missingG.join(", ") +
+                        ". Upload all four raw binaries and publish the release first, " +
+                        "or clients will be sent to a 404.");
+                }
+            }
+
             recR.set("version", version);
             recR.set("rollout_percent", rollout);
             recR.set("active", body.active === undefined ? true : !!body.active);

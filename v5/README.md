@@ -18,17 +18,24 @@ v5/
 │   ├── main.go            # Wails app entry point (embedds frontend, binds App)
 │   ├── app.go             # App struct — wraps internal/ packages for the UI
 │   ├── wails.json         # Wails project configuration
-│   ├── internal/
-│   │   ├── activation/    # Luhn-mod-N validation, device fingerprinting, server activation
-│   │   ├── heartbeat/     # Periodic health check with exponential backoff & jitter
-│   │   ├── manager/       # Sing-box process lifecycle with health monitoring
+│   ├── internal/          # 8 backend packages
+│   │   ├── activation/    # Luhn-mod-N validation, device fingerprinting, hub activation
+│   │   ├── heartbeat/     # Periodic hub check, 5min→2h backoff, 7-day grace
+│   │   ├── manager/       # sing-box lifecycle, config generation, watchdog, self-heal
+│   │   ├── pinned/        # Hub TLS SPKI pinning
 │   │   ├── storage/       # Thread-safe JSON persistence with backup rotation
-│   │   ├── tunnel/        # TUN interface and kill switch (Linux/Windows)
-│   │   └── updater/       # Two-phase crash-safe update system
+│   │   ├── tray/          # OPT-IN system tray (LOCUS_TRAY=1; no-op on macOS)
+│   │   ├── tunnel/        # TUN interface and kill switch (Linux/Windows/macOS)
+│   │   └── updater/       # Two-phase crash-safe updates + version comparison
 │   ├── frontend/          # Vue 3 + Vite + TypeScript UI (embedded into the binary)
 │   ├── engines/           # Sing-box engine binaries placeholder
+│   ├── rsrc_windows_*.syso# requireAdministrator manifest (.syso)
 │   ├── go.mod
 │   └── Makefile           # Build system
+│
+├── console/               # Admin console SPA (Vue 3 + Vite) → served at /admin/
+│   ├── src/views/         # Dashboard, Codes, Releases, Tiers, Login
+│   └── vite.config.ts     # `base: /admin/` is LOAD-BEARING — do not change
 │
 ├── docs/
 │   ├── history/          # Curated pre-V5 research archive (business model, N4L threat analysis)
@@ -37,23 +44,37 @@ v5/
 │   ├── ARCHITECTURE.md    # How to architect a compatible client
 │   ├── CLIENT-GUIDE.md    # How to build the client app (build commands, platform notes)
 │   ├── DEPLOY.md          # Server deployment guide (from blank VPS to live)
-│   ├── IMPLEMENT.md       # Step-by-step phased implementation plan
+│   ├── IMPLEMENT.md       # Step-by-step phased implementation plan (historical)
 │   ├── OPS.md             # Operations manual (day-to-day management)
 │   ├── API.md             # All API contracts (activation, heartbeat, admin)
+│   ├── POCKETBASE-SETUP.md    # Collections, hooks, seeding, admin setup
+│   ├── SECRETS-MANAGEMENT.md  # Age-encrypted secrets workflow
+│   ├── CI-CD.md           # GitHub Actions pipeline, build matrix, releases
+│   ├── ENGINE-SWAP-ANALYSIS.md # sing-box→mihomo + the Linux TUN elevation gap
 │   ├── UI-AESTHETICS.md   # Visual design spec (colors, layout, icons)
-│   ├── GAMING-UDP.md      # Planned: sing-box server + UDP-over-TCP for gaming
-│   └── FIXES.md           # Issues discovered & fixes applied
+│   ├── GAMING-UDP.md      # sing-box server + UDP-over-TCP (UoT) for gaming
+│   └── FIXES.md           # Issues discovered & fixes applied (dated log)
 │
 ├── server/                # Server deployment code (canonical — VPS modules + hooks)
 │   ├── modules/           # 8 idempotent setup modules (00-env → 08-firewall)
-│   ├── pb_hooks/          # PocketBase JS hooks (activation, heartbeat, admin)
-│   ├── templates/         # Config templates (Caddyfile, ssserver JSONs, systemd)
+│   ├── pb_hooks/          # PocketBase JS hooks (activation, heartbeat, code-lookup,
+│   │                      #   unbind, admin console, hiddify)
+│   ├── templates/         # Config templates (Caddyfile, ssserver JSONs, systemd,
+│   │                      #   locus-upload.service)
+│   ├── scripts/           # seed, smoke-test, publish-release, release_upload,
+│   │                      #   deploy-console, enable-uot
+│   ├── secrets.env.age    # Age-encrypted credentials (key NOT in repo)
 │   ├── setup.sh           # One-command VPS orchestrator
 │   └── restore.sh         # Full disaster recovery from B2 backup
 │
-└── scripts/               # Utility scripts
+├── VERSION                # THE client version — one line, single source of truth
+├── README.md              # V5 overview
+└── CONTEXT.md             # Agent/developer context — read this first
+│
+└── scripts/               # Utility scripts (repo root)
     ├── generate_codes.sh  # Luhn-mod-N activation code generator
-    └── print_codes.sh     # Printable PDF code card sheets
+    ├── print_codes.sh     # Printable PDF code card sheets
+    └── publish-update.sh  # Prepare + publish a release payload
 ```
 
 ---
@@ -95,25 +116,39 @@ remains as reference but all active development is on `v5/client/`.
 
 ### Server Hardening
 
-1. **All 8 modules tested on a real VPS** — 8 bugs found and fixed (see FIXES.md)
-2. **PocketBase 0.22 compatible** — JS hooks rewritten for PB 0.22.21 API
-3. **Idempotent modules** — Each module safely re-runnable
-4. **B2 offsite backups** — Hourly encrypted backups with SHA256 integrity verification
-5. **Comprehensive documentation** — Architecture, deploy, ops, API — everything in one place
+1. **All 8 modules tested on a real VPS** — 9 bugs found and fixed in the first
+   round, then **7 more found on a completely blank box** (see FIXES.md). A
+   re-run is not a deploy test.
+2. **PocketBase 0.22 compatible** — JS hooks rewritten for the PB 0.22.21 API.
+   Note the two traps that cost the most time: `findRecordsByFilter` silently
+   returns nothing, and file-scope helpers are invisible inside `routerAdd`.
+3. **Idempotent modules** — Each module safely re-runnable; full `setup.sh`
+   re-runs exit 0 and `smoke-test.sh` reports 23/23.
+4. **B2 offsite backups** — Hourly encrypted backups, verified against the
+   **downloaded** artifact (not the local source), with a proven restore path.
+5. **Admin console** — day-to-day operations from a browser at `/admin/`
+   instead of SSH + Python + sqlite.
+6. **Comprehensive documentation** — Architecture, deploy, ops, API — everything in one place.
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Deploy server (requires a blank Ubuntu 22.04 VPS + domain)
-DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
+# 1. Copy the server tree AND the age key to a fresh VPS, then run the orchestrator.
+#    Secrets (domain, tokens, tier passwords, B2 keys, PB admin) decrypt from
+#    secrets.env.age — see docs/SECRETS-MANAGEMENT.md
+scp -r v5/server age-key.txt root@YOUR_VPS:/root/server/
+ssh root@YOUR_VPS "/root/server/setup.sh"
 
-# 2. Create PocketBase admin account at https://networkingguides.duckdns.org/_/
-#    Then create collections: codes, tier_configs, activation_attempts, update_config
+# 2. Verify the deployment (expect 23 passed / 0 failed)
+ssh root@YOUR_VPS "DOMAIN=networkingguides.duckdns.org /root/server/scripts/smoke-test.sh"
 
-# 3. Generate activation codes (root scripts/ is canonical)
-./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_ADMIN_TOKEN eco 50
+# 3. Sign in to the admin console and issue codes from there
+#    https://networkingguides.duckdns.org/admin/   (admin token; see /root/.admin_api_token)
+
+# Or generate codes from the CLI (root scripts/ is canonical)
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_PB_ADMIN_JWT eco 50
 
 # 4. Build client
 cd v5/client && make build
@@ -121,6 +156,10 @@ cd v5/client && make build
 # 5. Build for all platforms
 cd v5/client && make build-all
 ```
+
+> The code generator takes the **PocketBase admin JWT**, not the `ADMIN_API_TOKEN`
+> — PB 0.22 rejects the latter for record access.
+
 
 ---
 
@@ -132,10 +171,11 @@ Student Laptop (locus client)
 ├── Manager → spawns sing-box → TUN tunnel
 └── Heartbeat → server health + staged updates
 
-VPS (Ubuntu 22.04)
+VPS (Ubuntu 22.04)  —  170.64.196.179
 ├── ssserver × 3 (Eco:8443, Stealth:8444, Strike:8445)
-├── Caddy (TLS + rate limiting)
-├── PocketBase (activation, heartbeat, admin)
+├── Caddy (TLS + rate limiting + /admin/ + /updates/)
+├── PocketBase (activation, heartbeat, code-lookup, admin API)
+├── locus-upload (127.0.0.1:8091 — release binaries)
 └── Backblaze B2 backups
 
 Transport: Shadowsocks AES-256-GCM over TCP
@@ -159,13 +199,31 @@ The client is built and released via **GitHub Actions**.
 
 ### Build Artifacts
 
-Each release produces 2 platform bundles:
-- `locus-Linux-amd64.zip` — Linux x86_64
-- `locus-Windows-amd64.zip` — Windows x86_64
+Each release produces **4 platform bundles** (for humans downloading an installer):
+
+| File | Platform |
+|------|----------|
+| `locus-Linux-amd64.zip` | Linux x86_64 |
+| `locus-Windows-amd64.zip` | Windows x86_64 |
+| `locus-macOS-amd64.zip` | macOS Intel |
+| `locus-macOS-arm64.zip` | macOS Apple Silicon |
 
 Each bundle contains:
 - `locus` — Desktop client (Wails + Vue 3, single binary)
 - `sing-box` — Tunnel engine (Shadowsocks + TUN)
+
+Plus the **raw executables the auto-updater actually consumes** (not zips):
+
+```
+locus-linux-amd64        locus-darwin-amd64
+locus-windows-amd64.exe  locus-darwin-arm64
++ <each>.sha256 + manifest.json
+```
+
+The updater replaces the app binary in place and cannot unpack a zip, so these
+raw artifacts are what get published to the hub via
+`v5/server/scripts/publish-release.sh`. The build **fails** if any platform
+artifact is missing from `manifest.json`.
 
 ### Local Development (no CI)
 

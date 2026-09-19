@@ -104,6 +104,6 @@ ss -ltnp 2>/dev/null | grep -q ":$UOT_PORT " && log "✓ listening on :${UOT_POR
 
 log "Done. sing-box UoT endpoint active on :${UOT_PORT}."
 imply "Make Strike advertise it to clients (udp_relay=true + uot_port=${UOT_PORT}) by re-running the seed:"
-imply "  cd v5/server && ENABLE_UOT=1 UOT_PORT=${UOT_PORT} python3 scripts/seed-live.py   (or set via PocketBase tier_configs->Strike)"
+imply "  cd v5/server && python3 scripts/seed-live.py   (or set via PocketBase tier_configs->Strike)"
 imply "Then run a 5-minute UDP gaming/voice check and the client DNS-over-UoT probe (see docs/OPS.md #7 runbook)."
 imply "Rollback:  systemctl disable --now sing-box-uot && rm -f $CONFIG_FILE"

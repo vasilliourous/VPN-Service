@@ -354,13 +354,14 @@ install_upload_service() {
     tmpl="$(dirname "$SCRIPT_DIR")/templates/locus-upload.service"
 
     if [ ! -f "$tmpl" ]; then
-        warn "templates/locus-upload.service not found — skipping upload service"
-        return 0
+        fail "templates/locus-upload.service not found — the release uploader cannot be installed.
+     Release binaries are uploaded through it, so without it the console's
+     Releases page cannot publish anything. Expected at ${tmpl}"
     fi
     # The uploader script itself must exist where the unit expects it.
     if [ ! -f /root/server/scripts/release_upload.py ]; then
-        warn "scripts/release_upload.py not found at /root/server/scripts — skipping upload service"
-        return 0
+        fail "scripts/release_upload.py not found at /root/server/scripts — the release
+     uploader cannot be installed. Re-upload the server tree (scp -r v5/server)."
     fi
 
     # Only rewrite when the content differs, so a re-run does not restart a
@@ -375,31 +376,68 @@ install_upload_service() {
     if systemctl is-active --quiet locus-upload; then
         log "✓ Upload service running on 127.0.0.1:8091"
     else
-        warn "Upload service not running — check: journalctl -u locus-upload -n 20 --no-pager"
+        fail "Upload service is NOT running — releases cannot be published.
+     Check: journalctl -u locus-upload -n 20 --no-pager"
     fi
 }
 
 # ── Deploy the admin console bundle ──
-# The built SPA is shipped as a tarball at /root/server/console-dist.tar.gz by
-# the deploy step (see OPS.md). If it is absent we leave whatever is already in
-# /var/www/admin alone rather than blanking a working console.
+# The console is part of the standard deployment, so a missing bundle is a
+# deployment failure, not a detail: without it /admin/ 404s and every operator
+# has to fall back to SSH + sqlite. It used to warn and continue, which made a
+# half-deployed hub look finished.
+#
+# The bundle is a tarball at /root/server/console-dist.tar.gz, produced by
+# scripts/deploy-console.sh (which builds it locally with npm and uploads it).
+# We cannot build it here: the VPS has no node, and the console source is not
+# shipped to the server tree.
 deploy_console() {
     local bundle="/root/server/console-dist.tar.gz"
     local target="/var/www/admin"
     if [ ! -f "$bundle" ]; then
         if [ -f "$target/index.html" ]; then
-            log "No console bundle provided — keeping the existing console"
-        else
-            warn "Console not deployed yet. Build with: npm --prefix v5/console run build"
-            warn "  then upload the dist/ as ${bundle} and re-run this module."
+            log "No console bundle provided — keeping the existing console at ${target}"
+            return 0
         fi
-        return 0
+        fail "Admin console bundle missing at ${bundle} and no console deployed.
+     Fix: run  v5/server/scripts/deploy-console.sh  from your workstation
+     (it builds the SPA locally and uploads the tarball), then re-run setup.sh.
+     To deploy without the console, set SKIP_CONSOLE=1 (not recommended)."
     fi
     mkdir -p "$target"
-    tar xzf "$bundle" -C "$target" 2>/dev/null || {
-        warn "Could not extract ${bundle} — console left unchanged"
-        return 0
-    }
+    # Extract to a temp dir and verify BEFORE touching the live console. A
+    # corrupt bundle extracted straight into /var/www/admin would leave a
+    # half-written SPA (missing assets, stale index.html) — the console would
+    # be broken in a way that looks like a code bug rather than a bad upload.
+    local staging
+    staging="$(mktemp -d /tmp/locus-console-XXXXXX)"
+    if ! tar xzf "$bundle" -C "$staging" 2>/dev/null; then
+        find "$staging" -type f -delete 2>/dev/null
+        find "$staging" -depth -type d -empty -delete 2>/dev/null
+        fail "Could not extract ${bundle} — the console bundle is corrupt.
+     Re-run v5/server/scripts/deploy-console.sh to rebuild and re-upload it."
+    fi
+    # A bundle that extracts but has no entrypoint is still a broken console —
+    # e.g. a tarball made from the wrong directory level (dist/ vs dist/*).
+    if [ ! -f "$staging/index.html" ]; then
+        find "$staging" -type f -delete 2>/dev/null
+        find "$staging" -depth -type d -empty -delete 2>/dev/null
+        fail "Console bundle has no index.html.
+     The tarball was probably built from the wrong level — it must contain the
+     CONTENTS of v5/console/dist/, not the dist/ directory itself."
+    fi
+    # The Vite base must be /admin/ or every asset 404s behind the subpath.
+    if ! grep -q '/admin/assets/' "$staging/index.html"; then
+        find "$staging" -type f -delete 2>/dev/null
+        find "$staging" -depth -type d -empty -delete 2>/dev/null
+        fail "Console bundle index.html does not reference /admin/assets/.
+     Check 'base' in v5/console/vite.config.ts — it must be '/admin/'."
+    fi
+    # Verified — replace the live console.
+    find "$target" -mindepth 1 -delete 2>/dev/null
+    cp -a "$staging"/. "$target"/
+    find "$staging" -type f -delete 2>/dev/null
+    find "$staging" -depth -type d -empty -delete 2>/dev/null
     chown -R root:root "$target"
     chmod -R a+rX "$target"
     log "✓ Admin console deployed to ${target}"
@@ -415,7 +453,11 @@ deploy_caddyfile
 deploy_update_json
 deploy_updates_dir
 install_upload_service
-deploy_console
+if [ "${SKIP_CONSOLE:-0}" = "1" ]; then
+    log "SKIP_CONSOLE=1 — not deploying the admin console (and not requiring its bundle)"
+else
+    deploy_console
+fi
 
 # ── Enable and start Caddy ──
 systemctl daemon-reload

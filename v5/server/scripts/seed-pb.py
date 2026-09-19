@@ -316,10 +316,14 @@ else:
     log(f"  update_config: {'seeded' if resp.get('id') else 'CREATE FAILED: ' + str(resp.get('message', resp))}")
 
     # ── Step 4: Seed tier configs ──
-    # udp_relay + uot_port are ONLY set when the sing-box UoT endpoint is
-    # deployed (02-shadowsocks.sh ENABLE_UOT=1). Otherwise udp_relay stays
-    # false and UDP flows via standard ss UDP — the default server
-    # (shadowsocks-rust) does not implement sing-box's proprietary
+    # udp_relay + uot_port advertise the sing-box UoT endpoint to clients.
+    # That endpoint is part of the DEFAULT deployment now
+    # (02-shadowsocks.sh: ENABLE_UOT defaults to 1), so the default here
+    # matches. Set ENABLE_UOT=0 in BOTH places to turn it off — advertising
+    # uot_port without the service running sends Strike game UDP to a dead
+    # port until the client times out and falls back to raw UDP.
+    # Without UoT, UDP flows via standard ss UDP — the plain
+    # shadowsocks-rust server does not implement sing-box's proprietary
     # UDP-over-TCP and RSTs it (observed 2026-08-01).
     # Priority: 1) Already in os.environ (from decrypted secrets via setup.sh)
     #           2) /root/.tier_passwords file (from 02-shadowsocks.sh)
@@ -340,7 +344,7 @@ if not pw_from_file and os.path.exists(pw_file):
     pw_from_file = True
 
 if pw_from_file:
-    uot_enabled = os.environ.get("ENABLE_UOT") == "1"
+    uot_enabled = os.environ.get("ENABLE_UOT", "1") != "0"
     uot_port = int(os.environ.get("UOT_PORT", "8446"))
     for t, port in [("eco", 8443), ("stealth", 8444), ("strike", 8445)]:
         pw = os.environ.get(f"{t.upper()}_PASS", "")

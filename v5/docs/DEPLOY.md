@@ -12,19 +12,25 @@
 
 ## 1. Prerequisites
 
-- **VPS:** Ubuntu 22.04, x86_64, 2GB RAM minimum, 20GB disk
+- **VPS:** Ubuntu 22.04, x86_64. **512MB RAM works** — the live host runs 454MB
+  with 1GB swap, but that is the floor; if you can afford 1–2GB it will be more
+  comfortable. 10GB disk minimum.
 - **Domain:** A domain name pointing to your VPS IP (A record)
 - **Backblaze B2 account** (optional, for backups)
 - **Age encryption key** (see `SECRETS-MANAGEMENT.md` for one-time setup)
+
+> **Memory gotcha:** `00-env.sh` has a memory guard. It previously compared
+> against 512 **MiB**, which made a "512MB" droplet (reports 454MB) impossible to
+> pass — fixed 2026-09-19. If the guard fails on a small box, check that fix is
+> present before assuming the host is too small.
 
 ### Recommended VPS Providers
 
 | Provider | Plan | Spec | Cost |
 |----------|------|------|------|
+| DigitalOcean (**currently live**) | Basic | 1 vCPU, 512MB + 1GB swap | ~$6/mo |
 | Hetzner | CCX13 | 2 vCPU, 4GB RAM | ~$8/mo |
-| DigitalOcean | Basic | 1 vCPU, 2GB RAM | ~$12/mo |
 | Vultr | Regular Cloud | 1 vCPU, 2GB RAM | ~$12/mo |
-| Voyager (tested) | — | 2GB RAM | Verified working |
 
 ---
 
@@ -115,11 +121,48 @@ The setup script does **everything** automatically:
 1. Validates environment (OS, arch, root, disk, memory, DNS)
 2. Enables BBR + TCP kernel tuning
 3. Installs 3 ssserver instances (eco:8443, stealth:8444, strike:8445)
-4. Applies tc traffic shaping (Eco 5 Mbps, Stealth 100 Mbps, Strike 200 Mbps)
-5. Installs Caddy with rate limiting and Let's Encrypt TLS
-6. Installs PocketBase with JS hooks and SQLite WAL mode
-7. Configures hourly B2 backup systemd timer
-8. Sets up UFW firewall (SSH rate-limited, all needed ports open)
+4. Applies tc traffic shaping (Eco 5 Mbps, Stealth 100 Mbps, Strike 200 Mbps,
+   each with an `fq_codel` leaf qdisc to keep latency flat under load)
+5. Installs **sing-box UDP-over-TCP on :8446** for the Strike gaming tier
+   (open the firewall for it too; `ENABLE_UOT=0` opts out)
+6. Installs Caddy with rate limiting, Let's Encrypt TLS, `/admin/` and `/updates/`
+7. Installs PocketBase with JS hooks and SQLite WAL mode, **creates the admin,
+   the collections, the schema and the tier configs** (a failure here is fatal —
+   it used to be a warning, which made a hub serving 500s look deployed)
+8. Deploys the **admin console** to `/admin/` and the **release uploader**
+   (both are required, not optional — a missing bundle fails the deploy)
+9. Configures hourly B2 backup systemd timer
+10. Sets up UFW firewall (including 8446 TCP+UDP) + **fail2ban** for SSH
+
+**A fresh deploy needs no follow-up steps.** The console is live, tier configs
+are seeded, backups are scheduled, and Strike clients receive `uot_port` on
+their next heartbeat. The one thing a deploy does *not* do is invent activation
+codes for you — see the optional batch flag below.
+
+### Optional: generate a first batch of codes during deploy
+
+```bash
+FIRST_BATCH=50 FIRST_BATCH_MIDDLEMAN=Sarah \
+  ssh root@your-vps "/root/server/setup.sh"
+```
+
+| Variable | Meaning |
+|----------|---------|
+| `FIRST_BATCH` | Codes per tier (applies to all three) |
+| `FIRST_BATCH_ECO` / `_STEALTH` / `_STRIKE` | Per-tier overrides |
+| `FIRST_BATCH_MIDDLEMAN` | Recorded against every code in the batch |
+| `FIRST_BATCH_EXPIRES` | Optional expiry, `YYYY-MM-DD` |
+
+Minted **once** and recorded in `/root/.first_batch_done`, so a re-run never
+creates a second batch of unsold inventory. Delete that file to re-arm.
+
+### Opting out
+
+| Variable | Effect |
+|----------|--------|
+| `ENABLE_UOT=0` | Skips the sing-box UoT endpoint *and* its firewall rule. Re-run `seed-pb.py` so the strike tier stops advertising `uot_port`. |
+| `SKIP_CONSOLE=1` | Skips deploying the admin console (and stops requiring its bundle). Not recommended. |
+| `SKIP_DNS_CHECK=1` | Proceeds even if the domain does not resolve to this host. |
 
 ---
 
@@ -136,10 +179,24 @@ After deployment, verify:
 - [ ] `tc -s class show dev eth0` → classes 1:10 (Eco 5 Mbps), 1:20 (Stealth 100 Mbps), 1:30 (Strike 200 Mbps)
 - [ ] `systemctl is-active pocketbase-backup.timer` → active (hourly B2 backups; setup auto-runs the first backup)
 - [ ] `tail -5 /var/log/myvpn-backup.log` → last line "Backup completed (exit 0)"
-- [ ] `curl -sf https://networkingguides.duckdns.org/update.json` → JSON manifest
+- [ ] `systemctl is-active locus-upload` → active (only if publishing releases)
 - [ ] `curl -sf https://networkingguides.duckdns.org/api/health` → 200
+- [ ] `curl -s -o /dev/null -w '%{http_code}' https://networkingguides.duckdns.org/admin/` → 200 (and `/admin` → 301)
 - [ ] `ufw status` → active with all rules
+- [ ] `systemctl is-active fail2ban` → active
 - [ ] `openssl s_client -connect networkingguides.duckdns.org:443 -servername networkingguides.duckdns.org </dev/null 2>/dev/null | openssl x509 -noout -dates` → valid cert
+
+> **`/update.json` is not a health check.** It is a stale placeholder written by
+> `05-caddy.sh`. The client updater reads the **`update_config`** record, not
+> that file — do not use it to judge whether updates are working. See
+> `OPS.md` → "Client Update System" → "Verify it is actually working".
+
+> **⚠️ Do not rate-limit SSH with ufw.** Earlier revisions used
+> `ufw limit 22/tcp` (6 conns/30s), which locked out legitimate automation, and a
+> custom limiter chain in `/etc/ufw/before.rules` locked SSH out **completely**
+> (port 22 timed out while 80/443 served), needing provider-console recovery.
+> SSH protection is **fail2ban** (`/etc/fail2ban/jail.d/locus-sshd.local`,
+> 6 fails/10m → 1h ban, `banaction=ufw`).
 
 > **⚠️ Backup timer gotcha:** the timer has `Requires=pocketbase.service`, so
 > **stopping PocketBase also stops the timer** (systemd `Requires=` propagates
@@ -149,7 +206,7 @@ After deployment, verify:
 
 > **Smoke test:** `setup.sh` runs `v5/server/scripts/smoke-test.sh` automatically
 > at the end (log: `/var/log/myvpn-smoke-test.log`). A fresh deploy should end
-> with "✅ All critical checks passed!".
+> with **23 passed / 0 failed / 0 warnings**.
 
 ### Create PocketBase Admin (First Run Only)
 
@@ -157,8 +214,27 @@ After deployment, verify:
 2. Create your admin account (first-run wizard)
 
 > If `PB_ADMIN_EMAIL` and `PB_ADMIN_PASS` were set in `secrets.env.age`, the
-> admin account is created automatically by `06-pocketbase.sh`. Check
-> `/root/.pb_admin_creds` on the VPS.
+> admin account is created automatically by `06-pocketbase.sh` /
+> `seed-pb.py`. Check `/root/.pb_admin_creds` on the VPS.
+>
+> **PocketBase 0.22 note:** `06-pocketbase.sh` can only bootstrap the first
+> admin from the **CLI** (`pocketbase admin create … --dir /opt/pocketbase/pb_data`).
+> `/api/collections/_superusers/*` returns **404** on this build — an earlier
+> `seed-pb.py` used exactly that path and therefore seeded *nothing* while
+> reporting success. `admin create` never updates an existing admin, so if the
+> credentials file disagrees with the live password, `seed-pb.py` forces an
+> `admin update` when the env value fails to log in.
+
+### Deploy the Admin Console (Recommended)
+
+```bash
+# Builds locally, uploads, extracts to /var/www/admin, reloads Caddy, verifies
+v5/server/scripts/deploy-console.sh
+```
+
+Day-to-day operations then happen at `https://<domain>/admin/` with the admin
+token. Note `05-caddy.sh` extracts `console-dist.tar.gz` if present, so a full
+`setup.sh` re-run keeps the deployed console rather than reverting it.
 
 ### Generate Activation Codes
 

@@ -180,13 +180,17 @@ def main():
             print(f"  tier {t}: MISSING {path} — skipping")
             continue
         cfg = json.load(open(path))
-        # UDP-over-TCP (UoT) is ONLY advertised when the sing-box UoT endpoint
-        # is deployed (02-shadowsocks.sh ENABLE_UOT=1). Otherwise udp_relay
-        # stays false and UDP flows via standard ss UDP — the default server
-        # (shadowsocks-rust) does not implement sing-box's proprietary
+        # UDP-over-TCP (UoT) is advertised whenever the sing-box UoT endpoint
+        # is deployed. That endpoint is part of the DEFAULT deployment now
+        # (02-shadowsocks.sh: ENABLE_UOT defaults to 1), so the default here
+        # matches — set ENABLE_UOT=0 in BOTH places to turn it off. Advertising
+        # uot_port with no service listening sends Strike game UDP to a dead
+        # port until the client times out and falls back to raw UDP.
+        # Without UoT, UDP flows via standard ss UDP — the plain
+        # shadowsocks-rust server does not implement sing-box's proprietary
         # UDP-over-TCP and RSTs it (observed 2026-08-01: every UoT conn RST
         # after ~300ms).
-        uot_enabled = os.environ.get("ENABLE_UOT") == "1"
+        uot_enabled = os.environ.get("ENABLE_UOT", "1") != "0"
         uot_port = int(os.environ.get("UOT_PORT", "8446"))
         udp = uot_enabled and t == "strike"
         cfg_dict = {

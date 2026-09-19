@@ -94,9 +94,9 @@ secrets. Store it in:
 # Create .secrets.env — this will be encrypted and then deleted
 # Use your actual values — never commit this file
 cat > .secrets.env << 'EOF'
-# MyVPN Production Secrets
+# Locus Production Secrets
 DOMAIN=networkingguides.duckdns.org
-ADMIN_API_TOKEN=CslWcWOt7jFhmYELTZahvpqKF3uV/RnWChUYTjbVAU4=
+ADMIN_API_TOKEN=<generate with: openssl rand -base64 32>
 B2_APPLICATION_KEY_ID=your-backblaze-key-id
 B2_APPLICATION_KEY=your-backblaze-application-key
 B2_BUCKET=vpsvpnbackup
@@ -110,6 +110,20 @@ EOF
 # Set restrictive permissions
 chmod 600 .secrets.env
 ```
+
+> **Note on the live token.** Earlier revisions of this file and of
+> `CONTEXT.md` embedded the literal `ADMIN_API_TOKEN`. It has been redacted, but
+> it remains **in git history** — so treat the deployed token as potentially
+> exposed. Rotate it (`openssl rand -base64 32` → update `.secrets.env` →
+> re-encrypt → re-run `setup.sh`, then update `/root/.admin_api_token` on the
+> VPS and any `/admin/?token=…` bookmark). The token is a bearer credential for
+> the entire admin API, so rotation invalidates every existing console session.
+
+> **The admin token is not a PocketBase admin JWT.** It only authenticates the
+> custom `*.pb.js` hooks (`X-Admin-Token` / `admin_token` body field). For
+> record-level API access (including `generate_codes.sh`) you need the PocketBase
+> admin JWT from `/root/.pb_admin_creds` (`PB_TOKEN`) — PB 0.22 returns 401 for
+> the `ADMIN_API_TOKEN`.
 
 > **Important:** Pre-generate stable tier passwords (`ECO_PASS`, `STEALTH_PASS`,
 > `STRIKE_PASS`) and the PB admin password. Unlike the auto-generated approach,

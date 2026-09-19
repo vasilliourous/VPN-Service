@@ -86,12 +86,15 @@ make build-all          # All four targets
 ### CI/CD
 
 The `.github/workflows/build.yml` workflow (repo root):
-1. Lints and vets all Go code
-2. Builds the Vue frontend, then the client with `-tags frontend`
+1. Lints (`golangci-lint`) and vets all Go code
+2. Builds the Vue frontend, then the admin console, then the client with
+   `-tags frontend`
 3. Builds for Linux, macOS (Intel + ARM), and Windows in parallel
-4. Downloads the matching sing-box binary (1.10.0) for each platform
-5. Bundles 2 binaries (`locus` + `sing-box`) into platform ZIPs
-6. Creates a GitHub Release with a `checksums.sha256` file
+4. Downloads the matching sing-box binary (**1.12.1**) for each platform
+5. Bundles 2 binaries (`locus` + `sing-box`) into **4** platform ZIPs
+6. Publishes the **raw per-platform executables** + `manifest.json` +
+   `checksums.sha256` — the raw binaries are what the auto-updater consumes
+   (it cannot unpack a zip)
 
 **Trigger:** Push a tag starting with `v` (e.g., `v2.0.0`).
 
@@ -112,15 +115,24 @@ v5/client/
 │   │   ├── activation.go        # Activation client, server communication
 │   │   ├── fingerprint_linux.go # Self-contained fingerprint (shared logic + Linux collector)
 │   │   ├── fingerprint_windows.go# Self-contained fingerprint (shared logic + Windows collector)
+│   │   ├── fingerprint_darwin.go # Self-contained fingerprint (shared logic + macOS collector)
 │   │   └── luhn.go             # Luhn-mod-N checksum validation
 │   ├── heartbeat/heartbeat.go  # Periodic hub communication (5min→2h backoff)
-│   ├── manager/process.go      # sing-box config generation + process lifecycle
+│   ├── manager/                # sing-box config generation + process lifecycle
+│   │   ├── process.go           #   config generation, spawn/stop, health loop
+│   │   ├── watchdog.go          #   10s tunnel probe + recovery escalation ladder
+│   │   ├── process_{unix,windows}.go # process-group detach, platform specifics
+│   │   └── selfheal_{unix,windows}.go # kill foreign engines, drop stale locus0 TUN
+│   ├── pinned/pinned.go        # Hub TLS SPKI pinning (fail-closed once configured)
+│   ├── tray/                   # OPT-IN system tray (LOCUS_TRAY=1); no-op on darwin
 │   ├── tunnel/tunnel.go        # Fallback TUN, kill switch, DNS (platform-specific)
 │   └── updater/
 │       ├── updater.go          # Two-phase sentinel update system
 │       ├── recover.go          # Crash detection and auto-revert
+│       ├── version.go          # Numeric version compare — refuses downgrades
 │       ├── update_linux.go      # Linux binary swap + fork
-│       └── update_windows.go   # Windows binary swap + fork (.old trick)
+│       ├── update_windows.go   # Windows binary swap + fork (.old trick)
+│       └── update_darwin.go    # macOS binary swap + fork
 ├── frontend/              # Vue 3 + Vite + TypeScript UI (embedded into binary)
 │   └── src/
 │       ├── App.vue             # Activation ↔ Main screen switch
@@ -129,7 +141,8 @@ v5/client/
 │       ├── lib/bridge.ts       # Typed wrapper around window.runtime.Call
 │       └── types/index.ts      # TypeScript mirrors of the Go API types
 ├── engines/               # sing-box binary placeholder (for local dev)
-├── go.mod                 # module locus, go 1.22, wails v2.9.1
+├── rsrc_windows_*.syso    # requireAdministrator manifest (Windows)
+├── go.mod                 # module locus, go 1.22, wails v2.12.0
 └── Makefile               # dev / build / build-all / test / vet targets
 ```
 

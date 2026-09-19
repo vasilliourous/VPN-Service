@@ -44,6 +44,20 @@ log "✓ Shadowsocks ports 8443, 8444, 8445 (TCP) allowed"
 ufw allow 8445/udp 2>/dev/null || true
 log "✓ Strike UDP (8445/udp) allowed"
 
+# ── Strike UDP-over-TCP (sing-box, port 8446) ──
+# Part of the default deployment, so the port is opened by default too.
+# Without this the sing-box-uot service would listen but be unreachable from
+# the internet, and Strike clients would sit on the advertised uot_port until
+# they timed out and fell back — a silent, confusing failure.
+# ENABLE_UOT=0 skips both the service and this rule.
+if [ "${ENABLE_UOT:-1}" = "1" ]; then
+    ufw allow "${UOT_PORT:-8446}"/tcp 2>/dev/null || true
+    ufw allow "${UOT_PORT:-8446}"/udp 2>/dev/null || true
+    log "✓ Strike UoT port ${UOT_PORT:-8446} (TCP+UDP) allowed"
+else
+    log "UoT disabled (ENABLE_UOT=0) — port ${UOT_PORT:-8446} not opened"
+fi
+
 # ── Enable UFW (safe — SSH is already allowed) ──
 # NOTE: on some images /etc/ufw/ufw.conf ships with ENABLED=no while the
 # iptables rules are already loaded. `ufw status` then reports "active" but

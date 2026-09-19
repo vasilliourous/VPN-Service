@@ -457,9 +457,15 @@ the first hours at a low `rollout_percent` as the safety net.
 ## #7 Gaming UDP (Strike) — enable & verify
 
 > The product is Locus; deployed server artifacts keep the legacy `myvpn` names
-> until redeploy. This runbook enables the **sing-box UDP-over-TCP (UoT)**
+> until redeploy. This runbook covers the **sing-box UDP-over-TCP (UoT)**
 > endpoint so Strike's raw-UDP-blocked school networks can carry game/voice UDP
 > inside an allowed TCP flow.
+
+**A fresh deployment already has this.** Since the zero-touch change,
+`setup.sh` builds the endpoint (unless `ENABLE_UOT=0`), `08-firewall.sh` opens
+8446 TCP+UDP, and `seed-pb.py` advertises `uot_port` on the strike tier. The
+steps below are for **enabling it on an older box** (such as the current live
+host, deployed before that change) or for verifying it.
 
 **There is no sandbox — the live VPS is production.** Sequence below is
 reversible and stepwise, so validate each gate before the next.
@@ -478,17 +484,34 @@ is the *ingress school LAN*, so raw UDP must be tunneled.
 
 ### 1. Install + start the UoT endpoint (idempotent)
 
+Skip this if the box was deployed after the zero-touch change — it is already
+running. Check first:
+
+```bash
+systemctl is-active sing-box-uot        # -> active on a fresh deploy
+```
+
+On an older box (or after `ENABLE_UOT=0`), enable it:
+
 ```bash
 # On the VPS, from the repo copy:
 UOT_PORT="${UOT_PORT:-8446}" bash v5/server/scripts/enable-uot.sh
 systemctl is-active sing-box-uot   # -> active
+
+# The enable script does NOT open the firewall. Confirm 8446 is allowed:
+ufw status | grep 8446 || { ufw allow 8446/tcp; ufw allow 8446/udp; }
 ```
 
 ### 2. Advertise UoT to Strike clients
 
+Skip this on a fresh deploy — `seed-pb.py` already advertises `uot_port`. Only
+needed when enabling an older box.
+
 ```bash
-# On the VPS, from the repo copy (reads passwords, patches tier_configs):
-cd v5/server && ENABLE_UOT=1 UOT_PORT=8446 python3 scripts/seed-live.py
+# On the VPS, from the repo copy (reads passwords, patches tier_configs).
+# No ENABLE_UOT flag needed — advertising is on by default now; pass
+# ENABLE_UOT=0 only to STOP advertising it.
+cd v5/server && python3 scripts/seed-live.py
 # Tactically: PocketBase admin -> tier_configs -> Strike ->
 #   config JSON add "uot_port": 8446    and    udp_relay=true
 ```
@@ -506,9 +529,16 @@ Point a Locus client at Strike on the restricted net, connect, then:
 
 ### 4. Healthy? Grow rollout; else rollback
 
-Rollback (seconds): `systemctl disable --now sing-box-uot && rm -f /etc/sing-box/config.json`,
-then re-run the seed WITHOUT `ENABLE_UOT` (or flip Strike `udp_relay=false` /
-drop `uot_port`) — TCP tiers (8443/44/45) are never touched by the enable script.
+Rollback (seconds):
+
+```bash
+systemctl disable --now sing-box-uot
+rm -f /etc/sing-box/config.json
+# Stop advertising the port, or clients keep trying a dead endpoint:
+cd v5/server && ENABLE_UOT=0 python3 scripts/seed-live.py
+```
+
+TCP tiers (8443/44/45) are never touched by the enable script.
 
 ---
 

@@ -77,7 +77,16 @@ give users admin rights).
 |------|-------|:----:|:---------:|:---------:|:---:|------------|
 | **Eco** | $2/mo | 8443 | BBR (system) | 5 Mbps (tc capped) | ❌ | Text loads, video buffers. Exists to sell Stealth. |
 | **Stealth** | $4/mo | 8444 | BBR (system) | 100 Mbps (tc capped) | ❌ | Fast streaming. BBR keeps bufferbloat low. |
-| **Strike** | $8/mo | 8445 | BBR (system) | 200 Mbps (tc capped) | ✅ | Gaming (33-44ms latency). 4K streaming. |
+| **Strike** | $8/mo | 8445 | BBR (system) | 200 Mbps (tc capped) | ✅ raw (UoT planned 8446) | Gaming. 4K streaming. |
+
+> All tiers are **BBR + tc**: no kernel modules to maintain, caps enforced with
+> HTB classes plus `fq_codel` leaf qdiscs to keep latency flat under load.
+> Strike carries **raw** UDP today; the UDP-over-TCP endpoint (port 8446) is
+> built but not enabled on the current host — see `v5/docs/GAMING-UDP.md`.
+
+Activation codes are **`RQ-XXXX-XXXX-XXXX-C`** (15 chars, Luhn-mod-N checksum,
+charset `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). The `MYVPN-` form was retired in the
+2026-08-17 migration and no live code uses it.
 
 ---
 
@@ -86,23 +95,28 @@ give users admin rights).
 ```
 VPN-Service/
 ├── v5/                       ← DEFINITIVE VERSION (start here)
-│   ├── client/               ← CLIENT: Go 1.22 + Wails v2 + Vue 3 desktop app (v2.0.0)
+│   ├── client/               ← CLIENT: Go 1.22 + Wails v2 + Vue 3 desktop app
 │   │   ├── main.go           ← Wails entry point (binds App, embeds frontend/dist)
 │   │   ├── app.go            ← App struct — wraps internal/ for the Vue UI
-│   │   ├── internal/         ← 6 independent packages (activation, heartbeat,
-│   │   │                        manager, storage, tunnel, updater)
+│   │   ├── internal/         ← 8 packages (activation, heartbeat, manager, pinned,
+│   │   │                        storage, tray, tunnel, updater)
 │   │   ├── frontend/         ← Vue 3 + Vite + TypeScript UI (embedded into binary)
 │   │   ├── engines/          ← sing-box binary placeholder
 │   │   └── Makefile          ← dev / build / build-all targets
 │   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
+│   │   ├── scripts/          ← seed, smoke-test, publish-release, deploy-console
+│   │   └── pb_hooks/         ← activation, heartbeat, code-lookup, unbind, console
+│   ├── console/              ← ADMIN: Vue 3 SPA served at /admin/
 │   ├── docs/                 ← Architecture, deploy, ops, API, fixes
 │   │   └── history/          ← Curated pre-V5 research (business model, N4L threat analysis)
+│   ├── VERSION               ← THE client version (single source of truth)
 │   ├── README.md             ← V5 overview
 │   └── CONTEXT.md            ← Full agent/developer context
 ├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)
 ├── scripts/                  ← Operational tooling
 │   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
-│   └── print_codes.sh        ── Printable PDF code cards
+│   ├── print_codes.sh        ── Printable PDF code cards
+│   └── publish-update.sh     ── Prepare + publish a release payload
 └── .github/workflows/        ← CI/CD
     └── build.yml             ── Build + release for Linux + macOS + Windows (Wails)
 ```
@@ -183,33 +197,66 @@ This binds an activation code to a specific device. If the device is lost or bro
 ### Step 1: Deploy Server
 
 ```bash
-# Copy to VPS
-scp -r v5/server root@your-vps:/root/
+# Copy the server tree AND the age key to the VPS
+scp -r v5/server age-key.txt root@your-vps:/root/server/
 
-# Run setup (takes 10-15 minutes)
-ssh root@your-vps
-DOMAIN=networkingguides.duckdns.org ./v5/server/setup.sh
+# Run setup (~10-15 min). Secrets decrypt automatically from secrets.env.age.
+ssh root@your-vps "/root/server/setup.sh"
 ```
 
-This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 200 Mbps), Caddy + TLS, PocketBase, B2 backups, UFW firewall. See `v5/docs/DEPLOY.md`.
+This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 200
+Mbps, all with fq_codel), the Strike UDP-over-TCP endpoint on :8446, Caddy + TLS
+(serving `/admin/` and `/updates/`), PocketBase (+ collections/admin/hooks/tier
+configs), the admin console, the release uploader, B2 backups, UFW + fail2ban.
 
-### Step 2: Configure PocketBase
+**No follow-up steps.** Verify with `smoke-test.sh` (expect 23 passed / 0 failed).
+Note `setup.sh` deploys **from the copy on the VPS**, not from your working tree —
+keep `/root/server/` in sync with the repo.
 
-1. Visit `https://networkingguides.duckdns.org/_/` — create admin account
-2. Create collections: `codes`, `tier_configs`, `activation_attempts`
-3. Create `update_config` collection for staged rollouts
-4. Set `admin_api_token` in PocketBase app settings
-5. Upload JS hooks from `v5/server/pb_hooks/`
-6. Seed tier configs with passwords from `/root/.tier_passwords`
-
-### Step 3: Generate & Print Codes
+Optional extras:
 
 ```bash
-./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_TOKEN eco 50
+# Mint a first batch of codes as part of the deploy (once only)
+FIRST_BATCH=50 FIRST_BATCH_MIDDLEMAN=Sarah ssh root@your-vps "/root/server/setup.sh"
+
+# Opt outs
+ENABLE_UOT=0      # skip the sing-box UDP-over-TCP endpoint (+ its firewall rule)
+SKIP_CONSOLE=1    # skip the admin console (not recommended)
+```
+
+The admin console must already be built into a bundle for the deploy to succeed
+(`scripts/deploy-console.sh` builds and uploads it); a missing bundle now fails
+the deploy loudly rather than leaving `/admin/` 404ing.
+
+### Step 2: Verify PocketBase
+
+`06-pocketbase.sh` and `seed-pb.py` now create the admin, the collections, the
+schema and the tier configs automatically — a failure here is **fatal**, not a
+warning. To verify or customise by hand, see `v5/docs/POCKETBASE-SETUP.md`
+(collections: `codes`, `tier_configs`, `activation_attempts`, `update_config`,
+`code_events`).
+
+### Step 3: Deploy the Admin Console
+
+```bash
+v5/server/scripts/deploy-console.sh   # builds, uploads, verifies /admin/
+```
+
+Day-to-day operations (issuing codes, suspend/unbind, tiers, releases) then
+happen at `https://<domain>/admin/` — no SSH required.
+
+### Step 4: Generate & Print Codes
+
+```bash
+# Console: Codes & Clients -> Generate. Or from the CLI:
+./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_PB_ADMIN_JWT eco 50
 ./scripts/print_codes.sh eco-codes.txt eco-cards.pdf
 ```
 
-### Step 4: Build Client App
+The generator needs the **PocketBase admin JWT** (PB 0.22 rejects
+`ADMIN_API_TOKEN` for record access).
+
+### Step 5: Build Client App
 
 ```bash
 cd v5/client
@@ -217,13 +264,15 @@ make build          # current platform only
 make build-all      # Linux + Windows + macOS
 ```
 
-Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds, bundles, and releases
-both platform zips automatically (`locus` + `sing-box` per platform).
+Or push a `v*` tag (e.g. `v2.0.0`) — GitHub Actions builds **4 platform
+bundles** plus the raw per-platform executables + `manifest.json` + checksums
+that the auto-updater consumes. (`locus` + `sing-box` per bundle.)
 
-### Step 5: Install & Test
+### Step 6: Install & Test
 
 1. Extract the platform zip
-2. Launch `locus` (Windows: `locus.exe`)
+2. Launch `locus` (Windows: `locus.exe`) — Windows runs elevated, since TUN
+   creation requires it
 3. Test activation, connection, heartbeat, update
 
 No admin install step is needed — the app runs as a normal user and sing-box
@@ -263,24 +312,38 @@ DOMAIN=networkingguides.duckdns.org \
 Set up uptime monitoring on `https://networkingguides.duckdns.org/api/health` (UptimeRobot, PingPing, etc.).
 This endpoint returns `{"message":"API is healthy.","code":200}` when PocketBase is running.
 
+Day-to-day operations live at `https://networkingguides.duckdns.org/admin/`
+(admin token required) — dashboard, codes, releases and tiers. See
+`v5/docs/OPS.md`.
+
 ---
 
 ## Real-World Testing
 
-The server modules were tested on a Voyager VPS (Ubuntu 22.04, kernel 5.15.0-161-generic):
+The server modules were first proven on a Voyager VPS, then **re-proven on a
+completely blank box** (2026-09-19) — which found seven further bugs that only
+appear on a fresh host. A re-run is not a deploy test.
 
 | Module | Status | Notes |
 |--------|:------:|-------|
-| 00-env | ✅ | OS, arch, root, disk, memory all validated |
+| 00-env | ✅ | OS, arch, root, disk, memory all validated (memory guard fixed for 512MB droplets) |
 | 01-bbr | ✅ | BBR active, TCP tuning params set |
 | 02-shadowsocks | ✅ | 3 instances installed and enabled |
-| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active |
-| 05-caddy | ✅ | Custom build with ratelimit plugin, Caddyfile validated |
-| 06-pocketbase | ✅ | 0.22.21 installed, health check passing |
-| 07-backups | ✅ | Script installed, timer enabled (B2 credentials needed) |
-| 08-firewall | ✅ | UFW active, all ports open, SSH rate-limited |
+| 04-tc | ✅ | Eco 5Mbit, Stealth 100Mbit, Strike 200Mbit classes active (+ fq_codel) |
+| 05-caddy | ✅ | Caddy with ratelimit plugin; also serves `/admin/` and `/updates/` |
+| 06-pocketbase | ✅ | 0.22.21 installed; bootstrap failure is now fatal, not a warning |
+| 07-backups | ✅ | Timer enabled; verification hashes the **downloaded** artifact, restore proven |
+| 08-firewall | ✅ | UFW active, all ports open, SSH protected by **fail2ban** |
 
 All 3 Shadowsocks services active (8443/8444/8445). All tiers on BBR with tc caps (5/100/200 Mbps).
-Caddy + PocketBase serving API at `https://domain/_/`.
+Caddy + PocketBase serving the API, the admin console, and release binaries.
+
+**Live host:** `170.64.196.179` (DigitalOcean, Ubuntu 22.04.5, 1 vCPU / 454 MB +
+1 GB swap, Sydney) → `networkingguides.duckdns.org`. Earlier hosts are retired.
+End state of the blank-box run: all 8 modules exit 0, `setup.sh` re-runs are
+idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
+
+> ⚠️ **Live customer data.** The hub holds real activation codes in daily use.
+> Never bulk-delete `codes` or `code_events` — suspend or unbind instead.
 
 See `v5/README.md` and `v5/CONTEXT.md` for the full current documentation.

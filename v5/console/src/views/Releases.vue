@@ -136,6 +136,29 @@ async function activate(percentOverride?: number) {
     return
   }
   const pct = percentOverride !== undefined ? percentOverride : rollout.value
+
+  // Guard: never advertise a version we cannot actually serve.
+  //
+  // `update_config` stores the download URLs AND their hashes in its own columns,
+  // independently of what is on disk. A rollout percentage raised while those
+  // URLs point at artifacts that were never uploaded (or were cleaned up) tells
+  // every eligible client to download a 404 — and a client that fetches nothing
+  // cannot update, so the release silently fails for the whole fleet.
+  //
+  // Checked against the *saved* release state, not the unsaved upload slots:
+  // what matters is what the hub is actually advertising right now.
+  if (pct > 0) {
+    const missing = EXPECTED.filter((e) => !release.value?.platforms[e.key]?.url)
+      .map((e) => e.key)
+    if (missing.length) {
+      toast.err(
+        `Refusing to offer ${v} at ${pct}% — no uploaded artifact for: ${missing.join(', ')}. ` +
+        `Upload all four raw binaries first, or clients will be sent to a 404.`
+      )
+      return
+    }
+  }
+
   savingRollout.value = true
   try {
     const res = await call('releases.set', { version: v, rollout_percent: pct, active: true })
