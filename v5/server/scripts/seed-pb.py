@@ -192,6 +192,24 @@ collections = [
         {"name":"expires_at","type":"date"},
         {"name":"activated_at","type":"date"},
         {"name":"middleman","type":"text"},
+        # Administrative metadata. `unbound_at`/`unbind_reason` were already
+        # being written by admin_unbind.pb.js but did NOT exist in the schema,
+        # so PocketBase silently discarded them — the audit trail looked
+        # implemented but recorded nothing. `notes`/`label` back the admin
+        # console (who the code belongs to, free-form remarks).
+        {"name":"unbound_at","type":"date"},
+        {"name":"unbind_reason","type":"text"},
+        {"name":"label","type":"text"},
+        {"name":"notes","type":"text"},
+    ]),
+    # Append-only history of administrative and lifecycle actions, so the
+    # console can show "what happened to this code" without guessing.
+    ("code_events", [
+        {"name":"code","type":"text","required":True},
+        {"name":"event","type":"text","required":True},
+        {"name":"detail","type":"text"},
+        {"name":"actor","type":"text"},
+        {"name":"fingerprint","type":"text"},
     ]),
     ("tier_configs", [
         {"name":"tier","type":"text","required":True,"unique":True},

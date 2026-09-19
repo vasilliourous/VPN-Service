@@ -160,6 +160,42 @@ ${DOMAIN} {
         reverse_proxy 127.0.0.1:8090
     }
 
+    # ── Admin console ──
+    # The console is a static SPA served at /admin/. `/admin` (no slash) is
+    # redirected so a typed URL or bookmark does not 404.
+    #
+    # Ordering matters: the more specific /api/admin/upload handle must appear
+    # BEFORE the general /api/* block, or the generic rate-limited proxy would
+    # swallow uploads and reject them at the 100-requests/10s limit.
+    # `/admin` (no trailing slash) redirects to `/admin/`. Using an exact-path
+    # matcher inside `handle` proved unreliable here — the file_server handle
+    # below is a handle_path and won the match. A `route` with an explicit
+    # path matcher is unambiguous.
+    @admin_root path /admin
+    redir @admin_root /admin/ permanent
+
+    handle_path /admin/* {
+        root * /var/www/admin
+        header {
+            # The console is an internal tool: never index, never cache the
+            # shell (so a redeploy is picked up immediately).
+            X-Robots-Tag "noindex, nofollow"
+            Cache-Control "no-cache"
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+        }
+        # SPA fallback: any unknown path under /admin/ serves index.html so a
+        # refresh on a sub-view still loads the app.
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Large release uploads go to the dedicated uploader, NOT PocketBase
+    # (which rejects bodies above a few MB and exposes no multipart API).
+    handle /api/admin/upload {
+        reverse_proxy 127.0.0.1:8091
+    }
+
     # ── General API (rate limited: 100 per 10s per IP) ──
     handle /api/* {
         rate_limit {
@@ -299,10 +335,74 @@ SERVICE
 # needs write access to push new versions.
 deploy_updates_dir() {
     local updates_dir="/var/www/updates"
-    mkdir -p "$updates_dir"
-    chown root:root "$updates_dir"
-    chmod 755 "$updates_dir"
+    local admin_dir="/var/www/admin"
+    mkdir -p "$updates_dir" "$admin_dir"
+    chown root:root "$updates_dir" "$admin_dir"
+    chmod 755 "$updates_dir" "$admin_dir"
     log "✓ Updates directory ready at ${updates_dir}"
+    log "✓ Admin console directory ready at ${admin_dir}"
+}
+
+# ── Install the release upload service ──
+# The console uploads multi-MB binaries; PocketBase rejects bodies above a few
+# MB and does not expose multipart files to hooks, and this Caddy build has no
+# upload handler. So a small dedicated service owns uploads, bound to
+# 127.0.0.1 and reached only through Caddy at /api/admin/upload.
+install_upload_service() {
+    local unit="/etc/systemd/system/locus-upload.service"
+    local tmpl
+    tmpl="$(dirname "$SCRIPT_DIR")/templates/locus-upload.service"
+
+    if [ ! -f "$tmpl" ]; then
+        warn "templates/locus-upload.service not found — skipping upload service"
+        return 0
+    fi
+    # The uploader script itself must exist where the unit expects it.
+    if [ ! -f /root/server/scripts/release_upload.py ]; then
+        warn "scripts/release_upload.py not found at /root/server/scripts — skipping upload service"
+        return 0
+    fi
+
+    # Only rewrite when the content differs, so a re-run does not restart a
+    # service that is happily serving.
+    if [ ! -f "$unit" ] || ! cmp -s "$tmpl" "$unit"; then
+        cp "$tmpl" "$unit"
+        systemctl daemon-reload
+    fi
+    systemctl enable locus-upload 2>/dev/null || true
+    systemctl restart locus-upload 2>/dev/null || true
+    sleep 1
+    if systemctl is-active --quiet locus-upload; then
+        log "✓ Upload service running on 127.0.0.1:8091"
+    else
+        warn "Upload service not running — check: journalctl -u locus-upload -n 20 --no-pager"
+    fi
+}
+
+# ── Deploy the admin console bundle ──
+# The built SPA is shipped as a tarball at /root/server/console-dist.tar.gz by
+# the deploy step (see OPS.md). If it is absent we leave whatever is already in
+# /var/www/admin alone rather than blanking a working console.
+deploy_console() {
+    local bundle="/root/server/console-dist.tar.gz"
+    local target="/var/www/admin"
+    if [ ! -f "$bundle" ]; then
+        if [ -f "$target/index.html" ]; then
+            log "No console bundle provided — keeping the existing console"
+        else
+            warn "Console not deployed yet. Build with: npm --prefix v5/console run build"
+            warn "  then upload the dist/ as ${bundle} and re-run this module."
+        fi
+        return 0
+    fi
+    mkdir -p "$target"
+    tar xzf "$bundle" -C "$target" 2>/dev/null || {
+        warn "Could not extract ${bundle} — console left unchanged"
+        return 0
+    }
+    chown -R root:root "$target"
+    chmod -R a+rX "$target"
+    log "✓ Admin console deployed to ${target}"
 }
 
 # ═══════════════════════════════════════════
@@ -314,6 +414,8 @@ create_systemd_service
 deploy_caddyfile
 deploy_update_json
 deploy_updates_dir
+install_upload_service
+deploy_console
 
 # ── Enable and start Caddy ──
 systemctl daemon-reload

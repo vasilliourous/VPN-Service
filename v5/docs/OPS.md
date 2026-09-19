@@ -80,31 +80,39 @@ ssh $VPS "tail -10 /var/log/myvpn-backup.log"
 
 ## User Management
 
-### Check Activation Codes
+Most day-to-day work happens in the **admin console** — see
+[Admin Console](#admin-console-web-ui) below. Use that unless it is unavailable.
+
+The commands here are the fallback path, kept because they still work when the
+console is broken, and because they are what the console actually calls.
+
+### Check activation codes
 
 ```bash
-# All codes
+# Everything the console shows is available raw:
 curl -s "$PB_API/api/collections/codes/records?skipTotal=1" \
-  -H "Authorization: Bearer $PB_TOKEN" | jq '.items[] | {code: .code, tier: .tier, used: .used, suspended: .suspended, bound_fingerprint: .bound_fingerprint}'
+  -H "Authorization: Bearer $PB_TOKEN" \
+  | jq '.items[] | {code, tier, suspended, bound_fingerprint}'
 ```
 
-### Suspend a User
+### Suspend / reactivate a user
 
 ```bash
-# Find the record ID
+# In the console: find the code -> Suspend.
+# By hand:
 RECORD_ID=$(curl -s "$PB_API/api/collections/codes/records?filter=(code='RQ-ABCD-EFGH-JKMN-T')" \
   -H "Authorization: Bearer $PB_TOKEN" | jq -r '.items[0].id')
 
-# Suspend
 curl -X PATCH "$PB_API/api/collections/codes/records/$RECORD_ID" \
-  -H "Authorization: Bearer $PB_TOKEN" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PB_TOKEN" -H "Content-Type: application/json" \
   -d '{"suspended": true}'
 ```
 
-### Unbind a Device (Allow Re-activation)
+### Unbind a device (allow re-activation)
 
 ```bash
+# In the console: find the code -> Unbind.
+# By hand (note: the token goes in the JSON BODY as `admin_token`, not a header):
 curl -X POST "$PB_API/api/admin/unbind-code" \
   -H "Content-Type: application/json" \
   -d '{
@@ -114,14 +122,39 @@ curl -X POST "$PB_API/api/admin/unbind-code" \
   }'
 ```
 
-### Generate New Codes
+### Generate new codes
 
 ```bash
-# From your local machine (the token is the PocketBase ADMIN JWT, not the
-# app-level ADMIN_API_TOKEN — see generate_codes.sh --help)
-PB_TOKEN=$(ssh root@your-vps "grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2")
-./scripts/generate_codes.sh "$PB_API" "$PB_TOKEN" eco 10
+# In the console: Codes & Clients -> Create codes.
+#
+# By hand, via the same API the console uses (recommended over the older
+# generate_codes.sh, which needs a PocketBase JWT):
+curl -s -X POST "$PB_API/api/admin/console" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -d '{"action":"codes.generate","tier":"eco","count":10,
+       "expires_at":"2027-09-19","middleman":"Sarah"}' | jq .
 ```
+
+### Admin API actions (reference)
+
+Every console page is a POST to `/api/admin/console` with an `action`:
+
+| Action | Purpose |
+|---|---|
+| `dashboard` | Counts, per-tier totals, recent activity |
+| `codes.list` | Search/filter codes (`query`, `tier`, `status`, `middleman`) |
+| `codes.generate` | Create codes (`tier`, `count`, `expires_at`, `middleman`, `label`, `notes`) |
+| `codes.suspend` / `codes.unsuspend` | Toggle suspension |
+| `codes.unbind` | Release a device binding (`code`, `reason`) |
+| `codes.expire` | Set or clear an expiry |
+| `codes.update` | Edit `middleman` / `label` / `notes` |
+| `codes.history` | Per-code event trail |
+| `middlemen.list` | Distinct middleman labels and their code counts |
+| `tiers.list` / `tiers.update` | Read / edit tier connection settings |
+| `releases.get` / `releases.set` | Read / set version and rollout |
+
+Auth: `X-Admin-Token` header **or** `admin_token` in the body.
 
 ---
 
@@ -222,6 +255,90 @@ ssh $VPS "systemctl restart pocketbase"
 # tc rules after reboot
 ssh $VPS "systemctl restart tc-eco-cap tc-stealth-cap tc-strike-cap"
 ```
+
+---
+
+## Admin Console (web UI)
+
+**`https://networkingguides.duckdns.org/admin/`** — the everyday way to run the
+hub. Everything below that used to need SSH + Python + sqlite is a form now.
+
+Sign in with the admin token (`ADMIN_API_TOKEN` from `/etc/environment`; on the
+VPS it is also at `/root/.admin_api_token`). The token is held in browser
+session storage only, is never baked into the served bundle, and is cleared
+when you sign out or the session ends.
+
+> Tip: bookmark `https://…/admin/?token=<token>` to sign in with one click. The
+> token is stripped from the address bar immediately, but it *is* in a bookmark
+> file — skip this if the machine is shared.
+
+### What each page does
+
+| Page | What it is for |
+|---|---|
+| **Dashboard** | Counts of available / activated / suspended codes, codes per tier, codes expiring in 30 days, and a recent-activity feed. |
+| **Codes & Clients** | Generate codes (1–500 at a time, per tier, with an expiry, a middleman and a label), search and filter them, suspend/reactivate, unbind a device, edit detail, export CSV. |
+| **Releases** | Upload the four release binaries from the browser and set the rollout percentage. |
+| **Tiers** | Server hostname, port, method and active/UDP-relay flags per tier. |
+
+### Common jobs
+
+**Issue 20 codes to a middleman**
+Codes & Clients → Tier = `eco`, How many = `20`, Expires = (a year out),
+For middleman = `Sarah`, Label = anything you find useful → **Create codes** →
+**Copy all**. The generated list is shown once; export CSV if you want a record.
+
+**A student changed laptops**
+Find the code → **Unbind**. The code returns to *available* and can be activated
+again on the same or a different device. The unbind (with your reason) is
+recorded in that code's history.
+
+**A student stopped paying**
+**Suspend**. Their next heartbeat returns *Account suspended* and the app stops
+working. **Reactivate** reverses it. Nothing is deleted.
+
+**Publish an update**
+See "Client Update System" below — all four uploads and the rollout happen on
+the Releases page.
+
+**Change a tier's port**
+Tiers → edit → Save. Clients pick it up on their next heartbeat (≤5 min).
+
+### Publishing an update from the console
+
+1. Get the four **raw** binaries from the GitHub Release for the new tag:
+   `locus-linux-amd64`, `locus-windows-amd64.exe`, `locus-darwin-amd64`,
+   `locus-darwin-arm64`. **Not** the `.zip` bundles — the updater replaces the
+   app binary directly and cannot unpack a zip.
+2. Releases → enter the version (e.g. `1.1.0`) → pick each file → **Upload**.
+   Each upload shows a progress bar; the browser hashes the file first so a
+   truncated transfer is rejected with a clear message rather than corrupting a
+   release.
+3. **Stage at 5%**, confirm a few clients update, then widen: 25% → 100%.
+
+The password of a tier is deliberately *not* editable in the console — changing
+it instantly breaks every client already using that tier, so it stays a
+deliberate, documented operation.
+
+### If the console will not load
+
+```bash
+# Is the bundle present and being served?
+ssh $VPS "ls /var/www/admin/index.html && curl -s -o /dev/null -w '%{http_code}\n' https://networkingguides.duckdns.org/admin/"
+
+# Redeploy it (builds locally, uploads, verifies)
+v5/server/scripts/deploy-console.sh
+
+# Is the upload service up? (only needed for releases)
+ssh $VPS "systemctl status locus-upload --no-pager && curl -s http://127.0.0.1:8091/health"
+
+# Admin API errors
+ssh $VPS "journalctl -u pocketbase -n 50 --no-pager | grep -i admin_console"
+```
+
+Sign-in failing ("token not accepted") almost always means the token does not
+match `ADMIN_API_TOKEN` on the server:
+`ssh $VPS "cat /root/.admin_api_token"`.
 
 ---
 

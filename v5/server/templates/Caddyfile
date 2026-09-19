@@ -59,6 +59,26 @@ ${DOMAIN} {
         reverse_proxy 127.0.0.1:8090
     }
 
+    # Admin console (static SPA at /admin/)
+    @admin_root path /admin
+    redir @admin_root /admin/ permanent
+    handle_path /admin/* {
+        root * /var/www/admin
+        header {
+            X-Robots-Tag "noindex, nofollow"
+            Cache-Control "no-cache"
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+        }
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Release uploads -> dedicated uploader (PocketBase caps bodies at a few MB)
+    handle /api/admin/upload {
+        reverse_proxy 127.0.0.1:8091
+    }
+
     # Static files
     handle /update.json {
         file_server

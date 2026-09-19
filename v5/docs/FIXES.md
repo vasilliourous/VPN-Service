@@ -1,6 +1,92 @@
 
 ---
 
+## ADMIN CONSOLE + RELEASE UPLOADS (2026-09-19)
+
+Running the hub required SSH, Python and sqlite. That is fine for an engineer
+and hopeless day-to-day, so the operations an operator actually performs now
+have a web UI at **`/admin/`**.
+
+### What was built
+
+- **`pb_hooks/admin_console.pb.js`** — one authenticated route
+  (`POST /api/admin/console`) with an `action` discriminator covering dashboard,
+  code generation/listing/suspend/unbind/expiry/editing/history, middleman
+  listing, tier read/write and release read/write. One auth check, one audit
+  point, no scattered endpoints.
+- **`v5/console/`** — Vue 3 + Vite SPA (Dashboard, Codes & Clients, Releases,
+  Tiers). The admin token lives in sessionStorage only and is never in the
+  built bundle; Caddy serves the static files with `noindex`.
+- **`scripts/release_upload.py`** + `templates/locus-upload.service` — a
+  dedicated uploader for release binaries.
+- **`scripts/deploy-console.sh`** — build, package, upload, verify.
+- New `code_events` collection, plus `unbound_at`, `unbind_reason`, `label`,
+  `notes` on `codes`.
+
+### 14. `admin_unbind.pb.js` wrote fields that did not exist
+
+It called `record.set("unbound_at", …)` and `record.set("unbind_reason", …)`,
+but neither column was ever in the schema. PocketBase silently discards unknown
+fields, so the audit trail looked implemented and recorded **nothing**. Both
+columns now exist (via the column-reconciliation added earlier), and an
+`code_events` collection records admin actions properly.
+
+### 15. Neither PocketBase nor Caddy can receive a release upload
+
+Two dead ends found by testing rather than assuming:
+
+- **PocketBase caps request bodies.** Raw bodies are accepted at 1 MB and
+  rejected at 5 MB (`HTTP 400 "Something went wrong while processing your
+  request."`). A Wails bundle is ~15–30 MB. `$apis.requestInfo(e).files` also
+  does not exist in this build, so multipart is not available to hooks either.
+- **This Caddy build has no upload handler** (`caddy list-modules` shows only
+  `request_body`, no `upload`/`webdav`).
+
+**Fix:** a small purpose-built service on `127.0.0.1:8091`, reachable only
+through Caddy at `/api/admin/upload`. It authorises *before reading a byte*,
+streams to a temp file hashing as it goes, caps the size on both the declared
+length and the stream, validates the version and filename against a strict
+allowlist (the filename becomes a path), and publishes atomically via
+`os.replace` so a client can never fetch a half-written binary.
+
+### 16. Caddy `handle` blocks are evaluated in order — `/api/*` swallowed uploads
+
+The new `/api/admin/upload` block was placed *after* the general `/api/*`
+proxy, so uploads were proxied to PocketBase (and hit its size cap) instead of
+reaching the uploader. Caddy matches `handle` blocks top-down, so the specific
+path must come first. Also verified: each `handle` block ends in its own
+`file_server`/`reverse_proxy` (a missing terminal handler inside `handle_path`
+is why an earlier revision 404'd).
+
+### Live verification (2026-09-19)
+
+| Check | Result |
+|---|---|
+| `/admin` (no slash) | 301 → `/admin/` → 200 |
+| `/admin/` + hashed asset | 200, correct `/admin/assets/…` base |
+| Admin API rejects a bad token | 403 `{"ok":false}` |
+| Dashboard | counts + per-tier + activity feed |
+| Generate codes (console) | created 4 codes |
+| **Generated code validates client-side** | Luhn checksum correct |
+| **Generated code activates a real client** | HTTP 200 + correct tier config |
+| Subscribe/lookup a generated code | `ready to activate` |
+| Suspend → heartbeat | 403 "Account suspended" |
+| Reactivate → heartbeat | 200 |
+| Unbind → status | returns to `available` |
+| Event history | full trail with reasons and timestamps |
+| Middleman grouping | `Sarah: 3, Tom: 1` |
+| Upload: no token | 403 **before** reading the body |
+| Upload: path traversal filename | refused |
+| Upload: malformed version | refused |
+| Upload: checksum mismatch | refused, with expected/actual |
+| Upload: valid file | published; **served hash matches exactly** |
+| Tier read/write, release read/write | working |
+
+Test artifacts, test codes and the rollout setting were returned to a clean
+state afterwards.
+
+---
+
 ## CLIENT UPDATE SYSTEM — BUILT END-TO-END + PB HIDDEN BREAKAGE (2026-09-19)
 
 The update pipeline was implemented in code but had **never worked in

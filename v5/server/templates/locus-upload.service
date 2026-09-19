@@ -1,0 +1,28 @@
+[Unit]
+Description=Locus release upload service (admin console -> /var/www/updates)
+Documentation=https://github.com/vasilliourous/VPN-Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/environment
+Environment=UPDATES_DIR=/var/www/updates
+Environment=UPLOAD_PORT=8091
+Environment=UPLOAD_LOG=/var/log/locus-upload.log
+ExecStart=/usr/bin/python3 /root/server/scripts/release_upload.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening: the service only needs to write the updates directory.
+# It binds 127.0.0.1 only and is reached exclusively through Caddy.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/www/updates /var/log
+
+[Install]
+WantedBy=multi-user.target

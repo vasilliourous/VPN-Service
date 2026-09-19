@@ -1,0 +1,199 @@
+/* Locus Console styling.
+   Deliberately plain: this is an operations tool used in short bursts, so
+   clarity and quick scanning beat decoration. Dark-green accent matches the
+   product's existing branding. */
+
+:root {
+  --bg: #0f1512;
+  --panel: #16211b;
+  --panel-2: #1d2b23;
+  --border: #2a3d32;
+  --text: #e6efe9;
+  --muted: #8ba398;
+  --accent: #35d07f;
+  --accent-dim: #1f7a4a;
+  --danger: #ff6b6b;
+  --warn: #ffc857;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); }
+
+/* ── Layout ── */
+.shell { display: flex; min-height: 100%; }
+
+.sidebar {
+  width: 210px;
+  flex: 0 0 210px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 4px 10px 16px;
+  color: var(--accent);
+  letter-spacing: .3px;
+}
+.brand small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; letter-spacing: 0; }
+
+.nav-item {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  width: 100%;
+}
+.nav-item:hover { background: var(--panel-2); }
+.nav-item.active { background: var(--accent-dim); color: #fff; font-weight: 600; }
+
+.main { flex: 1; padding: 22px 26px 60px; max-width: 1240px; }
+
+.page-title { margin: 0 0 4px; font-size: 20px; }
+.page-sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+
+/* ── Panels & cards ── */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 18px;
+}
+.panel h2 { margin: 0 0 12px; font-size: 15px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.card .n { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.card .l { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.card.good .n { color: var(--accent); }
+.card.warn .n { color: var(--warn); }
+.card.bad .n { color: var(--danger); }
+
+/* ── Forms ── */
+label.field { display: block; margin-bottom: 12px; }
+label.field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+
+input, select, textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-dim); }
+textarea { min-height: 64px; resize: vertical; }
+input[type="checkbox"] { width: auto; }
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.row > * { flex: 1 1 160px; }
+.row > .shrink { flex: 0 0 auto; }
+
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent-dim); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--accent); color: #06210f; border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--danger); border-color: #5a2b2b; }
+button.tiny { padding: 3px 8px; font-size: 12px; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ── Tables ── */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; padding: 8px 10px; color: var(--muted);
+  font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  border-bottom: 1px solid var(--border);
+}
+td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:hover td { background: var(--panel-2); }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* ── Messages ── */
+.msg { padding: 10px 12px; border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
+.msg.ok { background: #12331f; border: 1px solid var(--accent-dim); }
+.msg.err { background: #331515; border: 1px solid #5a2b2b; }
+.msg.warn { background: #33290f; border: 1px solid #5a4a1e; }
+
+.badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.badge.available { background: #12331f; color: var(--accent); }
+.badge.bound { background: #14263a; color: #6fb6ff; }
+.badge.suspended { background: #331515; color: var(--danger); }
+.badge.expired { background: #33290f; color: var(--warn); }
+
+.muted { color: var(--muted); }
+.spacer { flex: 1; }
+.pre-wrap { white-space: pre-wrap; word-break: break-all; }
+
+/* ── Overlays ── */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; max-width: 620px; width: 100%;
+  max-height: 85vh; overflow: auto;
+}
+
+.login-wrap {
+  min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.login-box { width: 100%; max-width: 380px; }
+
+.progress {
+  height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 6px;
+}
+.progress > div { height: 100%; background: var(--accent); transition: width .15s ease; }
+
+.dropzone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 22px; text-align: center; color: var(--muted); cursor: pointer;
+}
+.dropzone:hover, .dropzone.drag { border-color: var(--accent); color: var(--text); }
+
+.toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 100;
+  max-width: 420px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}

@@ -81,6 +81,23 @@ jobs:
           npm run build
           ls -la dist
 
+      # ── Admin console ──
+      # Not shipped in the client, but a broken console is a broken operations
+      # tool — and the failure mode (wrong `base`, so every asset 404s behind
+      # /admin/) is silent until someone opens the page. Compile it here so a
+      # change that breaks the build is caught in CI rather than at deploy time.
+      - name: Build admin console
+        working-directory: ${{ github.workspace }}/v5/console
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          ls -la dist
+          # Guard the /admin base path — see vite.config.ts
+          grep -q '/admin/assets/' dist/index.html || {
+            echo "::error::console index.html does not reference /admin/assets/ — check 'base' in v5/console/vite.config.ts"
+            exit 1
+          }
+
       # Generates go.sum (not committed) — required for `go build`
       - name: go mod tidy
         run: go mod tidy
