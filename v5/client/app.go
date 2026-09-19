@@ -1010,19 +1010,25 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 		a.lastUpdateDetail = res.Reason
 	}()
 	if a.hb == nil {
-		res.Status = UpdateStatusNotActivated
-		res.Reason = "No activation code is bound to this device yet, so there is nothing to check against."
-		return res
+		// No code is bound, so the heartbeat path cannot run. Fall back to the
+		// public release manifest, which needs no credentials — otherwise an
+		// unactivated (or unactivatable) client could never be told that a
+		// fixed build exists.
+		return a.checkUpdateViaPublicManifest(res, UpdateStatusNotActivated,
+			"No activation code is bound to this device yet, so this checked the public release list.")
 	}
 
 	result := a.hb.DoBeat()
 	if !result.Success || result.Resp == nil {
-		res.Status = UpdateStatusUnreachable
-		res.Reason = "Could not reach the update server. This is usually a network block — check your connection and try again."
+		// The heartbeat failed. That used to be the end of the road: the client
+		// could not learn about a new build at the exact moment it most needed
+		// one. Try the credential-free manifest before giving up.
 		if result.Error != nil {
 			res.HeartbeatError = result.Error.Error()
 		}
-		return res
+		return a.checkUpdateViaPublicManifest(res, UpdateStatusUnreachable,
+			"Could not reach the update server through your activation. "+
+				"This checked the public release list instead.")
 	}
 
 	advertised := result.Resp.UpdateAvailable
@@ -1079,6 +1085,69 @@ func (a *App) CheckForUpdate() UpdateCheckResult {
 	res.URL = url
 	res.SHA256 = a.lastUpdate.PlatformSHA256()
 	res.Reason = "Update " + a.lastUpdate.Version + " is ready to install."
+	return res
+}
+
+// checkUpdateViaPublicManifest is the fallback update path.
+//
+// It exists because the primary path (heartbeat) needs a bound activation code,
+// so a client whose build is broken badly enough to prevent activation — or
+// whose code is suspended — could never learn that a fix had been published.
+// The failure prevented escaping the failure.
+//
+// fallbackStatus/why describe WHY we ended up here, so the UI can still explain
+// the situation honestly. If the manifest yields a newer version, the result is
+// marked available and the reason says it came from the public list; otherwise
+// the original status is preserved (with the fallback appended to the reason)
+// so the user is not told "up to date" when we never actually reached the hub.
+func (a *App) checkUpdateViaPublicManifest(res UpdateCheckResult, fallbackStatus, why string) UpdateCheckResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	info, err := updater.FetchPublicRelease(ctx, a.hubURL, nil)
+	if err != nil {
+		// The public path failed too. Report the original condition — it is the
+		// more truthful description of why no update could be confirmed.
+		res.Status = fallbackStatus
+		res.Reason = why + " That also failed (" + err.Error() + ")."
+		return res
+	}
+	if info == nil {
+		res.Status = fallbackStatus
+		res.Reason = why + " No release is published."
+		return res
+	}
+
+	res.AdvertisedVersion = info.Version
+
+	if !updater.IsNewer(info.Version, a.version) {
+		// The public list agrees we are current. Keep the fallback status (the
+		// activation problem is still real and still worth reporting) but say
+		// the version itself is fine.
+		res.Status = fallbackStatus
+		res.Reason = why + " No newer release is published."
+		return res
+	}
+
+	url := info.PlatformDownloadURL()
+	sha := info.PlatformSHA256()
+	if url == "" || sha == "" {
+		res.Status = UpdateStatusNoAsset
+		res.Reason = "Version " + info.Version + " is published, but no build with a checksum exists for this platform (" + a.build.Platform + ")."
+		return res
+	}
+
+	// Adopt it so ApplyUpdate can act on it.
+	a.upMu.Lock()
+	a.lastUpdate = info
+	a.upMu.Unlock()
+
+	res.Available = true
+	res.Status = UpdateStatusAvailable
+	res.Version = info.Version
+	res.URL = url
+	res.SHA256 = sha
+	res.Reason = "Update " + info.Version + " is available. " + why
 	return res
 }
 

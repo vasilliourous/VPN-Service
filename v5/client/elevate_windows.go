@@ -45,14 +45,32 @@ func isElevated() bool {
 
 	var elevated uint32
 	var retLen uint32
-	// GetTokenInformation(hToken, TokenElevation, &elevated, 4, &retLen)
+	// GetTokenInformation(hToken, TokenElevation, &elevated, sizeof(elevated), &retLen)
+	//
+	// FIVE arguments — the buffer LENGTH (4) is its own parameter, and &retLen
+	// is the FIFTH. An earlier revision passed only four, omitting the length,
+	// so &retLen's pointer value was consumed as the buffer size and the real
+	// ReturnLength out-parameter read an unrelated stack slot. The call could
+	// still report success while never writing to `elevated`, which made this
+	// return false on processes that genuinely WERE elevated — the exact cause
+	// of "Windows did not grant administrator permission" being shown to a user
+	// who had approved the prompt.
 	ok, _, _ = getTokenInfo.Call(
 		uintptr(hToken),
 		uintptr(tokenElevation),
 		uintptr(unsafe.Pointer(&elevated)),
+		unsafe.Sizeof(elevated),
 		uintptr(unsafe.Pointer(&retLen)),
 	)
 	if ok == 0 {
+		return false
+	}
+	// A BOOL success with ReturnLength != 4 means the call did not deliver a
+	// TOKEN_ELEVATION value; treat that as "cannot determine" rather than
+	// trusting an unwritten (zero) buffer, which would read as "not elevated".
+	if retLen != uint32(unsafe.Sizeof(elevated)) {
+		log.Printf("isElevated: GetTokenInformation returned %d bytes, want %d — assuming not elevated",
+			retLen, unsafe.Sizeof(elevated))
 		return false
 	}
 	return elevated != 0

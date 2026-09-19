@@ -1,7 +1,100 @@
+## ELEVATION (CONT'D) — THE TOKEN CHECK ITSELF WAS BROKEN; UPDATES NEEDED A CODE (2026-09-19)
+
+### 41. `GetTokenInformation` was called with four arguments instead of five
+
+Entry 40 fixed the handoff logic, but the retest surfaced the deeper defect: the
+error persisted even when Windows *had* elevated the process. The cause was in
+the elevation probe itself.
+
+The Win32 signature is
+
+```c
+BOOL GetTokenInformation(HANDLE TokenHandle,
+                         TOKEN_INFORMATION_CLASS TokenInformationClass,
+                         LPVOID TokenInformation,
+                         DWORD TokenInformationLength,      // <-- omitted
+                         PDWORD ReturnLength);
+```
+
+Five parameters. The Go P/Invoke passed four, omitting the buffer LENGTH, so:
+
+- `&retLen`'s *pointer value* was consumed as the buffer size, and
+- the real `ReturnLength` out-parameter read an unrelated stack slot.
+
+The call could still return success while never writing to the `elevated`
+buffer — which read as zero, i.e. "not elevated". **Every** caller therefore saw
+`isElevated() == false`, including processes Windows had genuinely elevated,
+which is why "Run as administrator" made no difference: the app was not
+elevation-checking, it was reading uninitialised memory.
+
+Verified the constant was NOT the problem before changing anything:
+`TokenElevation = 20` is correct (confirmed against Microsoft Learn and
+pinvoke.net). Worth recording, because the obvious-looking first guess
+(`TokenElevationType = 18` being the intended value) would have been a
+plausible-looking "fix" that changed nothing.
+
+Fix: pass all five arguments with `unsafe.Sizeof(elevated)`, and treat a
+`ReturnLength` that is not 4 as "cannot determine" rather than trusting an
+unwritten buffer. Silently reading zero as "not elevated" is what turned a
+malformed call into a confident, wrong error message.
+
+### 42. Updates were only reachable through an activation code — a deadlock
+
+Raised by the user, and correct: "if the updates only work when connected, how
+can connection problems be updated?" The literal answer is better than it
+sounds, but the design had a real hole.
+
+**What was already true:** the heartbeat — which carries the update signal — is
+a plain HTTPS call to the hub and does NOT require the tunnel. It runs whenever
+the app is *activated*, connected or not. So a broken tunnel alone never blocked
+an update.
+
+**What was actually broken:** every update path began at
+`GET /api/heartbeat`, which requires a bound activation code. Three real
+situations therefore had no way to receive a fix at all:
+
+1. the installed build is bad enough that activation fails;
+2. the device has never activated;
+3. the code is suspended or expired and the operator's remedy is a new build.
+
+In each case the thing that is broken is the thing that would deliver the
+repair. The only escape was the `--revert` CLI flag, which needs a terminal.
+
+Fix, in two parts:
+
+- **`GET /api/release`** (new hook, `pb_hooks/release.pb.js`) — a credential-free
+  public manifest answering only "what version is published, and where". It
+  deliberately does NOT expose `rollout_percent` (fleet policy), any per-device
+  data, or any per-code data; the download URLs it returns are already served
+  openly from `/updates/*`. Returns `published:false` rather than 404 when
+  nothing is released, so "nothing published" stays distinguishable from
+  "cannot ask".
+- **Client fallback** (`internal/updater/manifest.go`) — `CheckForUpdate` falls
+  back to that manifest when the heartbeat is unavailable *or* no code is bound,
+  marks the result accordingly, and adopts it so `ApplyUpdate` works. Staged
+  rollout is intentionally not honoured on this path (it is per-device and
+  needs a fingerprint); the reason string says the check came from the public
+  list.
+- **Activation screen** gained a "Check for a newer version" affordance, so a
+  device that cannot activate is not stranded with no way to install a fix.
+  Previously `MainScreen` (which holds the update button) was not rendered at
+  all while unactivated.
+
+Tests: `manifest_test.go` covers parsing, the empty-manifest case, a
+missing-platform asset, HTTP/JSON/`ok:false` failures, and — guarding the same
+class of bug as the `server_port_uot`/`uot_port` mismatch — that the decoder
+matches the exact key shape the hook emits. A field-name drift here would
+silently report "no update" to every client.
+
+**Not yet deployed.** The hook requires an SSH deploy to the live hub; until
+then `/api/release` returns 404 and the client fallback degrades to reporting
+the original heartbeat failure, which is the correct behaviour.
+
+---
+
 ## ELEVATION — "ELEVATED COPY DID NOT HAVE PERMISSION" ON EVERY CONNECT (2026-09-19)
 
 ### 40. The elevation handoff mistook a normal auto-connect for a failed relaunch
-
 Reported from a real Windows machine: pressing Connect raised the UAC prompt,
 the user approved it, and the app replied
 
