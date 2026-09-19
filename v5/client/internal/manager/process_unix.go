@@ -28,18 +28,15 @@ func newProcAttr() *syscall.SysProcAttr {
 // shared code (which needs the same call on every platform) has one name to use.
 // On Windows the same function applies CREATE_NO_WINDOW; see process_windows.go
 // for why that matters (the terminal-flash bug).
+//
+// NOTE: only hiddenCommand is defined for both platforms. The Windows build also
+// has hiddenRun/hiddenOutput (thin .Run()/.Output() wrappers), but they are used
+// exclusively by Windows-only code — tasklist/netsh/taskkill have no Unix callers
+// — so defining them here would make them dead code on Linux and fail
+// golangci-lint's `unused` check (which runs on Linux). Keep this file to the
+// single function that shared code actually needs.
 func hiddenCommand(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
-}
-
-// hiddenRun spawns a helper and waits for it (see hiddenCommand).
-func hiddenRun(name string, args ...string) error {
-	return hiddenCommand(name, args...).Run()
-}
-
-// hiddenOutput spawns a helper and captures stdout (see hiddenCommand).
-func hiddenOutput(name string, args ...string) ([]byte, error) {
-	return hiddenCommand(name, args...).Output()
 }
 
 // killProcessGroup force-kills the whole process group led by p.
