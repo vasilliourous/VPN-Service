@@ -101,10 +101,14 @@ func TestFrontendPackageVersionMatchesRepoVersion(t *testing.T) {
 }
 
 // TestGeneratedWindowsResourceVersionMatchesRepoVersion guards the go:generate
-// directive that rebuilds rsrc_windows_*.syso. Those files stamp the Windows
-// executable's file/product version, so a stale literal there ships a binary
-// whose Properties tab reports a different version than the app itself — a
-// support trap, because the student reads one number and the log says another.
+// directive that REBUILDS rsrc_windows_*.syso.
+//
+// This asserts the directive text only. It is a necessary check but NOT a
+// sufficient one — the directive can be correct while the committed .syso files
+// are stale, because nothing re-runs `go generate` automatically. The check
+// that actually protects the release is
+// TestCommittedWindowsResourceBinariesMatchRepoVersion below, which reads the
+// version OUT of the compiled resources.
 func TestGeneratedWindowsResourceVersionMatchesRepoVersion(t *testing.T) {
 	want := repoVersion(t)
 	data, err := os.ReadFile("main.go")
@@ -117,5 +121,131 @@ func TestGeneratedWindowsResourceVersionMatchesRepoVersion(t *testing.T) {
 		t.Errorf("main.go go:generate directive does not contain %q; "+
 			"a stale value here ships a Windows binary whose file version "+
 			"disagrees with v5/VERSION (%s)", needle, want)
+	}
+}
+
+// windowsResource holds the version strings a .syso embeds.
+type windowsResource struct {
+	FileVersion    string
+	ProductVersion string
+	ProductName    string
+	FileDesc       string
+}
+
+// readWindowsResource extracts VS_VERSION_INFO string values from a compiled
+// Windows resource object.
+//
+// go-winres writes the version block as UTF-16LE, so the interesting strings are
+// not visible to a plain byte scan of the file. We decode each even-offset
+// UTF-16LE alignment and keep the plausible ASCII strings, then associate the
+// keys with the values that follow them. That is robust enough for a guard whose
+// job is to notice "this says 2.0.0 when it should say 2.1.0", without pulling
+// in a PE parser.
+func readWindowsResource(t *testing.T, path string) windowsResource {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", path, err)
+	}
+
+	// Decode both UTF-16 alignments; a resource block is 4-byte aligned and the
+	// alignment depends on the offsets of everything preceding it.
+	var best []string
+	for _, off := range []int{0, 1} {
+		if off >= len(raw) {
+			continue
+		}
+		tail := raw[off:]
+		if len(tail)%2 == 1 {
+			tail = tail[:len(tail)-1]
+		}
+		runes := make([]uint16, len(tail)/2)
+		for i := range runes {
+			runes[i] = uint16(tail[2*i]) | uint16(tail[2*i+1])<<8
+		}
+		var (
+			strs []string
+			cur  []rune
+		)
+		flush := func() {
+			if len(cur) >= 2 {
+				strs = append(strs, string(cur))
+			}
+			cur = cur[:0]
+		}
+		for _, r := range runes {
+			if r >= 32 && r < 127 {
+				cur = append(cur, rune(r))
+			} else {
+				flush()
+			}
+		}
+		flush()
+		if len(strs) > len(best) {
+			best = strs
+		}
+	}
+
+	var out windowsResource
+	// The version block is a flat key/value sequence: "FileVersion", "2.1.0",
+	// "ProductName", "Locus", ... so pair each known key with the next string.
+	keys := map[string]*string{
+		"FileVersion":     &out.FileVersion,
+		"ProductVersion":  &out.ProductVersion,
+		"ProductName":     &out.ProductName,
+		"FileDescription": &out.FileDesc,
+	}
+	for i, s := range best {
+		if dst, ok := keys[s]; ok && i+1 < len(best) {
+			*dst = best[i+1]
+		}
+	}
+	return out
+}
+
+// TestCommittedWindowsResourceBinariesMatchRepoVersion is the check that would
+// have caught the shipped defect: the committed rsrc_windows_*.syso files
+// stamped version 2.0.0 (and product name "MyVPN") while v5/VERSION said 2.1.0
+// and the app called itself Locus. Nothing detected it, because the previous
+// guard only grepped the go:generate directive for the right number — and the
+// directive WAS right. The stale artifacts are what shipped.
+//
+// Consequence if it regresses: a student right-clicks locus.exe, sees an
+// outdated version and the wrong product name, and reports a build that does
+// not exist.
+func TestCommittedWindowsResourceBinariesMatchRepoVersion(t *testing.T) {
+	want := repoVersion(t)
+
+	for _, arch := range []string{"amd64", "arm64"} {
+		path := "rsrc_windows_" + arch + ".syso"
+		t.Run(arch, func(t *testing.T) {
+			if _, err := os.Stat(path); err != nil {
+				t.Skipf("%s not present (regenerate with: go generate -tags windows)", path)
+			}
+			res := readWindowsResource(t, path)
+
+			if res.FileVersion == "" && res.ProductVersion == "" {
+				t.Fatalf("could not read any version strings from %s — the resource "+
+					"format may have changed; this guard is now blind and must be "+
+					"updated rather than deleted", path)
+			}
+			if res.FileVersion != want {
+				t.Errorf("%s FileVersion = %q, but v5/VERSION = %q.\n"+
+					"The Windows Properties tab would show a version that no longer "+
+					"exists. Regenerate: cd v5/client && go generate -tags windows",
+					path, res.FileVersion, want)
+			}
+			if res.ProductVersion != want {
+				t.Errorf("%s ProductVersion = %q, but v5/VERSION = %q",
+					path, res.ProductVersion, want)
+			}
+			// Brand check: the old resources said "MyVPN" long after the product
+			// was renamed, so assert the current name rather than merely
+			// asserting "not the old one".
+			if res.ProductName != "Locus" {
+				t.Errorf("%s ProductName = %q, want %q — a renamed product left the "+
+					"old brand in the executable's metadata", path, res.ProductName, "Locus")
+			}
+		})
 	}
 }

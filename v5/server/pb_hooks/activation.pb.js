@@ -109,6 +109,10 @@ routerAdd("POST", "/api/activate", function(e) {
         try { cfgRec = $app.dao().findFirstRecordByFilter("tier_configs", "tier = '" + tierVal + "'"); } catch (e3) { cfgRec = null; }
         var resp = {code:200, message:"Activation successful", tier:rec.getString("tier"), device_fingerprint:fp};
         if (cfgRec) {
+            // The tier config is passed through VERBATIM, so the UoT endpoint
+            // reaches the client under its stored key "uot_port". That key is a
+            // FROZEN wire contract — do not rename it. See the full note in
+            // heartbeat.pb.js and FIXES.md entry 29.
             try { resp.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { resp.server_config = cfgRec.get("config"); }
             resp.udp_relay = cfgRec.get("udp_relay");
         }

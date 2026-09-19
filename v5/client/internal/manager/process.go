@@ -918,7 +918,7 @@ func generateConfig(cfg Config) ([]byte, error) {
 	// the sing-box server port, while TCP stays on the standard port — the
 	// school firewall only sees TCP, and game UDP rides inside it.
 	//
-	// LIVE SINCE 2026-09-19: the strike tier advertises uot_port=8446, backed by
+	// LIVE SINCE 2026-09-19 (server side): the strike tier advertises uot_port=8446, backed by
 	// a sing-box UoT listener on the hub. Verified end-to-end (client UoT
 	// outbound -> :8446 -> UDP -> DNS answer). Note DNS does NOT use this
 	// outbound: dns-tunnel detours via "proxy" (8445) and the hijack-dns rule
@@ -927,6 +927,15 @@ func generateConfig(cfg Config) ([]byte, error) {
 	// The magic-domain detail still matters: only a sing-box server implements
 	// this protocol. Pointing uot_port at a shadowsocks-rust port silently
 	// breaks UDP rather than falling back.
+	//
+	// LIVE STATE (corrected 2026-09-19, FIXES.md 29): the strike tier DOES
+	// advertise uot_port=8446 and a sing-box UoT listener IS running on the
+	// live hub (verified: `ss -lntup` shows sing-box on TCP+UDP 8446). This
+	// comment previously claimed the feature was live, but it was not: the
+	// client's ServerConfig structs declared only "server_port_uot" while the
+	// hub sends "uot_port", so ServerPortUOT was permanently 0 and this branch
+	// never executed on any build. It now does. Stripe's gaming path is
+	// therefore active for the first time as of 2.1.0.
 	uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0
 	if uotEnabled {
 		config.Outbounds = append(config.Outbounds, Outbound{

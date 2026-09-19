@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"locus/internal/uotkey"
 )
 
 const (
@@ -74,7 +76,28 @@ type ServerConfig struct {
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
+	//
+	// Resolved via internal/uotkey. This struct is the one that persists the
+	// value to disk, so a config written by an older build (which could never
+	// populate this) is indistinguishable from "this tier has no UoT endpoint"
+	// — which is why stale state self-heals on the next successful heartbeat
+	// rather than needing a migration. See FIXES.md entry 29.
 	ServerPortUOT int `json:"server_port_uot,omitempty"`
+}
+
+// UnmarshalJSON resolves the UoT endpoint through internal/uotkey so a config
+// persisted by an older build (or hand-edited on disk) is read consistently.
+func (c *ServerConfig) UnmarshalJSON(data []byte) error {
+	var decoded uotkey.ServerConfig
+	if err := uotkey.DecodeInto(data, &decoded); err != nil {
+		return err
+	}
+	c.Server = decoded.Server
+	c.ServerPort = decoded.ServerPort
+	c.Password = decoded.Password
+	c.Method = decoded.Method
+	c.ServerPortUOT = decoded.ServerPortUOT
+	return nil
 }
 
 // Validate checks that the data is internally consistent.

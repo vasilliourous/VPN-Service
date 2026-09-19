@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"locus/internal/pinned"
+	"locus/internal/uotkey"
 )
 
 // Default intervals.
@@ -91,7 +92,26 @@ type ServerConfig struct {
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
+	//
+	// Resolved via internal/uotkey: the hub sends "uot_port" and this struct
+	// declared only "server_port_uot", so the value never landed and UoT was
+	// dead fleet-wide. See UnmarshalJSON and FIXES.md entry 29.
 	ServerPortUOT int `json:"server_port_uot,omitempty"`
+}
+
+// UnmarshalJSON resolves the UoT endpoint through internal/uotkey — the single
+// definition of the wire key. See the field comment above and FIXES.md 29.
+func (c *ServerConfig) UnmarshalJSON(data []byte) error {
+	var decoded uotkey.ServerConfig
+	if err := uotkey.DecodeInto(data, &decoded); err != nil {
+		return err
+	}
+	c.Server = decoded.Server
+	c.ServerPort = decoded.ServerPort
+	c.Password = decoded.Password
+	c.Method = decoded.Method
+	c.ServerPortUOT = decoded.ServerPortUOT
+	return nil
 }
 
 // Validate checks that the heartbeat response is well-formed.

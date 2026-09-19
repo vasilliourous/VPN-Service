@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"locus/internal/pinned"
+	"locus/internal/uotkey"
 )
 
 // Common errors.
@@ -53,7 +54,42 @@ type ServerConfig struct {
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
+	//
+	// Populated from EITHER "uot_port" (what the hub actually sends) or
+	// "server_port_uot" — see UnmarshalJSON below.
 	ServerPortUOT int `json:"server_port_uot,omitempty"`
+}
+
+// UnmarshalJSON resolves the UoT endpoint through internal/uotkey, which is the
+// single place that knows the wire field name.
+//
+// The hub sends "uot_port"; this struct originally declared only
+// "server_port_uot". Go's encoding/json ignores unknown keys WITHOUT error, so
+// the value never landed, ServerPortUOT was permanently 0, and
+// manager/process.go's `uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0`
+// was always false — UDP-over-TCP was never active on any build, while the
+// server correctly advertised a live endpoint. Fixed 2026-09-19 (FIXES.md 29).
+//
+// The wire key is frozen: deployed clients read "uot_port", so the tolerance
+// lives on this side. "server_port_uot" is also accepted so a future rename
+// cannot break this build the same way in reverse.
+func (c *ServerConfig) UnmarshalJSON(data []byte) error {
+	var decoded uotkey.ServerConfig
+	if err := uotkey.DecodeInto(data, &decoded); err != nil {
+		return err
+	}
+	return c.fromWire(decoded)
+}
+
+// fromWire copies the shared shape into this package's richer type,
+// normalising the UoT key in one place.
+func (c *ServerConfig) fromWire(w uotkey.ServerConfig) error {
+	c.Server = w.Server
+	c.ServerPort = w.ServerPort
+	c.Password = w.Password
+	c.Method = w.Method
+	c.ServerPortUOT = w.ServerPortUOT
+	return nil
 }
 
 // ActivateRequest is sent to the activation endpoint.

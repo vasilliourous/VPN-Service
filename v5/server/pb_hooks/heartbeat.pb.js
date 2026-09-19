@@ -96,6 +96,20 @@ routerAdd("POST", "/api/heartbeat", function(e) {
             cfgRec = null;
         }
         if (cfgRec) {
+            // ─── FROZEN WIRE CONTRACT — DO NOT RENAME ───────────────────────
+            // The tier's config JSON is passed through VERBATIM, so the UoT
+            // endpoint reaches the client under its stored key, "uot_port".
+            //
+            // That key is load-bearing and cannot be changed: clients already
+            // in the field read "uot_port", and an unknown-to-them key is a
+            // SILENT no-op rather than an error — the exact failure that made
+            // UDP-over-TCP dead fleet-wide until 2026-09-19 (the client struct
+            // declared only "server_port_uot"). The client now tolerates both
+            // spellings via internal/uotkey, but the hub must keep emitting
+            // "uot_port" because older builds cannot be updated retroactively.
+            //
+            // See FIXES.md entry 29 and internal/uotkey for the full history.
+            // ────────────────────────────────────────────────────────────────
             try { response.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { response.server_config = cfgRec.get("config"); }
             response.udp_relay = cfgRec.get("udp_relay");
         }
