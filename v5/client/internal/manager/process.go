@@ -917,6 +917,16 @@ func generateConfig(cfg Config) ([]byte, error) {
 	// When UoT IS advertised: UDP is pinned to a dedicated UoT outbound on
 	// the sing-box server port, while TCP stays on the standard port — the
 	// school firewall only sees TCP, and game UDP rides inside it.
+	//
+	// LIVE SINCE 2026-09-19: the strike tier advertises uot_port=8446, backed by
+	// a sing-box UoT listener on the hub. Verified end-to-end (client UoT
+	// outbound -> :8446 -> UDP -> DNS answer). Note DNS does NOT use this
+	// outbound: dns-tunnel detours via "proxy" (8445) and the hijack-dns rule
+	// matches before any network:udp rule, so only non-DNS UDP rides UoT.
+	//
+	// The magic-domain detail still matters: only a sing-box server implements
+	// this protocol. Pointing uot_port at a shadowsocks-rust port silently
+	// breaks UDP rather than falling back.
 	uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0
 	if uotEnabled {
 		config.Outbounds = append(config.Outbounds, Outbound{

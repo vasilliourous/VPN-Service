@@ -1,12 +1,31 @@
 # Gaming UDP — Implementation Plan (Consolidated 2026-08-14)
 
-> **Status: on by default in a fresh deploy; not yet enabled on the current host.**
+> **Status: LIVE on the current host (`170.64.196.179`) — enabled 2026-09-19.**
 >
-> The code landed and the **UoT transport was validated end-to-end on
-> 2026-08-14** on the *then-live* VPS (`134.199.155.166`, port 8446): a sing-box
-> client with `udp_over_tcp: true` → :8446 → sing-box server → UDP to 1.1.1.1:53
-> → DNS reply returned through the UoT chain (2 answers, QR flag set). That host
-> is now **retired and offline**.
+> `sing-box-uot` is active and listening on **TCP+UDP 8446**, and the strike tier
+> advertises `udp_relay=true` + `uot_port=8446`. Verified end-to-end on the live
+> host: a sing-box client with `udp_over_tcp: true` → 127.0.0.1:8446 → sing-box
+> server → UDP to 8.8.8.8:53 → DNS reply returned. The server log confirms the
+> mechanism explicitly:
+>
+> ```
+> inbound/shadowsocks[strike-uot]: inbound connection to sp.v2.udp-over-tcp.arpa:0
+> inbound/shadowsocks[strike-uot]: inbound UoT connection to 8.8.8.8:53
+> outbound/direct: outbound packet connection
+> ```
+>
+> The same test also confirmed **raw** UDP (via the ordinary 8445 shadowsocks
+> port) relays correctly on this host.
+>
+> **Still outstanding: a real game session on a school network.** The transport
+> is proven; the acceptance gate in §P1 (5-minute SCP:SL or similar, on N4L,
+> versus the raw-UDP baseline) has still never been run. Until it is, treat
+> Strike's gaming claim as unvalidated in the field.
+>
+> **Historically:** the code landed and the UoT transport was first validated
+> 2026-08-14 on the then-live VPS (`134.199.155.166`, port 8446). That host is
+> now **retired and offline**, and the current host was deployed while UoT was
+> still opt-in, which is why this needed enabling by hand.
 >
 > **Default now:** `02-shadowsocks.sh` and `setup.sh` build the UoT endpoint
 > unless `ENABLE_UOT=0` is set, `08-firewall.sh` opens 8446 TCP+UDP, and
@@ -15,16 +34,17 @@
 > exception and needs `ENABLE_UOT=0` **plus** a re-seed, or clients are told to
 > use a port nothing is listening on.
 >
-> **The current live host (`170.64.196.179`) predates that change** — it was
-> deployed when UoT was opt-in, so `sing-box-uot` is inactive there and strike
-> does not advertise `uot_port`. Enabling it is one idempotent command:
-> `UOT_PORT=8446 bash v5/server/scripts/enable-uot.sh` then
-> `ENABLE_UOT=1 python3 v5/server/scripts/seed-pb.py`. See `OPS.md` → "#7 Gaming
-> UDP (Strike)". It is reversible in seconds and touches none of the 8443/44/45
-> TCP tiers.
->
-> **Remaining P1 item (never run on any host):** a REAL game session (SCP:SL) on
-> the school network. The transport is proven; the game is not.
+> **Testing note (learned the hard way):** do not test the UDP path by sending a
+> bare DNS datagram at a `mixed` inbound. The client's sing-box sniffs and
+> hijacks DNS, and UDP through the tunnel is reached via **SOCKS5 UDP
+> ASSOCIATE**, not by throwing an unauthenticated packet at the port. Two
+> apparently-failing tests here were bad tests, not a broken server — the raw
+> UDP and UoT paths both worked once exercised the way the tunnel actually
+> carries UDP.
+
+> This document consolidates the analysis from the packet-level debugging narrative (diag/ toolkit, FIXES.md, CONTEXT.md) into an ordered change plan
+> to make the Strike tier's gaming promise actually function on N4L school
+> networks. Read `CONTEXT.md` and `FIXES.md` for the full debugging history.
 >
 > **P1 throughput baselines (2026-08-14, via the Stealth TCP path — clash
 > config `clash-verge-stealth.yaml`):** school network 25.3 down / 113.6 up

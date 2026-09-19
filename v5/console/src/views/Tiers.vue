@@ -115,19 +115,23 @@ onMounted(load)
       but no client will be told to use it.
     </p>
     <p class="muted" style="margin: 0; font-size: 12px">
-      <strong>UoT port</strong> is the UDP-over-TCP endpoint the client will tunnnel
+      <strong>UoT port</strong> is the UDP-over-TCP endpoint the client will tunnel
       UDP through. Both switches are required: the client only creates the UoT
       outbound when <strong>UDP relay</strong> is on <em>and</em> a
       <code>uot_port</code> is set.
       <br /><br />
       Only use this for <strong>Strike</strong>, and only when a sing-box UoT
-      listener (normally 8446) is running on this server — install it with
+      listener is running on this server (normally 8446) — install it with
       <code>enable-uot.sh</code>; see <code>docs/GAMING-UDP.md</code>. Do not point
       it at the ordinary shadowsocks-rust ports (8443/8444/8445): those do not
       implement sing-box's UDP-over-TCP and will refuse the connections.
       <br /><br />
-      On this deployment the UoT endpoint is <strong>not</strong> currently
-      running, so no tier should have a UoT port set.
+      Confirm the listener is actually up before setting the port:
+      <code>systemctl status sing-box-uot</code> and
+      <code>ss -lntup | grep 8446</code> (it must listen on <em>UDP</em> as well as
+      TCP). A port advertised with nothing listening breaks UDP — game and voice
+      traffic — while TCP and DNS keep working, so the failure looks like "some
+      things work, some don't" rather than an obvious outage.
     </p>
   </div>
 </template>
