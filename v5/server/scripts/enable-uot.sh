@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # enable-uot.sh — Idempotently install & start the sing-box UDP-over-TCP
-# endpoint on an ALREADY-DEPLOYED Locus/MyVPN VPS, then advertise uot_port +
+# endpoint on an ALREADY-DEPLOYED Locus VPS, then advertise uot_port +
 # udp_relay=true for the Strike tier so compatible clients (sing-box) route
 # game/voice UDP over TCP.
 #

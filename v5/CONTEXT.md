@@ -10,6 +10,24 @@
 > **Not covered here:** build steps (see `docs/`), API contracts (see `docs/API.md`),
 > server deployment (see `docs/DEPLOY.md`).
 
+> **Naming rule (read before "tidying up" a `myvpn` string).** The product is
+> **Locus**. Two classes of legacy `myvpn` name survive on purpose:
+>
+> 1. **Live server paths and unit names** — `/usr/local/bin/myvpn-backup.sh`,
+>    `myvpn-tc-apply.sh`, `/etc/myvpn/tc`, `/var/log/myvpn-*.log`,
+>    `SKIP_CONSOLE`-adjacent unit descriptions. These exist on the deployed host
+>    right now. Renaming them in the repo desynchronises the definition from the
+>    running system, so a fresh `setup.sh` would install a file the existing
+>    units do not call. **Rename only as part of a redeploy, never as a
+>    drive-by.**
+> 2. **Client backup directory** `.myvpn-backups/` — on every activated
+>    machine's disk. Renaming it orphans existing rollback copies.
+>
+> Everything else — user-visible strings, hook headers, log banners, document
+> text, the Windows executable's product name — is **Locus** and should be fixed
+> on sight. The one that actually reached a user was the shadowsocks link tag in
+> `hiddify.pb.js` ("Eco - MyVPN"), fixed 2026-09-19 (FIXES.md 34).
+>
 > **Rebrand (2026-08):** This product was renamed **MyVPN → Locus** and re-themed
 > from dark-purple to **dark green**. All client code, identifiers, the module path,
 > binary/output names, the `locus0` TUN interface, app/log/code-prefix tokens, the
@@ -64,7 +82,7 @@ The business and sales docs are kept privately — not in this repo.
 ```
 VPN-Service/
 ├── v5/                 ← DEFINITIVE VERSION (hardened client + server + console + docs)
-│   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.0.0)
+│   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.1.0)
 │   ├── server/         ← VPS deployment modules + PocketBase hooks
 │   ├── console/        ← Admin console SPA (Vue 3 + Vite), served at /admin/
 │   ├── docs/           ← Architecture, deploy, ops, API, fixes

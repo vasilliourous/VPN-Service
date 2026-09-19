@@ -1,4 +1,4 @@
-// MyVPN Activation Hook — PocketBase 0.22 compatible
+// Locus Activation Hook — PocketBase 0.22 compatible
 // Uses findFirstRecordByData for lookups (simplest API, works across versions)
 // Uses newQuery().execute() for SQL operations
 // All code inside routerAdd callback (functions not hoisted in goja scope)

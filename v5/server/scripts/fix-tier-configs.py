@@ -62,7 +62,7 @@ def api(method, path, data=None, token=None):
 
 
 def main():
-    log("== MyVPN tier_configs repair ==")
+    log("== Locus tier_configs repair ==")
 
     # ── 0. Sanity checks ──
     if not os.path.isdir(SS_CONFIG_DIR):

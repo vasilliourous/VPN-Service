@@ -95,7 +95,7 @@ create_service() {
 
     cat > "$service_file" <<SERVICE
 [Unit]
-Description=PocketBase — MyVPN Admin Backend
+Description=PocketBase — Locus Admin Backend
 After=network.target
 
 [Service]

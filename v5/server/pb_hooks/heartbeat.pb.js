@@ -1,4 +1,4 @@
-// MyVPN Heartbeat Hook — PocketBase 0.22 compatible
+// Locus Heartbeat Hook — PocketBase 0.22 compatible
 // Changed from GET to POST to avoid leaking activation codes in server access logs.
 // Code and fingerprint are sent in the JSON body, not URL query parameters.
 routerAdd("POST", "/api/heartbeat", function(e) {

@@ -33,7 +33,7 @@ write_backup_script() {
 
     cat > "$BACKUP_SCRIPT" << 'SCRIPT'
 #!/usr/bin/env bash
-# MyVPN PocketBase Backup to Backblaze B2
+# Locus PocketBase Backup to Backblaze B2
 # Triggered hourly by systemd timer.
 set -euo pipefail
 
@@ -172,7 +172,7 @@ write_timer() {
 
     cat > "$BACKUP_TIMER" << 'TIMER'
 [Unit]
-Description=MyVPN hourly PocketBase backup to B2
+Description=Locus hourly PocketBase backup to B2
 Requires=pocketbase.service
 
 [Timer]
@@ -188,7 +188,7 @@ TIMER
     # Write companion service
     cat > "$BACKUP_SERVICE" << 'SERVICE'
 [Unit]
-Description=MyVPN PocketBase backup to B2
+Description=Locus PocketBase backup to B2
 After=network.target pocketbase.service
 
 [Service]
@@ -233,7 +233,7 @@ B2WARN
 
     # IMPORTANT: Use 'set -a' semantics so variables are exported when script is sourced
     cat > "$CREDS_FILE" << EOF
-# MyVPN B2 Backup Credentials
+# Locus B2 Backup Credentials
 # Sourced by myvpn-backup.sh
 B2_APPLICATION_KEY_ID="${B2_APPLICATION_KEY_ID}"
 B2_APPLICATION_KEY="${B2_APPLICATION_KEY}"

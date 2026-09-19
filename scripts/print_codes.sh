@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN Code Card Printer
+# Locus Code Card Printer
 # Formats activation codes into printable card sheets (PDF via enscript/ps2pdf).
 #
 # Usage:
@@ -67,7 +67,7 @@ if [ ${#CODES[@]} -eq 0 ]; then
 fi
 
 echo "═══════════════════════════════════════════"
-echo " MyVPN Code Card Printer"
+echo " Locus Code Card Printer"
 echo "═══════════════════════════════════════════"
 echo " Codes:      ${#CODES[@]}"
 echo " Output:     ${OUTPUT_FILE}"
@@ -93,7 +93,7 @@ generate_enscript() {
         if [[ "$INPUT_FILE" == *"eco"* ]]; then tier="Eco"
         elif [[ "$INPUT_FILE" == *"stealth"* ]]; then tier="Stealth"
         elif [[ "$INPUT_FILE" == *"strike"* ]]; then tier="Strike"
-        else tier="MyVPN"
+        else tier="Locus"
         fi
 
         cat >> "$tmp_txt" << CARD
@@ -173,7 +173,7 @@ generate_a2ps() {
 generate_text() {
     local txt_output="${OUTPUT_FILE%.pdf}.txt"
 
-    echo "MyVPN Activation Codes" > "$txt_output"
+    echo "Locus Activation Codes" > "$txt_output"
     echo "Generated: $(date)" >> "$txt_output"
     echo "═══════════════════════════════════════════" >> "$txt_output"
     echo "" >> "$txt_output"

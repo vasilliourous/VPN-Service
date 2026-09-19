@@ -1,4 +1,4 @@
-// MyVPN Admin Unbind Hook — PocketBase 0.22 compatible
+// Locus Admin Unbind Hook — PocketBase 0.22 compatible
 routerAdd("POST", "/api/admin/unbind-code", function(e) {
     try {
         var body = $apis.requestInfo(e).data;

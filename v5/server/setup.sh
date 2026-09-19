@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN Modular VPS Setup — Orchestrator
+# Locus Modular VPS Setup — Orchestrator
 # Usage:
 #   1. scp -r v5/server age-key.txt root@your-vps:/root/server/
 #   2. ssh root@your-vps "/root/server/setup.sh"
@@ -144,7 +144,7 @@ run_module() {
 # ── Show header ──
 cat << EOF
 ╔═══════════════════════════════════════════╗
-║     MyVPN VPS — Modular Setup             ║
+║     Locus VPS — Modular Setup             ║
 ║     Domain: ${DOMAIN}                      ║
 ╚═══════════════════════════════════════════╝
 EOF

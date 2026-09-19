@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN Post-Deploy Smoke Test
+# Locus Post-Deploy Smoke Test
 # Run AFTER setup.sh completes. Tests the full deployment chain.
 set -euo pipefail
 
@@ -22,7 +22,7 @@ warn()   { echo -e "${YELLOW}  ⚠️  WARN:${NC} $*"; WARN=$((WARN+1)); }
 # ── Header ──
 cat << EOF | tee -a "$LOGFILE"
 ═══════════════════════════════════════════
- MyVPN Post-Deploy Smoke Test
+ Locus Post-Deploy Smoke Test
  Domain: ${DOMAIN}
  Date:   $(date)
 ═══════════════════════════════════════════

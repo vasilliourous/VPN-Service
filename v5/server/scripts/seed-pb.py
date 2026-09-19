@@ -175,7 +175,7 @@ if not token_valid:
     # Write with restrictive permissions atomically (0o600 = owner read/write only)
     fd = os.open(ADMIN_CREDS, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write(f"# MyVPN PocketBase Admin Credentials\n"
+        f.write(f"# Locus PocketBase Admin Credentials\n"
                 f"PB_ADMIN_EMAIL={ADMIN_EMAIL}\n"
                 f"PB_ADMIN_PASS={admin_pass}\n"
                 f"PB_TOKEN={token}\n")

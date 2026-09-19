@@ -205,6 +205,185 @@ versioning rather than looking like a generic test failure.
   explicitly marked as superseded, so it does not send a future reader down the
   wrong path the way it nearly did.
 
+---
+
+## TWO PUBLISHERS DESCRIBED update_config DIFFERENTLY (2026-09-19, later pass)
+
+### 31. `publish-update.sh` wrote field names the hub does not read
+
+`update_config` has three layers of field names, and nothing defined them in one
+place:
+
+| Layer | Producer | Consumer | Per-platform URL field |
+|---|---|---|---|
+| record | publish-release.sh / publish-update.sh | heartbeat.pb.js | `download_<platform>` |
+| response | heartbeat.pb.js | the client | `update_<platform>` |
+| struct | — | heartbeat.Response | `update_<platform>` |
+
+`publish-release.sh` builds `body["download_" + key]` and is correct.
+`publish-update.sh` emitted `"update_linux": ...` in a heredoc — the RESPONSE
+name, written into the RECORD. The hub reads `download_*`, found nothing, and
+omitted every per-platform URL and hash from the heartbeat.
+
+The client then does what it is designed to do when a per-platform field is
+absent: `PlatformDownloadURL()` falls through to the legacy single `update_url`.
+Both scripts point that at the **linux** binary. So a release published through
+`publish-update.sh` would have offered Windows and macOS clients a Linux
+executable, which they would download in full and then reject on the checksum —
+with no error surfaced anywhere, because "no per-platform URL" is
+indistinguishable from "this release is linux-only".
+
+**Fix.** New `internal/updatecfg` defines the three layers explicitly, records
+why the rename between layers 1 and 2 exists, and warns against "simplifying" the
+hook by making it emit `download_*` directly (deployed clients read `update_*`).
+Its tests read the hook and BOTH scripts as text and assert they agree across all
+four platforms — the cross-language check whose absence let two writers describe
+the same record incompatibly while each looked right in isolation. Verified
+against the pre-fix spelling: the guard fails with a message naming the wrong
+layer.
+
+### 32. `tiers.update` returned the tier password in cleartext
+
+`return ok({tier: tierName, config: cfgT})` echoed the whole config object, which
+includes the shadowsocks PSK every client on that tier shares. `tiers.list`
+deliberately omits it — so the inconsistency was inside a single file.
+
+Nothing consumed the field (the console re-renders from `tiers.list` and never
+read `.config`), so it never appeared in the UI. It leaked only to anyone using
+curl directly, and landed in terminal scrollback, browser devtools and any
+body-capturing reverse proxy. The response now echoes just the editable fields:
+`server`, `server_port`, `method`, `uot_port`, `udp_relay`, `active`.
+
+### 33. Expiry and suspension were skipped on re-activation
+
+`activation.pb.js` checked `expires_at` and `suspended` only on the
+first-activation path, which sits BELOW the `if (boundFp)` branch that returns
+`200 "Already activated"`. So a device that had already bound a code kept
+re-activating successfully after that code expired — the check was unreachable
+for precisely the machines it was written to protect. Only a fresh device was
+ever refused.
+
+Order is now **expiry → suspension → binding**, with two deliberate details:
+
+- The 410 for expiry is returned before the fingerprint comparison, which is
+  safe: an expired code tells a probing device nothing it could not have learned
+  from the code itself.
+- Suspension is checked after the fingerprint comparison on the bound path, so a
+  device with a mismatched fingerprint still gets "bound to another device" and
+  cannot use the endpoint to probe whether a code has been suspended.
+
+### Also in this pass
+
+- **`templates/Caddyfile` had the handler order `modules/05-caddy.sh` documents
+  as a bug.** `/api/*` appeared before `/api/admin/upload`, so release uploads
+  would have been proxied to PocketBase — which caps request bodies at a few MB
+  — and counted against the general 100-requests/10s limit. The generated
+  Caddyfile is correct, so production was never affected; the template is what a
+  manual `sed`-based deploy uses, and its own header invites exactly that. The
+  template now matches the generated config on the load-bearing ordering, and
+  adopted the `route /admin { redir }` form (an exact-path matcher inside
+  `handle` loses to the `handle_path` file_server beneath it, so the redirect
+  never fired and `/admin` 404'd for a typed URL or bookmark).
+- **`/api/code-lookup` and `/api/activate` shared a rate-limit bucket.** Both
+  counted `rate_key = <fingerprint>`, so lookups and activation attempts drew
+  from the same 5-per-10-minutes allowance. The lookup endpoint exists so a
+  student can confirm a code is recognised *before* committing to an activation
+  — but mistyping on the activation screen consumed the lookup budget, locking
+  the student out of the affordance that would have explained the mistake.
+  Confirmed live. Keys are now namespaced (`lookup_` / `activate_`).
+- The API reference gained the expiry/suspension error rows and the two-bucket
+  rate-limit note; it had been describing behaviour the hooks did not have.
+
+---
+
+### 34. A LIVE tier password was committed, because gitignore has no inline comments
+
+`clash-verge-stealth.yaml` and `clash-verge-stealth-notun.yaml` were both tracked
+in git, and both contain the stealth tier's shadowsocks PSK in cleartext:
+
+```
+clash-verge-stealth.yaml:53    password: "95fee4978796490984a9b9e6835a9473"
+```
+
+That value matched the live hub exactly (confirmed against `tier_configs` on
+`170.64.196.179`). The files were on `origin/main` since commit `77619a2`
+(2026-08-14) — a public repository — so simply deleting them now would not have
+removed the secret from history.
+
+**Root cause.** `.gitignore` contained:
+
+```
+clash-verge-stealth.yaml  # contains tier password — never commit
+```
+
+Gitignore has **no inline comment syntax**. A `#` only starts a comment at the
+beginning of a line; anywhere else it is part of the pattern. So the rule being
+matched was the literal string
+`clash-verge-stealth.yaml  # contains tier password — never commit`, which
+matches no file. `git check-ignore clash-verge-stealth.yaml` returned nothing —
+the ignore never applied. The files were committed by a later `git add -A`.
+
+The intent was correct and the comment documented it clearly. The mechanism did
+nothing, and nothing verified the mechanism.
+
+**Fix, in three parts.**
+
+1. **Rotated the credential** — the only real remediation, since the value is in
+   public history and cannot be un-published. New stealth PSK
+   (`60f3159f…`, generated with `openssl rand -hex 16`), applied to both
+   `/etc/shadowsocks/stealth.json` and the `tier_configs` record, listener
+   restarted. Verified: identical in both places afterward, eco and strike
+   untouched, all four listeners plus PocketBase and Caddy still active.
+
+   Cost was zero by luck: the stealth tier had **no codes at all** — `0` issued,
+   `0` bound — so no client was holding the old secret. Had any been active, the
+   rotation would have needed a coordinated client refresh, because the client
+   caches the PSK in `storage.json` and only picks up a new one from the next
+   heartbeat.
+
+2. **Removed the files from tracking** (`git rm --cached`) and corrected the
+   ignore rules to patterns that actually match, with a comment explaining why
+   they carry no trailing comment.
+
+3. **Made the failure visible**: `git check-ignore` now resolves both files and
+   `.gotool/`, which was previously untracked and unignored (one `git add -A`
+   away from committing a Go toolchain).
+
+**Residual risk, stated plainly:** the old PSK remains readable in the GitHub
+history of this public repository. Rotation makes it useless against the live
+host, which is what matters, but anyone who cloned before this commit has it.
+History rewriting was not attempted — it does not remove it from clones or
+forks, and it would invalidate every existing clone.
+
+### 35. Legacy `myvpn` names: a rule, not a cleanup
+
+The rebrand to Locus left `myvpn` strings throughout the server layer.
+Blanket-replacing them would have broken the running system: several are paths
+and unit names that exist on the deployed host right now — `/usr/local/bin/myvpn-backup.sh`,
+`myvpn-tc-apply.sh`, `/etc/myvpn/tc`, `/var/log/myvpn-*.log`, and the client's
+`.myvpn-backups/` rollback directory. Renaming those in the repo desynchronises
+the definition from the machine, so a fresh `setup.sh` would install a file the
+existing systemd units never call.
+
+Split by consequence:
+
+- **Fixed** — every user-visible or human-facing string: the Windows
+  executable's product name and description (entry 30), the shadowsocks link tag
+  in `hiddify.pb.js` (the tag is the display name a student sees in their client
+  — the only one of these that actually reached a user), hook header comments,
+  setup/restore banners, and code-card/PDF headings.
+- **Left alone, documented** — live server paths, unit names, log filenames and
+  the client backup directory. `v5/CONTEXT.md` now carries a naming rule at the
+  top explaining which is which and that the second class must only be renamed
+  as part of a deliberate redeploy.
+
+Without that rule written down, the next person to run a global rename has no
+way to tell the two classes apart, and the failure is silent until a fresh
+deploy.
+
+---
+
+## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
 
 ### 26. The console could silently publish the wrong binary
 

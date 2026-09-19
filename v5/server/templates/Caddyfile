@@ -1,5 +1,5 @@
 {
-    # MyVPN Caddyfile — Template
+    # Locus Caddyfile — Template
     # Used by setup.sh which injects DOMAIN via heredoc substitution.
     # For manual deploy: sed -i 's/${DOMAIN}/your.domain.com/g' this file
     # rate_limit is configured per-handle below

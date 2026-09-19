@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MyVPN live-seed for a PocketBase on a (re-)provisioned VPS.
+"""Locus live-seed for a PocketBase on a (re-)provisioned VPS.
 
 Creates the collections, update_config, tier_configs (reading passwords from
 /etc/shadowsocks/*.json — the single source of truth on the box) and seeds

@@ -1,6 +1,6 @@
-// MyVPN Hiddify Links Hook — PocketBase 0.22 compatible
+// Locus Hiddify Links Hook — PocketBase 0.22 compatible
 // Generates Hiddify-compatible ss:// subscription links for testing
-// without requiring the dedicated MyVPN client.
+// without requiring the dedicated Locus client.
 //
 // Endpoints:
 //   GET /api/hiddify?code=CODE           — returns ss:// link for the code's tier
@@ -102,7 +102,10 @@ routerAdd("GET", "/api/hiddify", function(e) {
 
             var userInfo = method + ":" + password;
             var encoded = btoa(userInfo);
-            var tag = tierName.charAt(0).toUpperCase() + tierName.slice(1) + " - MyVPN";
+            // The tag is the display name a student sees in their shadowsocks
+            // client, so it is the one piece of branding here that is genuinely
+            // user-visible. It said "MyVPN" long after the product was renamed.
+            var tag = tierName.charAt(0).toUpperCase() + tierName.slice(1) + " - Locus";
             var ssLink = "ss://" + encoded + "@" + server + ":" + port + "#" + encodeURIComponent(tag);
 
             var sipObj = { method: method, password: password, server: server, server_port: port };

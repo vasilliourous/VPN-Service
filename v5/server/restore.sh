@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN VPS Restore — Provision + restore from B2 backup
+# Locus VPS Restore — Provision + restore from B2 backup
 # Usage:
 #   From-scratch restore (age key file on VPS):
 #     scp -r v5/server age-key.txt root@new-vps:/root/server/
@@ -93,7 +93,7 @@ export DOMAIN
 : "${BACKUP_PATH:=}"  # Optional: specific backup path. Auto-detects latest if empty.
 
 log "══════════════════════════════════════════"
-log " MyVPN VPS — Full Restore from B2 Backup"
+log " Locus VPS — Full Restore from B2 Backup"
 log " Domain: ${DOMAIN}"
 log " Bucket: ${B2_BUCKET}"
 log "══════════════════════════════════════════"
