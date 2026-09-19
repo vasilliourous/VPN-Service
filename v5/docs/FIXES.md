@@ -72,7 +72,139 @@ deployment no tier should set one because the UoT endpoint is not running.
 
 ---
 
-## CONSOLE RELEASES — AUTOMATIC ARTIFACT VERIFICATION (2026-09-19)
+## UDP-OVER-TCP WAS NEVER CONNECTED, AND THE .syso SHIPPED STALE (2026-09-19, later pass)
+
+### 29. The hub sent `uot_port`; the client only ever read `server_port_uot`
+
+UoT was enabled on the live hub and the listener verified open on TCP+UDP 8446
+(entry 28's successor, commit `78d193c`). That verification was real and
+correct — and the feature still did nothing, because of a field name.
+
+The hub stores the endpoint inside the tier's config JSON under `uot_port` and
+passes that JSON through verbatim from both `/api/activate` and
+`/api/heartbeat`. Confirmed against the live host:
+
+```
+$ sqlite3 /opt/pocketbase/pb_data/data.db \
+    "SELECT tier, udp_relay, config FROM tier_configs"
+strike|1|{...,"server_port":8445,...,"uot_port":8446}
+
+$ curl -s -XPOST .../api/heartbeat -d '{"code":"RQ-...","fingerprint":"..."}'
+{"server_config":{...,"server_port":8445,"uot_port":8446},"udp_relay":true,...}
+```
+
+The client declared only `server_port_uot` on all three of
+`activation.ServerConfig`, `heartbeat.ServerConfig` and
+`storage.ServerConfig`. Go's `encoding/json` **ignores unknown keys without
+raising an error**, so:
+
+```
+ServerPortUOT == 0        (always)
+uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0   →   false   (always)
+```
+
+`manager/process.go` therefore never appended the `proxy-uot` outbound. The
+mechanism behind the Strike gaming tier was dead on every build, on every
+platform, for the entire time it was advertised as working. `process.go` even
+carried a comment asserting "LIVE SINCE 2026-09-19", which described intent
+rather than behaviour.
+
+**Why nothing caught it.** Both sides were individually correct, and each was
+tested in isolation. No test asserted that the client deserialises the key the
+server actually emits. A grep for `uot_port` in the client *did* match — in
+comments — which is exactly the kind of hit that makes a human conclude the
+wiring is fine.
+
+**Fix — the wire key is frozen.** The hub must keep sending `uot_port`, because
+already-deployed clients read that literal and a rename is a silent no-op to
+them, not an error. So the tolerance lives on the client:
+
+- New `internal/uotkey` is the **only** place that knows the field name.
+  `Canonical = "uot_port"` (what the hub emits), `Legacy = "server_port_uot"`
+  (accepted so a future rename is survivable in the other direction).
+- The three structs' `UnmarshalJSON` delegate to it, so they cannot drift apart.
+- Precedence resolves canonically from the raw map rather than by struct tag, so
+  a payload carrying both keys is deterministic instead of dependent on Go's map
+  iteration order (an earlier draft of this fix got that wrong; the
+  `TestCanonicalBeatsLegacy` case fails on it).
+- Both hooks now carry a FROZEN CONTRACT comment stating why the key cannot be
+  renamed.
+
+**Verified.** `internal/uotkey` carries 11 tests, including
+`internal/uotkey/contract_test.go`, which unmarshals a verbatim live hub payload
+into the real `heartbeat.Response`, `activation.ActivateResponse` and
+`storage.ServerConfig` — and asserts the whole gate, not just the port, since
+UoT also needs `udp_relay`. The tests were run against the pre-fix code first:
+they fail with the exact production symptom (`ServerPortUOT = 0, want 8446`).
+That is the assertion whose absence let both `78d193c` and the earlier 2.1.0
+verification pass while the feature was dead.
+
+**Still not validated:** a real game session on a school network. The client
+path is now genuinely wired and a synthetic client dials 8446 successfully, but
+`GAMING-UDP.md`'s acceptance gate remains open.
+
+### 30. `locus.exe` reported version 2.0.0 and the product name "MyVPN"
+
+The committed `rsrc_windows_{amd64,arm64}.syso` files — the compiled
+`VS_VERSION_INFO` block that populates the Windows Properties tab — were stamped:
+
+```
+FileVersion   2.0.0
+ProductVersion 2.0.0
+ProductName   MyVPN
+FileDescription MyVPN secure school VPN
+```
+
+while `v5/VERSION` said `2.1.0` and the product had been renamed to Locus. A
+student right-clicking the executable saw a version two releases old under the
+old name.
+
+**Why nothing caught it.** `version_consistency_test.go`'s
+`TestGeneratedWindowsResourceVersionMatchesRepoVersion` asserted on `main.go`'s
+`go:generate` **directive** — and the directive was correct. Nothing regenerates
+the `.syso` automatically (`go generate` is manual), so the artifacts had drifted
+from the directive and no check looked at the output. A second, independent guard
+in CI grepped the same directive text and passed for the same reason. Two guards,
+one blind spot, because both checked the instruction rather than the result.
+
+**Fix — read the bytes.** New `internal/winres` parses `VS_VERSION_INFO` out of
+the compiled resource (UTF-16LE, both byte alignments, since the block's position
+depends on everything preceding it) and
+`TestCommittedSysoMatchesRepoVersion` asserts file version, product version,
+product name and description prefix against `v5/VERSION`. It runs natively on any
+platform because it only reads bytes — no Windows toolchain, no PE parser.
+
+It also fails loudly (`ok=false`) if it cannot find the version block at all, so
+a format change surfaces as "this guard is now blind, fix the parser" rather than
+a silent pass.
+
+The artifacts were regenerated with the repo's own directive
+(`cd v5/client && go generate -tags windows`), and the guard was run against the
+stale copies first — it fails with all four fields itemised. CI now invokes it
+explicitly inside the version-consistency step so a recurrence is attributed to
+versioning rather than looking like a generic test failure.
+
+### Also in this pass
+
+- **`v5/client/Makefile` fell back to `VERSION := 2.0.0`** when `v5/VERSION` was
+  missing or unreadable. That is a version which no longer exists in the tree, so
+  the build would report a number contradicting both `v5/VERSION` and the shipped
+  resource — the same drift as above, arriving through a different door. It now
+  fails loudly with instructions (pass `VERSION=` for a scratch build). The
+  consistency test cannot see the Makefile, so the guard lives in the Makefile.
+- **`docs/FIXES.md` restored.** Commit `15e7630` truncated it from 1769 lines to
+  69, deleting entries 1-26, S1-S9 and Follow-ups 1-10 — the entire sing-box,
+  WFP and DNS debugging history, and the only written record of why several
+  guards in the client exist. The commit message described only *adding* entries
+  27-28, so the loss was unintended. Recovered from `2a57d12` and re-merged, with
+  the numbering scheme preserved (the file mixes `### N.` entries with unnumbered
+  `### Follow-up N` and `### SN` blocks, so the sections are ordered
+  newest-first rather than concatenated).
+- The paragraph that previously ended entry 28 — claiming UoT "has never run on
+  the current host `170.64.196.179`" — was already false when written and is now
+  explicitly marked as superseded, so it does not send a future reader down the
+  wrong path the way it nearly did.
+
 
 ### 26. The console could silently publish the wrong binary
 

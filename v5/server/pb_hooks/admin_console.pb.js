@@ -423,7 +423,28 @@ routerAdd("POST", "/api/admin/console", function(e) {
             if (body.udp_relay !== undefined) recT.set("udp_relay", !!body.udp_relay);
             $app.dao().saveRecord(recT);
             logEvent("(tier " + tierName + ")", "tier-updated", JSON.stringify(cfgT), "");
-            return ok({tier: tierName, config: cfgT});
+            // Deliberately NOT returning cfgT.
+            //
+            // cfgT contains the tier password in cleartext (the shadowsocks PSK
+            // every client on that tier shares). tiers.list already omits it for
+            // exactly that reason, but this endpoint echoed the whole config
+            // object — so anyone using curl instead of the Web UI leaked the
+            // shared secret into a response body, an operator's terminal
+            // scrollback, browser devtools and any body-capturing proxy.
+            //
+            // Nothing consumed it: the console never read this field, and the
+            // Tiers page re-renders from tiers.list. Callers that want the
+            // current values should call tiers.list, which returns the safe
+            // subset. Echo only what an operator can actually edit here.
+            return ok({
+                tier: tierName,
+                server: cfgT.server || "",
+                server_port: parseInt(cfgT.server_port || "0", 10) || 0,
+                method: cfgT.method || "",
+                uot_port: parseInt(cfgT.uot_port || "0", 10) || 0,
+                udp_relay: recT.getBool("udp_relay"),
+                active: recT.getBool("active"),
+            });
         }
 
         // ─────────────────────────────────────────────────────────────

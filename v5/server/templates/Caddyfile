@@ -42,6 +42,26 @@ ${DOMAIN} {
         reverse_proxy 127.0.0.1:8090
     }
 
+    # ── Ordering matters. Read before editing ──
+    #
+    # Caddy evaluates `handle` blocks in file order and a request matches only
+    # the FIRST one that fits. So every /api/admin/* route must appear BEFORE
+    # the general /api/* block below, or the generic rate-limited proxy swallows
+    # it. That is not theoretical: with /api/* first, release uploads were
+    # proxied to PocketBase (which caps bodies at a few MB) and counted against
+    # the 100-requests/10s general limit, so publishing a build failed at deploy
+    # time rather than in CI.
+    #
+    # `/admin` (no trailing slash) is redirected via an explicit `route` +
+    # matcher. An exact-path matcher inside `handle` proved unreliable here —
+    # the handle_path file_server below won the match and the redirect never
+    # fired, so a typed URL or bookmark 404'd.
+
+    # Large release uploads -> dedicated uploader, NOT PocketBase.
+    handle /api/admin/upload {
+        reverse_proxy 127.0.0.1:8091
+    }
+
     # General API: 100 requests per 10s per IP
     handle /api/* {
         rate_limit {
@@ -60,23 +80,23 @@ ${DOMAIN} {
     }
 
     # Admin console (static SPA at /admin/)
-    @admin_root path /admin
-    redir @admin_root /admin/ permanent
+    route /admin {
+        redir /admin/ permanent
+    }
     handle_path /admin/* {
         root * /var/www/admin
         header {
+            # The console is an internal tool: never index, and never cache the
+            # shell (so a redeploy is picked up immediately).
             X-Robots-Tag "noindex, nofollow"
             Cache-Control "no-cache"
             X-Content-Type-Options "nosniff"
             X-Frame-Options "DENY"
         }
+        # SPA fallback: an unknown path under /admin/ serves index.html so a
+        # refresh on a sub-view still loads the app.
         try_files {path} /index.html
         file_server
-    }
-
-    # Release uploads -> dedicated uploader (PocketBase caps bodies at a few MB)
-    handle /api/admin/upload {
-        reverse_proxy 127.0.0.1:8091
     }
 
     # Static files

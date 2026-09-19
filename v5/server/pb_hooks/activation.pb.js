@@ -27,8 +27,14 @@ routerAdd("POST", "/api/activate", function(e) {
 
         // Rate limiting — clean old + count recent
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE created < datetime('now','-10 minutes')").execute();
-        // rateKey is SHA256 hex or IP — strip anything non-alphanumeric for query safety
-        var rateKey = (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
+        // rateKey is SHA256 hex or IP — strip anything non-alphanumeric for query safety.
+        //
+        // The "activate_" prefix namespaces this bucket. /api/code-lookup writes
+        // "lookup_" keys into the same table, and the two must NOT share a
+        // budget: a typo here would otherwise consume the read-only lookup that
+        // exists to tell the student WHY the code was rejected. See the matching
+        // note in code_lookup.pb.js.
+        var rateKey = "activate_" + (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
         // NOTE: findRecordsByFilter is broken in this PB build (0.22.21) — it
         // returns zero rows for every filter, which silently DISABLED this rate
         // limit entirely (5 attempts / 10 min was never enforced). We count with
@@ -71,8 +77,32 @@ routerAdd("POST", "/api/activate", function(e) {
 
         // Check binding
         var boundFp = rec.getString("bound_fingerprint");
+
+        // ── Expiry and suspension, checked BEFORE the binding ──
+        //
+        // These used to live only on the first-activation path, BELOW the
+        // `if (boundFp)` re-activation branch that returns early — so a device
+        // that was already bound kept re-activating successfully forever, even
+        // after its code expired or was suspended. The check was unreachable for
+        // exactly the machines it was most likely to matter for.
+        //
+        // Order is now: expiry → suspension → binding. A lapsed code gets a
+        // clear 410 on both paths (the same answer the client already knows how
+        // to display), and a suspended code still returns 403 "Code bound to
+        // another device" first when the fingerprint differs, so suspension
+        // status is not leaked to a probing device.
+        var exp = rec.get("expires_at");
+        if (exp) {
+            var ed = new Date(exp).getTime();
+            if (!isNaN(ed) && ed < Date.now()) {
+                return e.json(410, {code:410, message:"Code expired"});
+            }
+        }
+        var suspended = rec.getBool("suspended");
+
         if (boundFp) {
             if (boundFp !== fp) return e.json(403, {code:403, message:"Code bound to another device"});
+            if (suspended) return e.json(403, {code:403, message:"Code suspended"});
             // Same-device re-activation: return the current tier config too, so
             // clients can refresh stale connection parameters (see FIXES.md).
             var tierVal2 = rec.getString("tier").replace(/[^a-zA-Z0-9_]/g, "_");
@@ -87,9 +117,7 @@ routerAdd("POST", "/api/activate", function(e) {
             }
             return e.json(200, resp2);
         }
-        if (rec.getBool("suspended")) return e.json(403, {code:403, message:"Code suspended"});
-        var exp = rec.get("expires_at");
-        if (exp) { var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) return e.json(410,{code:410,message:"Code expired"}); }
+        if (suspended) return e.json(403, {code:403, message:"Code suspended"});
 
         // Bind device
         rec.set("bound_fingerprint", fp);

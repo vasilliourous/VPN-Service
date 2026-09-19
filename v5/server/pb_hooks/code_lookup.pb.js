@@ -44,11 +44,25 @@ routerAdd("POST", "/api/code-lookup", function(e) {
         if (ok) ok = ((n - (sum % n)) % n) === c.indexOf(s[s.length - 1]);
         if (!ok) return e.json(200, {status:"not_found", message:"Invalid code format"});
 
-        // ── Rate limiting (shared with activation attempts) ──
-        // Keeps this from becoming an enumeration oracle. Uses the same table
-        // and threshold as /api/activate.
+        // ── Rate limiting ──
+        // Keeps this from becoming an enumeration oracle.
+        //
+        // The key is PREFIXED per endpoint ("lookup:" vs "activate:" in
+        // activation.pb.js) so the two do NOT share a budget. They previously
+        // did, and that was actively harmful: this endpoint exists so a student
+        // can find out whether their code is recognised BEFORE committing to a
+        // full activation, but mistyping on the activation screen consumed the
+        // lookup budget — so the affordance meant to explain the mistake was
+        // locked out by the mistake itself. Confirmed live 2026-09-19.
+        //
+        // Both still share the activation_attempts TABLE and its cleanup, which
+        // is fine: the table is just a log, the prefix is the bucket.
+        //
+        // This endpoint is strictly read-only (never binds, never writes to
+        // `codes`), so the risk of a wider budget is bounded, and the threshold
+        // below still caps enumeration well under a meaningful rate.
         $app.dao().db().newQuery("DELETE FROM activation_attempts WHERE created < datetime('now','-10 minutes')").execute();
-        var rateKey = (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
+        var rateKey = "lookup_" + (fp || ip).replace(/[^a-zA-Z0-9]/g,"_");
         // findRecordsByExpr, not findRecordsByFilter — the list variant returns
         // zero rows on this PB build, which silently disabled the rate limit
         // (making this endpoint an unbounded code-enumeration oracle).
