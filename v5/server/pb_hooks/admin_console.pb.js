@@ -375,6 +375,13 @@ routerAdd("POST", "/api/admin/console", function(e) {
                     server: cfg.server || "",
                     server_port: cfg.server_port || 0,
                     method: cfg.method || "",
+                    // The UoT endpoint lives inside the tier's config JSON. It is
+                    // surfaced here because udp_relay is only HALF the switch:
+                    // the client builds a UDP-over-TCP outbound only when
+                    // udp_relay is set AND uot_port > 0. An operator toggling
+                    // udp_relay without being able to see uot_port is editing a
+                    // setting whose effect they cannot observe.
+                    uot_port: parseInt(cfg.uot_port || "0", 10) || 0,
                 });
             }
             return ok({tiers: tiers});
@@ -401,6 +408,16 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 cfgT.server_port = port;
             }
             if (body.method !== undefined && String(body.method).trim()) cfgT.method = String(body.method).trim();
+            // UoT endpoint. 0 (or absent) means "no UDP-over-TCP endpoint for
+            // this tier", which is the correct default: shadowsocks-rust does
+            // not implement sing-box's UoT protocol, so a non-zero port must
+            // only ever point at a sing-box UoT listener (see enable-uot.sh).
+            // Kept optional so an older console build keeps working.
+            if (body.uot_port !== undefined) {
+                var uot = parseInt(body.uot_port, 10);
+                if (isNaN(uot) || uot < 0 || uot > 65535) return bad(400, "uot_port must be 0-65535");
+                if (uot === 0) { delete cfgT.uot_port; } else { cfgT.uot_port = uot; }
+            }
             recT.set("config", JSON.stringify(cfgT));
             if (body.active !== undefined) recT.set("active", !!body.active);
             if (body.udp_relay !== undefined) recT.set("udp_relay", !!body.udp_relay);

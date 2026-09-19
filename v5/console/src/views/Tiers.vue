@@ -11,6 +11,10 @@ interface TierRow {
   server: string
   server_port: number
   method: string
+  // The UDP-over-TCP endpoint port, or 0 when the tier has none. Stored inside
+  // the tier's config JSON and surfaced so the udp_relay checkbox has a visible
+  // partner — it is the other half of the switch.
+  uot_port: number
 }
 
 const tiers = ref<TierRow[]>([])
@@ -35,6 +39,7 @@ async function save(row: TierRow) {
       method: row.method,
       active: row.active,
       udp_relay: row.udp_relay,
+      uot_port: row.uot_port,
     })
     if (res.ok) {
       toast.ok(`${row.tier} updated — clients pick this up on their next heartbeat`)
@@ -88,13 +93,41 @@ onMounted(load)
         <span>UDP relay</span>
         <input v-model="row.udp_relay" type="checkbox" />
       </label>
+      <label class="field">
+        <span>UoT port (0 = none)</span>
+        <input v-model.number="row.uot_port" type="number" min="0" max="65535" />
+      </label>
       <div class="shrink">
         <button class="primary" :disabled="saving" @click="save(row)">Save {{ row.tier }}</button>
       </div>
     </div>
+
+    <!-- Warn when the two halves of the switch disagree. This is the state that
+         looks configured but does nothing, or worse, points UDP at a port that
+         does not speak the protocol. -->
+    <p v-if="row.udp_relay && !row.uot_port" class="msg warn" style="font-size: 12px">
+      <strong>UDP relay is on but no UoT port is set.</strong> This is a no-op —
+      the client only builds a UDP-over-TCP outbound when both are present, so
+      UDP stays raw. Harmless, but the tier does not do what the checkbox implies.
+    </p>
+    <p v-else-if="!row.udp_relay && row.uot_port" class="msg warn" style="font-size: 12px">
+      <strong>A UoT port is set but UDP relay is off.</strong> The endpoint exists
+      but no client will be told to use it.
+    </p>
     <p class="muted" style="margin: 0; font-size: 12px">
-      <strong>UDP relay</strong> must stay off for this server: shadowsocks-rust does
-      not implement sing-box's UDP-over-TCP, and leaving it on makes UDP traffic fail.
+      <strong>UoT port</strong> is the UDP-over-TCP endpoint the client will tunnnel
+      UDP through. Both switches are required: the client only creates the UoT
+      outbound when <strong>UDP relay</strong> is on <em>and</em> a
+      <code>uot_port</code> is set.
+      <br /><br />
+      Only use this for <strong>Strike</strong>, and only when a sing-box UoT
+      listener (normally 8446) is running on this server — install it with
+      <code>enable-uot.sh</code>; see <code>docs/GAMING-UDP.md</code>. Do not point
+      it at the ordinary shadowsocks-rust ports (8443/8444/8445): those do not
+      implement sing-box's UDP-over-TCP and will refuse the connections.
+      <br /><br />
+      On this deployment the UoT endpoint is <strong>not</strong> currently
+      running, so no tier should have a UoT port set.
     </p>
   </div>
 </template>
