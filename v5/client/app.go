@@ -1373,9 +1373,11 @@ func (a *App) GetDiagnostics() string {
 	installLine := "(unresolved)"
 	if a.installLoc.Dir != "" {
 		installLine = a.installLoc.Describe()
-		if a.installLoc.Mode == install.ModeUnwritable {
+
+		switch a.installLoc.Mode {
+		case install.ModeUnwritable:
 			installLine += " — self-update needs a writable location"
-		} else if a.installLoc.Mode == install.ModeImmutable {
+		case install.ModeImmutable:
 			installLine += " — self-update impossible; replace the bundle"
 		}
 	}
