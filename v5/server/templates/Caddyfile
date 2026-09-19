@@ -50,15 +50,28 @@ ${DOMAIN} {
     # it. That is not theoretical: with /api/* first, release uploads were
     # proxied to PocketBase (which caps bodies at a few MB) and counted against
     # the 100-requests/10s general limit, so publishing a build failed at deploy
-    # time rather than in CI.
+    # time rather than in CI. The same trap now applies to the fetch service.
     #
     # `/admin` (no trailing slash) is redirected via an explicit `route` +
     # matcher. An exact-path matcher inside `handle` proved unreliable here —
     # the handle_path file_server below won the match and the redirect never
     # fired, so a typed URL or bookmark 404'd.
 
-    # Large release uploads -> dedicated uploader, NOT PocketBase.
-    handle /api/admin/upload {
+    # Release publishing -> dedicated fetch service, NOT PocketBase.
+    #
+    # The console no longer uploads binaries; it asks the hub to pull them
+    # straight from the GitHub Release for a version. The fetch service owns
+    # /var/www/updates and returns the verified hashes.
+    #
+    # It sits at /api/admin/fetch-release, which is also where one-shot signed
+    # trigger links land (they carry ?version&nonce&exp&sig). Both the POST from
+    # the console and a GET on a link must reach the same handler.
+    handle /api/admin/fetch-release {
+        reverse_proxy 127.0.0.1:8091
+    }
+
+    # Mint a fresh one-shot trigger link.
+    handle /api/admin/fetch-link {
         reverse_proxy 127.0.0.1:8091
     }
 

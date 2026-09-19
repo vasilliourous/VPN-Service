@@ -278,7 +278,7 @@ when you sign out or the session ends.
 |---|---|
 | **Dashboard** | Counts of available / activated / suspended codes, codes per tier, codes expiring in 30 days, and a recent-activity feed. |
 | **Codes & Clients** | Generate codes (1–500 at a time, per tier, with an expiry, a middleman and a label), search and filter them, suspend/reactivate, unbind a device, edit detail, export CSV. |
-| **Releases** | Upload the four release binaries from the browser and set the rollout percentage. |
+| **Releases** | Pull a build straight from its GitHub Release, verify it, and set the rollout percentage. |
 | **Tiers** | Server hostname, port, method and active/UDP-relay flags per tier. |
 
 ### Common jobs
@@ -298,31 +298,51 @@ recorded in that code's history.
 working. **Reactivate** reverses it. Nothing is deleted.
 
 **Publish an update**
-See "Client Update System" below — all four uploads and the rollout happen on
-the Releases page.
+See "Client Update System" below — fetching from GitHub and the rollout both happen
+on the Releases page. Nothing is uploaded from your browser.
 
 **Change a tier's port**
 Tiers → edit → Save. Clients pick it up on their next heartbeat (≤5 min).
 
 ### Publishing an update from the console
 
-1. Get the four **raw** binaries from the GitHub Release for the new tag:
-   `locus-linux-amd64`, `locus-windows-amd64.exe`, `locus-darwin-amd64`,
-   `locus-darwin-arm64`. **Not** the `.zip` bundles — the updater replaces the
-   app binary directly and cannot unpack a zip.
-2. Releases → enter the version (e.g. `1.1.0`) → pick each file → **Upload**.
-   Each upload shows a progress bar; the browser hashes the file first so a
-   truncated transfer is rejected with a clear message rather than corrupting a
-   release.
-   Each file is also **verified automatically before upload**: the console
-   checks its executable format against the platform slot it was dropped into
-   (a Windows `.exe` in the Linux slot is refused), and confirms the version
-   string is inside the binary. No `manifest.json` upload is needed — this
-   replaces it. A failed row cannot be uploaded.
+1. Tag the release and let CI finish, so a GitHub Release exists for `v<version>`
+   with all four raw binaries attached. The console **fetches from GitHub**; it
+   never asks you to pick a file.
+2. Releases → enter the version (e.g. `2.2.1`) → **Fetch & publish**.
+   The hub downloads `locus-linux-amd64`, `locus-windows-amd64.exe`,
+   `locus-darwin-amd64`, `locus-darwin-arm64` and `manifest.json` **from the
+   GitHub Release tagged `v2.2.1` itself**, verifies each file's format against
+   the platform slot it belongs in (a Windows `.exe` in the Linux slot is
+   refused) and records the hashes it computed. The page then shows exactly what
+   was verified — filename, size, detected format, SHA-256.
+   Do **not** use the `.zip` bundles: the updater replaces the app binary
+   directly and cannot unpack a zip.
+   A release missing any platform is refused — no partial publish is possible.
 3. Set the rollout. For a **first test release, use 100%** (see "Why a
    percentage" above — at 5% your own device probably is not in the bucket).
    Once real customers are on it: 5%, confirm a few clients update, then widen
    25% → 100%.
+
+**Fetching and offering are separate steps.** The fetch writes `update_config`
+with the URLs and hashes but leaves the rollout alone; raising the rollout is a
+second, deliberate action. This is not fussiness — the heartbeat sends whatever
+URLs are in the row regardless of whether the artifacts exist, so raising the
+rollout over an un-fetched version sends the whole fleet to a 404. Both the
+console and the hook refuse it.
+
+**Triggering a fetch without the console.** Releases → **New link** mints a
+one-shot trigger URL. It is bound to one version, expires (15 minutes by
+default), and can be used **exactly once** — a replay is refused, and so is a
+tampered or expired link. That is what makes it safe to paste into a chat or a
+CI job. Mint a fresh link for every run.
+
+```bash
+# The same thing by hand, with the admin token:
+curl -X POST https://<domain>/api/admin/fetch-release \
+  -H "X-Admin-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"version":"2.2.1"}'
+```
 
 The password of a tier is deliberately *not* editable in the console — changing
 it instantly breaks every client already using that tier, so it stays a
@@ -337,8 +357,8 @@ ssh $VPS "ls /var/www/admin/index.html && curl -s -o /dev/null -w '%{http_code}\
 # Redeploy it (builds locally, uploads, verifies)
 v5/server/scripts/deploy-console.sh
 
-# Is the upload service up? (only needed for releases)
-ssh $VPS "systemctl status locus-upload --no-pager && curl -s http://127.0.0.1:8091/health"
+# Is the fetch service up? (only needed for releases)
+ssh $VPS "systemctl status locus-fetch --no-pager && curl -s http://127.0.0.1:8091/health"
 
 # Admin API errors
 ssh $VPS "journalctl -u pocketbase -n 50 --no-pager | grep -i admin_console"
@@ -365,9 +385,16 @@ tag → wait for CI → run one script.
      `locus-darwin-amd64`, `locus-darwin-arm64` — for the auto-updater.
    - `manifest.json` — version, per-platform filename + SHA256. The build
      **fails** if any platform artifact is missing.
-2. **`v5/server/scripts/publish-release.sh`** copies the raw binaries to the VPS
-   (`/var/www/updates/<version>/`), verifies each is downloadable over HTTPS
-   with a matching hash, then points `update_config` at them.
+2. **Publishing** puts those bytes on the hub and points `update_config` at them.
+   There are two equivalent routes:
+   - **Console / GitHub fetch (normal)** — `scripts/fetch-release.py` downloads the
+     artifacts for a version **straight from its GitHub Release**, verifies each
+     one, and the `releases.publish` hook action writes `update_config`. The hub
+     is the client of GitHub; nothing is uploaded from an operator's machine.
+   - **CLI** — `v5/server/scripts/publish-release.sh <version> --from-github`
+     does the same job from a machine with repo access, and remains the only way
+     to publish a **hand-built or hotfixed binary** that is not on a GitHub
+     Release.
 3. **`heartbeat.pb.js`** reads `update_config` and, only when
    `hash(fingerprint) % 100 < rollout_percent`, adds `update_available`, the
    per-platform `update_<platform>` URLs and `update_sha256_<platform>` hashes.
@@ -382,23 +409,28 @@ being reachable from inside a school network.
 
 ### Publishing a release
 
+**Normal path — from the console:** Releases → enter the version → **Fetch &
+publish**. See "Publishing an update from the console" above for what is
+verified and in what order.
+
+**CLI path** — for a hand-built binary, or to publish without a browser:
+
 ```bash
 # 1. Tag — CI builds, creates the GitHub Release and manifest.json
 git tag v1.1.0 && git push origin v1.1.0
 
-# 2. Download the raw artifacts + manifest from the release into ./release-artifacts
-#    (the files named locus-linux-amd64, locus-windows-amd64.exe,
-#     locus-darwin-amd64, locus-darwin-arm64, manifest.json)
+# 2. Check it before you ship it: fetch from GitHub and validate, touching nothing
+DRY_RUN=1 v5/server/scripts/publish-release.sh 1.1.0 --from-github
 
-# 3. Check it before you ship it
-RELEASE_DIR=./release-artifacts DRY_RUN=1 \
-  v5/server/scripts/publish-release.sh 1.1.0
-
-# 4. Publish, starting at a small rollout
-RELEASE_DIR=./release-artifacts \
+# 3. Publish, starting at a small rollout
 PB_ADMIN_EMAIL=admin@networkingguides.duckdns.org PB_ADMIN_PASS=... \
-  v5/server/scripts/publish-release.sh 1.1.0      # ROLLOUT_PERCENT defaults to 5
+  v5/server/scripts/publish-release.sh 1.1.0 --from-github   # ROLLOUT_PERCENT defaults to 5
 ```
+
+Omitting `--from-github` uses files from `RELEASE_DIR` (default
+`./release-artifacts`) instead, which is the path for a hand-built binary.
+`publish-release.sh` and the console write the **same** `update_config` fields,
+so the two routes are interchangeable.
 
 Useful env: `ROLLOUT_PERCENT`, `VPS`, `PB_API`, `PB_TOKEN` (skips login),
 `DRY_RUN=1`.

@@ -164,9 +164,9 @@ ${DOMAIN} {
     # The console is a static SPA served at /admin/. `/admin` (no slash) is
     # redirected so a typed URL or bookmark does not 404.
     #
-    # Ordering matters: the more specific /api/admin/upload handle must appear
+    # Ordering matters: the more specific /api/admin/* handles must appear
     # BEFORE the general /api/* block, or the generic rate-limited proxy would
-    # swallow uploads and reject them at the 100-requests/10s limit.
+    # swallow them into PocketBase and reject them at the 100-requests/10s limit.
     # `/admin` (no trailing slash) redirects to `/admin/`. Using an exact-path
     # matcher inside `handle` proved unreliable here — the file_server handle
     # below is a handle_path and won the match. A `route` with an explicit
@@ -190,9 +190,21 @@ ${DOMAIN} {
         file_server
     }
 
-    # Large release uploads go to the dedicated uploader, NOT PocketBase
-    # (which rejects bodies above a few MB and exposes no multipart API).
-    handle /api/admin/upload {
+    # Release publishing goes to the dedicated fetch service, NOT PocketBase.
+    #
+    # The console no longer uploads binaries: it asks the hub to pull them from
+    # the GitHub Release for a version. The service owns /var/www/updates and
+    # returns the verified hashes, which the console then writes into
+    # update_config via the releases.publish action.
+    #
+    # GET is a one-shot signed trigger link (?version&nonce&exp&sig); POST is
+    # the console button. Both must reach the same handler.
+    handle /api/admin/fetch-release {
+        reverse_proxy 127.0.0.1:8091
+    }
+
+    # Mint a fresh one-shot trigger link.
+    handle /api/admin/fetch-link {
         reverse_proxy 127.0.0.1:8091
     }
 
@@ -343,25 +355,39 @@ deploy_updates_dir() {
     log "✓ Admin console directory ready at ${admin_dir}"
 }
 
-# ── Install the release upload service ──
-# The console uploads multi-MB binaries; PocketBase rejects bodies above a few
-# MB and does not expose multipart files to hooks, and this Caddy build has no
-# upload handler. So a small dedicated service owns uploads, bound to
-# 127.0.0.1 and reached only through Caddy at /api/admin/upload.
-install_upload_service() {
-    local unit="/etc/systemd/system/locus-upload.service"
+# ── Install the release fetch service ──
+# Publishing no longer pushes binaries THROUGH the hub; the hub pulls them from
+# the GitHub Release for a version. That is what removed the upload size
+# problem entirely, so the old locus-upload service is retired here.
+#
+# The service still binds 127.0.0.1 and is reached only through Caddy, at
+# /api/admin/fetch-release (POST from the console, GET for a one-shot signed
+# link) and /api/admin/fetch-link (mint a link).
+install_fetch_service() {
+    local unit="/etc/systemd/system/locus-fetch.service"
     local tmpl
-    tmpl="$(dirname "$SCRIPT_DIR")/templates/locus-upload.service"
+    tmpl="$(dirname "$SCRIPT_DIR")/templates/locus-fetch.service"
 
     if [ ! -f "$tmpl" ]; then
-        fail "templates/locus-upload.service not found — the release uploader cannot be installed.
-     Release binaries are uploaded through it, so without it the console's
-     Releases page cannot publish anything. Expected at ${tmpl}"
+        fail "templates/locus-fetch.service not found — the release fetcher cannot be installed.
+     Releases are published through it, so without it the console's Releases
+     page cannot publish anything. Expected at ${tmpl}"
     fi
-    # The uploader script itself must exist where the unit expects it.
-    if [ ! -f /root/server/scripts/release_upload.py ]; then
-        fail "scripts/release_upload.py not found at /root/server/scripts — the release
-     uploader cannot be installed. Re-upload the server tree (scp -r v5/server)."
+    # The fetch service itself must exist where the unit expects it.
+    if [ ! -f /root/server/scripts/fetch-release.py ]; then
+        fail "scripts/fetch-release.py not found at /root/server/scripts — the release
+     fetcher cannot be installed. Re-upload the server tree (scp -r v5/server)."
+    fi
+
+    # ── Retire the old uploader ──
+    # Left running, it would keep binding 127.0.0.1:8091 and the new service
+    # would fail to start with "address already in use" — a confusing failure
+    # whose cause is a service that no longer has a Caddy route or a UI.
+    if systemctl list-unit-files 2>/dev/null | grep -q '^locus-upload\.service'; then
+        systemctl disable --now locus-upload 2>/dev/null || true
+        rm -f /etc/systemd/system/locus-upload.service
+        systemctl daemon-reload
+        log "✓ Retired the old locus-upload service (superseded by locus-fetch)"
     fi
 
     # Only rewrite when the content differs, so a re-run does not restart a
@@ -370,14 +396,14 @@ install_upload_service() {
         cp "$tmpl" "$unit"
         systemctl daemon-reload
     fi
-    systemctl enable locus-upload 2>/dev/null || true
-    systemctl restart locus-upload 2>/dev/null || true
-    sleep 1
-    if systemctl is-active --quiet locus-upload; then
-        log "✓ Upload service running on 127.0.0.1:8091"
+    systemctl enable locus-fetch 2>/dev/null || true
+    systemctl restart locus-fetch 2>/dev/null || true
+    sleep 2
+    if systemctl is-active --quiet locus-fetch; then
+        log "✓ Fetch service running on 127.0.0.1:8091"
     else
-        fail "Upload service is NOT running — releases cannot be published.
-     Check: journalctl -u locus-upload -n 20 --no-pager"
+        fail "Fetch service is NOT running — releases cannot be published.
+     Check: journalctl -u locus-fetch -n 20 --no-pager"
     fi
 }
 
@@ -452,7 +478,7 @@ create_systemd_service
 deploy_caddyfile
 deploy_update_json
 deploy_updates_dir
-install_upload_service
+install_fetch_service
 if [ "${SKIP_CONSOLE:-0}" = "1" ]; then
     log "SKIP_CONSOLE=1 — not deploying the admin console (and not requiring its bundle)"
 else

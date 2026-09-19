@@ -1,0 +1,34 @@
+[Unit]
+Description=Locus release fetch service (GitHub Release -> /var/www/updates)
+Documentation=https://github.com/vasilliourous/VPN-Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/environment
+Environment=UPDATES_DIR=/var/www/updates
+Environment=FETCH_PORT=8091
+# The repo whose Releases are pulled. Public, so no token is required; set
+# GH_TOKEN in /etc/environment if it ever becomes private.
+Environment=GITHUB_REPO=vasilliourous/VPN-Service
+# One-shot trigger links expire after this many seconds.
+Environment=FETCH_LINK_TTL=900
+ExecStart=/usr/bin/python3 /root/server/scripts/fetch-release.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening: the service only needs to write the updates directory, plus
+# /root/.fetch_link_secret (the one-shot link signing key). ProtectHome=read-only
+# would block writing that key, so /root is granted explicitly instead — the
+# service already runs as root and is reached only over loopback.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/var/www/updates /var/log /root
+
+[Install]
+WantedBy=multi-user.target

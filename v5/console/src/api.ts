@@ -105,75 +105,76 @@ export async function verifyToken(token: string): Promise<boolean> {
   }
 }
 
-export interface UploadProgress {
+export interface FetchArtifact {
   filename: string
-  loaded: number
-  total: number
-  percent: number
+  sha256: string
+  bytes: number
+  skipped?: boolean
+  format?: string
+}
+
+export interface FetchResult {
+  version: string
+  dir: string
+  elapsed?: number
+  artifacts: Record<string, FetchArtifact>
 }
 
 /**
- * Upload a single release artifact.
+ * Ask the hub to pull a release straight from its GitHub Release.
  *
- * Uses XMLHttpRequest rather than fetch because it reports upload progress —
- * on a school connection a 30MB upload is slow enough that a spinner with no
- * progress feels broken, and the operator needs to know it is still moving.
+ * This replaces the old browser upload. The artifacts are fetched BY VERSION
+ * from GitHub by the hub itself, so nothing large travels from this browser and
+ * there is no directory for the operator to point at wrongly. The service
+ * resolves assets by name, requires every platform, verifies each file's format
+ * and hash, and publishes atomically — so a partial release cannot be produced
+ * here.
  *
- * The SHA256 is computed in the browser and sent as a header so the server can
- * refuse a file that did not survive the transfer.
+ * Uses a plain fetch (not XHR) because there is no upload to report progress
+ * for; the response only arrives once every artifact is on disk and verified.
  */
-export function uploadArtifact(
-  version: string,
-  file: File,
-  sha256: string,
-  onProgress: (p: UploadProgress) => void,
-): Promise<ApiResult<{ version: string; filename: string; bytes: number; sha256: string }>> {
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', '/api/admin/upload', true)
-    xhr.setRequestHeader('X-Admin-Token', getToken())
-    xhr.setRequestHeader('X-Release-Version', version)
-    xhr.setRequestHeader('X-Release-Filename', file.name)
-    xhr.setRequestHeader('X-Release-Sha256', sha256)
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+export async function fetchRelease(version: string): Promise<ApiResult<FetchResult>> {
+  const token = getToken()
+  if (!token) return { ok: false, message: 'Not signed in' }
 
-    xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable) {
-        onProgress({
-          filename: file.name,
-          loaded: ev.loaded,
-          total: ev.total,
-          percent: Math.round((ev.loaded / ev.total) * 100),
-        })
-      }
+  try {
+    const resp = await fetch('/api/admin/fetch-release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
+      body: JSON.stringify({ version }),
+    })
+    const text = await resp.text()
+    let parsed: Record<string, unknown> = {}
+    try {
+      parsed = text ? JSON.parse(text) : {}
+    } catch {
+      return { ok: false, transportError: `Fetch service returned a non-JSON response (HTTP ${resp.status})` }
     }
-
-    xhr.onload = () => {
-      let parsed: Record<string, unknown> = {}
-      try {
-        parsed = JSON.parse(xhr.responseText || '{}')
-      } catch {
-        resolve({ ok: false, transportError: `Upload returned HTTP ${xhr.status}` })
-        return
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && parsed.ok) {
-        resolve({ ok: true, data: parsed as never })
-      } else {
-        resolve({ ok: false, message: (parsed.message as string) || `Upload failed (HTTP ${xhr.status})` })
-      }
+    if (!resp.ok || !parsed.ok) {
+      return { ok: false, message: (parsed.message as string) || `Fetch failed (HTTP ${resp.status})` }
     }
-    xhr.onerror = () => resolve({ ok: false, transportError: 'Upload failed — connection lost' })
-    xhr.onabort = () => resolve({ ok: false, transportError: 'Upload cancelled' })
-
-    xhr.send(file)
-  })
+    return { ok: true, data: parsed as unknown as FetchResult }
+  } catch (err) {
+    return { ok: false, transportError: (err as Error).message || 'Network error' }
+  }
 }
 
-/** Hash a File in the browser (streamed, so a 30MB file does not block). */
-export async function sha256OfFile(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer()
-  const digest = await crypto.subtle.digest('SHA-256', buffer)
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+/**
+ * Mint a fresh one-shot trigger link for a version.
+ *
+ * The link is single-use and expires. It exists so a fetch can be triggered
+ * without the admin token — from a phone or a CI job — and it must be re-minted
+ * for every run, which is what makes leaking one harmless.
+ */
+export function fetchLink(version: string): Promise<ApiResult<{ link: string; expires_in: number }>> {
+  const url = `/api/admin/fetch-link?version=${encodeURIComponent(version)}`
+  return fetch(url, { headers: { 'X-Admin-Token': getToken() } })
+    .then(async (resp) => {
+      const parsed = await resp.json().catch(() => ({}))
+      if (!resp.ok || !parsed.ok) {
+        return { ok: false, message: parsed.message || `Could not mint a link (HTTP ${resp.status})` } as ApiResult<{ link: string; expires_in: number }>
+      }
+      return { ok: true, data: parsed } as ApiResult<{ link: string; expires_in: number }>
+    })
+    .catch((err) => ({ ok: false, transportError: err.message || 'Network error' }))
 }

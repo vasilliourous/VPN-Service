@@ -502,6 +502,133 @@ routerAdd("POST", "/api/admin/console", function(e) {
         }
 
         // ─────────────────────────────────────────────────────────────
+        // releases.fetchLink — mint a one-shot trigger link
+        // ─────────────────────────────────────────────────────────────
+        //
+        // The signing key lives in the fetch service (it owns the secret and the
+        // nonce store), so this action forwards there over loopback rather than
+        // duplicating HMAC logic inside a hook — two implementations of a
+        // signature check is how they drift apart.
+        //
+        // It routes through PocketBase so the console keeps using the SAME
+        // authenticated endpoint for everything (one auth check, one audit
+        // point), instead of calling the loopback service directly.
+        if (action === "releases.fetchLink") {
+            var lv = String(body.version || "").trim().replace(/^v/, "");
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(lv)) {
+                return bad(400, "version must look like 1.2.3");
+            }
+            var svcUrl = $os.getenv("FETCH_SERVICE_URL") || "http://127.0.0.1:8091";
+            var linkRes = null;
+            try {
+                linkRes = $http.send({
+                    url: svcUrl + "/api/admin/fetch-link?version=" + lv,
+                    method: "GET",
+                    headers: { "X-Admin-Token": validToken },
+                    timeout: 15,
+                });
+            } catch (httpErr) {
+                return bad(502, "the release fetch service is not reachable: " +
+                                (httpErr.message || String(httpErr)));
+            }
+            if (!linkRes || linkRes.statusCode !== 200) {
+                return bad(502, "the release fetch service refused to mint a link (HTTP " +
+                                (linkRes ? linkRes.statusCode : "?") + ")");
+            }
+            var parsedLink = null;
+            try { parsedLink = JSON.parse(linkRes.raw); } catch (pjErr) { parsedLink = null; }
+            if (!parsedLink || !parsedLink.ok) {
+                return bad(502, "the release fetch service returned an unusable link");
+            }
+            logEvent("(release " + lv + ")", "fetch-link-minted", "one-shot link issued", "");
+            return ok({ link: parsedLink.link, expires_in: parsedLink.expires_in });
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // releases.publish — write the DB half of a published release
+        // ─────────────────────────────────────────────────────────────
+        //
+        // The bytes are fetched from the GitHub Release by the fetch service
+        // (scripts/fetch-release.py), which owns /var/www/updates and verifies
+        // every hash and file format. This action is the OTHER half: it points
+        // update_config at those artifacts.
+        //
+        // WHY IT IS A SEPARATE ACTION FROM releases.set
+        // releases.set deliberately refuses to raise rollout above 0 unless
+        // every platform already has a URL and a hash that names the version
+        // being advertised. That guard is what makes a "raise the rollout"
+        // click safe. So publishing has to happen first: fetch -> publish ->
+        // raise. This action is the middle step, and it is the only place the
+        // download_* / sha256_* columns are written from a fetch result.
+        //
+        // The per-platform hashes come from the files the service actually
+        // hashed on disk, not from what the caller claims — the fetcher returns
+        // the digest it computed while streaming the bytes.
+        if (action === "releases.publish") {
+            var pubVersion = String(body.version || "").trim().replace(/^v/, "");
+            if (!pubVersion) return bad(400, "version is required");
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(pubVersion)) {
+                return bad(400, "version must look like 1.2.3");
+            }
+
+            // artifacts: { linux: {sha256, bytes, filename}, ... }
+            var arts = body.artifacts || {};
+            var platKeysP = ["linux", "windows", "macos_intel", "macos_arm"];
+            var missingP = [];
+            for (var pi2 = 0; pi2 < platKeysP.length; pi2++) {
+                var pk2 = platKeysP[pi2];
+                var a = arts[pk2];
+                if (!a || !a.sha256 || !a.filename) missingP.push(pk2);
+            }
+            if (missingP.length) {
+                return bad(400,
+                    "refusing to publish " + pubVersion + " — the fetch did not " +
+                    "produce a verified artifact for: " + missingP.join(", ") +
+                    ". A release missing a platform leaves those clients unable " +
+                    "to update, and the omission is invisible from here.");
+            }
+
+            var baseUrl = String(body.base_url || "").trim().replace(/\/$/, "");
+            if (!baseUrl) {
+                return bad(400, "base_url is required (e.g. https://<domain>) so " +
+                                "the download URLs are absolute");
+            }
+
+            var recP = null;
+            try { recP = $app.dao().findFirstRecordByFilter("update_config", "id != ''"); } catch (nfP) { recP = null; }
+            if (!recP) {
+                var collP = $app.dao().findCollectionByNameOrId("update_config");
+                recP = new Record(collP);
+            }
+
+            for (var pi3 = 0; pi3 < platKeysP.length; pi3++) {
+                var pk3 = platKeysP[pi3];
+                var art = arts[pk3];
+                // The client's updater builds these URLs itself, but the
+                // heartbeat hands it whatever is stored here — so the stored
+                // form must be the exact path Caddy serves (handle_path
+                // /updates/*), with the version and filename already in it.
+                recP.set("download_" + pk3,
+                         baseUrl + "/updates/" + pubVersion + "/" + art.filename);
+                recP.set("sha256_" + pk3, String(art.sha256));
+            }
+            recP.set("version", pubVersion);
+            recP.set("active", true);
+            // Rollout is NOT touched here. Publishing and offering are separate
+            // decisions, and releases.set owns the rollout with its own guard.
+            $app.dao().saveRecord(recP);
+
+            logEvent("(release " + pubVersion + ")", "release-published",
+                     "artifacts verified and written; rollout unchanged at " +
+                     recP.get("rollout_percent") + "%", "");
+            return ok({
+                version: pubVersion,
+                rollout_percent: parseInt(recP.get("rollout_percent") || "0", 10),
+                platforms: platKeysP,
+            });
+        }
+
+        // ─────────────────────────────────────────────────────────────
         // releases.set — point clients at a version / change rollout
         // ─────────────────────────────────────────────────────────────
         if (action === "releases.set") {

@@ -265,7 +265,9 @@ Code lookup:   POST /api/code-lookup         ─── JSON body (read-only pre-
 Heartbeat:     POST /api/heartbeat           ─── JSON body
 Admin Unbind:  POST /api/admin/unbind-code   ─── JSON body (with admin_token)
 Admin API:     POST /api/admin/*             ─── JSON body (admin_token; Web UI)
-Release upload:POST /api/admin/upload        ─── Multipart; separate uploader
+Release fetch: POST /api/admin/fetch-release ─── JSON body (admin_token; hub pulls from GitHub)
+Release link:  GET  /api/admin/fetch-release  ─── One-shot signed trigger link (no token)
+Fetch link:    GET  /api/admin/fetch-link     ─── Mint a one-shot link (admin_token)
 Health:        GET  /api/health              ─── Plain GET
 Update Config: GET  /update.json             ─── Static file
 Update assets: GET  /updates/<version>/<file>─── Static file (no directory listing)
@@ -297,7 +299,8 @@ HTTP status code matches the `code` field in the JSON body.
 | `/api/heartbeat` | 1 | 10 seconds | Caddy |
 | `/api/*` (general) | 100 | 10 seconds | Caddy default zone |
 | `/api/admin/unbind-code` | None | — | Admin token required instead |
-| `/api/admin/upload` | None | — | Admin token; routed to the uploader |
+| `/api/admin/fetch-release` | None | — | Admin token, **or** a one-shot signed link |
+| `/api/admin/fetch-link` | None | — | Admin token; mints a single-use link |
 | `/updates/*` | None | — | Large one-shot downloads |
 
 Caddy keys on `{remote_host}` (client IP). The two PocketBase hooks add a

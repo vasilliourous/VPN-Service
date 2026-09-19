@@ -179,7 +179,7 @@ After deployment, verify:
 - [ ] `tc -s class show dev eth0` → classes 1:10 (Eco 5 Mbps), 1:20 (Stealth 100 Mbps), 1:30 (Strike 200 Mbps)
 - [ ] `systemctl is-active pocketbase-backup.timer` → active (hourly B2 backups; setup auto-runs the first backup)
 - [ ] `tail -5 /var/log/myvpn-backup.log` → last line "Backup completed (exit 0)"
-- [ ] `systemctl is-active locus-upload` → active (only if publishing releases)
+- [ ] `systemctl is-active locus-fetch` → active (only if publishing releases)
 - [ ] `curl -sf https://networkingguides.duckdns.org/api/health` → 200
 - [ ] `curl -s -o /dev/null -w '%{http_code}' https://networkingguides.duckdns.org/admin/` → 200 (and `/admin` → 301)
 - [ ] `ufw status` → active with all rules

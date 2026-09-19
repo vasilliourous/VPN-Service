@@ -224,7 +224,7 @@ End state of the blank-box run: all 8 modules exit 0, full `setup.sh` re-runs ar
 idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
 
 **Zero-touch deploy (since the 2026-09 config pass):** a fresh `setup.sh` needs
-no follow-up. It deploys the admin console and the release uploader (both now
+no follow-up. It deploys the admin console and the release fetch service (both now
 **required** — a missing bundle fails the deploy instead of warning), installs
 the Strike UDP-over-TCP endpoint on 8446 and opens it in the firewall, seeds
 tier configs with `uot_port` advertised, and installs everything enabled at

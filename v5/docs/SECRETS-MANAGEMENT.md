@@ -13,6 +13,7 @@ The Locus server needs several credentials to run:
 |---|---|
 | `DOMAIN` | Every module — the VPS hostname |
 | `ADMIN_API_TOKEN` | Admin unbind endpoint + code generator |
+| `RELEASE_FETCH_SECRET` | HMAC key for one-shot release-fetch trigger links |
 | `B2_APPLICATION_KEY_ID` | Backups module (Backblaze B2 auth) |
 | `B2_APPLICATION_KEY` | Backups module (Backblaze B2 auth) |
 | `B2_BUCKET` | Backups module (bucket name) |

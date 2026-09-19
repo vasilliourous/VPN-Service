@@ -197,3 +197,25 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
   position: fixed; right: 18px; bottom: 18px; z-index: 100;
   max-width: 420px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
 }
+
+/* ── Releases page ── */
+/* A plain data table for artifact/sha summaries. .grid was used by the
+   Releases page but never defined, so the rows rendered unstyled. */
+.grid { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.grid th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--border); padding: 6px 10px 6px 0;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+}
+.grid td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border); }
+
+/* Hashes and filenames: monospace so they are comparable at a glance. */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+/* A signed trigger link is long and must not blow out the layout. */
+.breakall { word-break: break-all; white-space: normal; }
+
+/* Label/value pairs for the "on the hub now" summary. */
+.kv { display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 6px; }
+.kv > div { display: flex; flex-direction: column; gap: 2px; }
+.kv .muted { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }

@@ -60,8 +60,8 @@ v5/
 │   ├── pb_hooks/          # PocketBase JS hooks (activation, heartbeat, code-lookup,
 │   │                      #   unbind, admin console, hiddify)
 │   ├── templates/         # Config templates (Caddyfile, ssserver JSONs, systemd,
-│   │                      #   locus-upload.service)
-│   ├── scripts/           # seed, smoke-test, publish-release, release_upload,
+│   │                      #   locus-fetch.service)
+│   ├── scripts/           # seed, smoke-test, publish-release, fetch-release,
 │   │                      #   deploy-console, enable-uot
 │   ├── secrets.env.age    # Age-encrypted credentials (key NOT in repo)
 │   ├── setup.sh           # One-command VPS orchestrator
@@ -175,7 +175,7 @@ VPS (Ubuntu 22.04)  —  170.64.196.179
 ├── ssserver × 3 (Eco:8443, Stealth:8444, Strike:8445)
 ├── Caddy (TLS + rate limiting + /admin/ + /updates/)
 ├── PocketBase (activation, heartbeat, code-lookup, admin API)
-├── locus-upload (127.0.0.1:8091 — release binaries)
+├── locus-fetch (127.0.0.1:8091 — pulls releases from GitHub)
 └── Backblaze B2 backups
 
 Transport: Shadowsocks AES-256-GCM over TCP
