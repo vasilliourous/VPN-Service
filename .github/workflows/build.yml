@@ -385,13 +385,24 @@ jobs:
           # whatever the runner does when it starts pwsh.
           $clientDir = Join-Path "${{ github.workspace }}" "v5\client"
           $buildDir  = Join-Path $clientDir "dist"
+          $iss       = Join-Path $clientDir "build\windows\locus.iss"
+
+          # The script itself is passed absolutely for the same reason. A
+          # relative "..\..\build\windows\locus.iss" resolves against the
+          # runner's cwd; if that is ever not v5/client the compiler is handed
+          # a path that does not exist and fails with a bare "file not found".
+          if (-not (Test-Path -LiteralPath $iss)) {
+            Write-Host "::error::Installer script not found: $iss"
+            exit 1
+          }
+
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
-          & $iscc "/DAppVersion=$version" "/DBuildDir=$clientDir" "/DOutputDirAbs=$buildDir" "..\..\build\windows\locus.iss"
+          & $iscc "/DAppVersion=$version" "/DBuildDir=$clientDir" "/DOutputDirAbs=$buildDir" $iss
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Inno Setup compilation failed (exit $LASTEXITCODE)"
             exit 1
           }
-          Get-ChildItem dist -Filter *.exe | Format-Table Name, Length
+          Get-ChildItem -LiteralPath $buildDir -Filter *.exe | Format-Table Name, Length
 
       - name: Build macOS disk image
         if: matrix.goos == 'darwin'
