@@ -169,14 +169,14 @@ pass out proto udp from any to any port 53
 func killSwitchWindows(enable bool, iface string) error {
 	if enable {
 		// Use Windows Filtering Platform via netsh
-		if err := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		if err := hiddenCommand("netsh", "advfirewall", "firewall", "add", "rule",
 			"name=Locus_KillSwitch", "dir=out", "action=block",
 			"interfacetype=!\"Tunnel\"", "enable=yes",
 		).Run(); err != nil {
 			return fmt.Errorf("kill switch enable failed: %w", err)
 		}
 	} else {
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule",
+		_ = hiddenCommand("netsh", "advfirewall", "firewall", "delete", "rule",
 			"name=Locus_KillSwitch").Run()
 	}
 	return nil
@@ -225,7 +225,7 @@ func setDNSDarwin(servers []string) error {
 func setDNSWindows(servers []string) error {
 	// Use netsh to set DNS
 	for _, s := range servers {
-		if err := exec.Command("netsh", "interface", "ip", "set", "dns",
+		if err := hiddenCommand("netsh", "interface", "ip", "set", "dns",
 			"name=Locus", "source=static", fmt.Sprintf("addr=%s", s),
 		).Run(); err != nil {
 			return fmt.Errorf("cannot set Windows DNS: %w", err)

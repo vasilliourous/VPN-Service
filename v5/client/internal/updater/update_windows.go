@@ -54,14 +54,26 @@ func swapWindows(newPath, currentPath string) error {
 }
 
 // forkWindows starts the new binary on Windows.
+//
+// HideWindow is REQUIRED here. Locus is built as a GUI (windowsgui) binary, so
+// it has no console. A child process spawned without CREATE_NO_WINDOW gets a
+// brand-new console allocated for it by Windows, which the user sees as a
+// terminal window flashing open. That is especially visible in the updater:
+// this is the last thing that runs before the app restarts, so the flash lands
+// at the exact moment the UI disappears and the user is watching the screen.
+//
+// CREATE_NO_WINDOW suppresses the allocation. CREATE_NEW_PROCESS_GROUP is kept:
+// it detaches the child from this process's group so the parent exiting does
+// not take the freshly started update down with it.
 func forkWindows(binaryPath string) error {
 	cmd := exec.Command(binaryPath, os.Args[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Detach from parent
+	// Detach from parent, and do not allocate a console for the child.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 	}
 
