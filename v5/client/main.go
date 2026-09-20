@@ -55,7 +55,7 @@ import (
 // The fallback below is deliberately kept in sync with v5/VERSION so an
 // uninstrumented `go build` reports something meaningful — bump v5/VERSION
 // (not this literal) before a release.
-var version = "2.2.7"
+var version = "2.2.8"
 
 // Windows executables carry an embedded manifest (rsrc_windows_amd64.syso /
 // rsrc_windows_arm64.syso) that sets requestedExecutionLevel="requireAdministrator" —
@@ -69,7 +69,7 @@ var version = "2.2.7"
 // If the .syso files are missing, Go builds a Windows exe with the default
 // asInvoker manifest and Connect() falls back to a runtime UAC relaunch.
 //
-//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name Locus --file-description "Locus secure school VPN" --product-version 2.2.7 --file-version 2.2.7
+//go:generate go run github.com/tc-hib/go-winres@latest simply --admin --manifest gui --arch amd64,arm64 --out rsrc --product-name Locus --file-description "Locus secure school VPN" --product-version 2.2.8 --file-version 2.2.8
 
 func main() {
 	// Route Go's stderr (panic traces) and the standard logger to a file so

@@ -57,7 +57,7 @@ type Info struct {
 // for real builds inside the checkout). A plain `go build` with no flags inside
 // the repo therefore reports Instrumented=false, and the updater refuses to
 // treat its version as authoritative.
-const fallbackVersion = "2.2.7"
+const fallbackVersion = "2.2.8"
 
 // FallbackVersion returns the literal compile-time fallback version. Exposed so
 // the repo's version-consistency test can assert it matches v5/VERSION — an
