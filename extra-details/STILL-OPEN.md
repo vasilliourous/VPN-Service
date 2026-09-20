@@ -1,0 +1,106 @@
+# Still open after this work
+
+What I did **not** finish, and what a successor should know before picking it up.
+Ordered by whether I could have validated it here.
+
+---
+
+## Open, and blocked in this environment
+
+### UoT has never carried a real game session
+
+I flipped `ENABLE_UOT` to default-on, and another agent enabled it on the live
+host. The transport is proven — a SOCKS5 UDP ASSOCIATE through both the raw 8445
+and UoT 8446 paths returns a DNS answer, and the server log shows
+`inbound UoT connection to 8.8.8.8:53`.
+
+What is **not** validated is Strike's actual gaming promise: no real game has
+ever been run on a school network. Treat "gaming tier" as design intent until
+someone does that. If you have access to a school network and a game, this is the
+single highest-value thing left.
+
+### Linux TUN elevation (Track A)
+
+Unchanged by this work. There is no elevation path on Linux — direct mode is
+forced and the helper binary is not shipped, so TUN cannot be created in a
+non-root session. The gap is now declared honestly instead of surfacing as an
+opaque engine error, but it is not fixed. See `v5/docs/ENGINE-SWAP-ANALYSIS.md`.
+
+---
+
+## Open, and fixable now
+
+### `publish-update.sh` (repo root) has two real defects
+
+Not live (nothing is published; `update_config` is at rollout 0 with empty URLs,
+which I verified), but both would break a release done this way:
+
+1. **It writes no `sha256_<platform>` columns.** Verified: zero matches. It emits
+   an `assets: {…}` object, which is not an `update_config` column. Per-platform
+   hashes are required and the client refuses an empty hash, so clients would be
+   unable to verify.
+2. **Its macOS URLs point at filenames CI does not produce.**
+   `locus-macos-amd64` / `locus-macos-arm64` vs CI's `locus-darwin-amd64` /
+   `locus-darwin-arm64` → 404.
+
+`publish-release.sh` is the correct path and does verify served bytes.
+
+### Correct the `internal/updatecfg` doc comment
+
+It states that `publish-update.sh` writes `update_linux`/`update_windows` while
+`publish-release.sh` writes `download_*`, causing every platform to fetch the
+Linux binary. **That is not accurate**: both scripts write `download_*`, and
+`publish-update.sh` contains zero `update_linux`/`update_windows` occurrences. I
+checked specifically because the claim did not match what I had read.
+
+The package is still a reasonable shared contract definition — but the stated
+cause of the bug it was written for is wrong, and a wrong fix note is worse than
+none. Fix the comment before someone trusts it.
+
+### Delete my backup files once the guard is confirmed good
+
+```
+/root/data.db.pre-updateconfig-fix-1789795235
+/root/admin_console.pb.js.pre-guard-1789795273
+/root/admin_console.pb.js.staged-pre-guard-1789795273
+```
+
+---
+
+## Things I checked and deliberately left alone
+
+Recording these so they are not re-investigated:
+
+- **`shadowsocks-eco` WARN lines** — `decrypt length failed` from AWS-range IPs.
+  Internet scanners probing open ports; they cannot complete the AEAD handshake.
+  Benign, and the volume is low.
+- **A 502 in the Caddy log** — my own PocketBase restart during the hook deploy.
+- **`/update.json`** — a stale placeholder written by `05-caddy.sh`. The updater
+  reads `update_config`. Not a fault, but do not use it as a health check.
+- **The truncated fingerprint** in the `live-data-do-not-delete` memory note — I
+  flagged it but did not correct the memory. If you rely on that value, use the
+  full 64-char SHA-256 from `GOTCHAS-FROM-THIS-WORK.md` §1.
+- **Making it so a future deploy cannot advertise unresolvable update URLs** — I
+  added a guard for the *record* (`releases.set` checks URLs and hashes are
+  present and version-matched), but the hook cannot stat the filesystem
+  (PocketBase exposes only `$os.getenv`), so it cannot confirm the files exist.
+  Publishing still verifies served bytes (`publish-release.sh`); that is the real
+  guarantee, and the guard is defence in depth for the console path.
+
+---
+
+## If you are the next agent here
+
+1. Run `git show --stat 4791381` to see exactly what this conversation touched.
+2. Read `GOTCHAS-FROM-THIS-WORK.md` before testing against the live hub — it will
+   save you the two false diagnoses I made.
+3. Remember `setup.sh` deploys from `/root/server/`, not from the repo. Editing a
+   file here changes nothing until the staging copy is updated. Check drift:
+
+```bash
+for f in activation admin_console admin_unbind code_lookup heartbeat hiddify release; do
+  a=$(md5sum /opt/pocketbase/pb_hooks/$f.pb.js 2>/dev/null | cut -d' ' -f1)
+  b=$(md5sum /root/server/pb_hooks/$f.pb.js 2>/dev/null | cut -d' ' -f1)
+  [ "$a" = "$b" ] && echo "$f in sync" || echo "$f DRIFT"
+done
+```
