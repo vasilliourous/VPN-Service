@@ -192,16 +192,21 @@ log ""
 log "   Passwords saved to ${PASS_FILE} (chmod 600)"
 
 # ═══════════════════════════════════════════
-# OPTIONAL: Strike UDP-over-TCP (sing-box server)
-# Enable with ENABLE_UOT=1 (plus optional UOT_PORT, default 8446).
+# Strike UDP-over-TCP (sing-box server) — ON BY DEFAULT
 #
-# ADDITIVE: installs a sing-box server listening on UOT_PORT serving
-# Strike's credentials (aes-256-gcm) with udp_over_tcp. The standard
-# 8443/8444/8445 shadowsocks-rust services are untouched — TCP traffic
-# never uses this instance. Clients only route UDP here when the tier's
-# tier_configs config advertises "uot_port" (see seed-live.py ENABLE_UOT=1).
+# Installs a sing-box server listening on UOT_PORT serving Strike's
+# credentials (aes-256-gcm), so game/voice UDP can ride inside an allowed
+# TCP flow on networks that drop raw UDP (N4L school WiFi).
+#
+# ADDITIVE: the standard 8443/8444/8445 shadowsocks-rust services are
+# untouched — TCP traffic never uses this instance. Clients only route UDP
+# here when the tier's tier_configs config advertises "uot_port", which
+# seed-pb.py does automatically (same default).
+#
+# Disable with ENABLE_UOT=0 (then re-run seed-pb.py so the tier stops
+# advertising uot_port, otherwise clients are told to use a dead port).
 # ═══════════════════════════════════════════
-UOT_ENABLED="${ENABLE_UOT:-0}"
+UOT_ENABLED="${ENABLE_UOT:-1}"
 UOT_PORT="${UOT_PORT:-8446}"
 SING_BOX_VERSION="${SING_BOX_VERSION:-v1.12.1}"
 SING_BOX_BINARY="/usr/local/bin/sing-box"
@@ -287,13 +292,15 @@ if [ "$UOT_ENABLED" = "1" ]; then
         systemctl daemon-reload
         systemctl enable sing-box-uot.service 2>/dev/null || true
         log "✓ UoT enabled: sing-box :${UOT_PORT} (Strike creds, tcp+udp, udp_over_tcp)"
-        log "  Advertise to clients: add \"uot_port\": ${UOT_PORT} to the strike"
-        log "  tier_configs config JSON (run seed-live.py with ENABLE_UOT=1, or edit in admin UI)."
+        log "  seed-pb.py advertises \"uot_port\": ${UOT_PORT} on the strike tier by default,"
+        log "  so existing Strike clients pick it up on their next heartbeat."
     else
         warn "UoT setup aborted (download failed). TCP tiers unaffected."
     fi
 else
-    log "UoT disabled (set ENABLE_UOT=1 to install the sing-box UDP-over-TCP endpoint)"
+    log "UoT disabled (ENABLE_UOT=0) — Strike clients continue on raw UDP."
+    log "  NOTE: re-run seed-pb.py so the strike tier stops advertising uot_port;"
+    log "  otherwise clients are told to use a UDP port nothing is listening on."
 fi
 
 exit 0

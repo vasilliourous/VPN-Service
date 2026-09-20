@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"locus/internal/pinned"
+	"locus/internal/uotkey"
 )
 
 // Common errors.
@@ -53,7 +54,42 @@ type ServerConfig struct {
 	// ServerPortUOT is the optional UDP-over-TCP (UoT) endpoint for this tier.
 	// When > 0, the manager sends UDP via the UoT-capable server (sing-box
 	// server) while TCP stays on ServerPort. 0 = raw UDP (standard ss UDP).
+	//
+	// Populated from EITHER "uot_port" (what the hub actually sends) or
+	// "server_port_uot" — see UnmarshalJSON below.
 	ServerPortUOT int `json:"server_port_uot,omitempty"`
+}
+
+// UnmarshalJSON resolves the UoT endpoint through internal/uotkey, which is the
+// single place that knows the wire field name.
+//
+// The hub sends "uot_port"; this struct originally declared only
+// "server_port_uot". Go's encoding/json ignores unknown keys WITHOUT error, so
+// the value never landed, ServerPortUOT was permanently 0, and
+// manager/process.go's `uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0`
+// was always false — UDP-over-TCP was never active on any build, while the
+// server correctly advertised a live endpoint. Fixed 2026-09-19 (FIXES.md 29).
+//
+// The wire key is frozen: deployed clients read "uot_port", so the tolerance
+// lives on this side. "server_port_uot" is also accepted so a future rename
+// cannot break this build the same way in reverse.
+func (c *ServerConfig) UnmarshalJSON(data []byte) error {
+	var decoded uotkey.ServerConfig
+	if err := uotkey.DecodeInto(data, &decoded); err != nil {
+		return err
+	}
+	return c.fromWire(decoded)
+}
+
+// fromWire copies the shared shape into this package's richer type,
+// normalising the UoT key in one place.
+func (c *ServerConfig) fromWire(w uotkey.ServerConfig) error {
+	c.Server = w.Server
+	c.ServerPort = w.ServerPort
+	c.Password = w.Password
+	c.Method = w.Method
+	c.ServerPortUOT = w.ServerPortUOT
+	return nil
 }
 
 // ActivateRequest is sent to the activation endpoint.
@@ -300,4 +336,107 @@ func (c *Client) attemptActivate(ctx context.Context, code, fingerprint string) 
 	default:
 		return nil, fmt.Errorf("%w (%d): %s", ErrServerError, activateResp.Code, activateResp.Message)
 	}
+}
+
+// ── Code lookup (read-only pre-check) ──
+
+// LookupStatus is the outcome of a read-only code lookup.
+type LookupStatus string
+
+const (
+	// LookupOK means the code exists and is ready to activate on this device.
+	LookupOK LookupStatus = "ok"
+	// LookupUnbound means the code exists and is not bound to any device yet.
+	LookupUnbound LookupStatus = "unbound"
+	// LookupBoundThisDevice means the code is already bound to this device.
+	LookupBoundThisDevice LookupStatus = "bound_this_device"
+	// LookupBoundOther means the code is bound to a different device.
+	LookupBoundOther LookupStatus = "bound_other"
+	// LookupSuspended means the code exists but has been suspended.
+	LookupSuspended LookupStatus = "suspended"
+	// LookupExpired means the code exists but has expired.
+	LookupExpired LookupStatus = "expired"
+	// LookupNotFound means no such code exists in the database.
+	LookupNotFound LookupStatus = "not_found"
+)
+
+// LookupResponse is the response from the read-only /api/code-lookup endpoint.
+type LookupResponse struct {
+	Status LookupStatus `json:"status"`
+	// Tier is present when the code was found (so the UI can show what the
+	// student is about to get before they commit to activating).
+	Tier string `json:"tier,omitempty"`
+	// ExpiresAt is an ISO-8601 timestamp when the code has an expiry.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	// Message is an optional human-readable note from the server.
+	Message string `json:"message,omitempty"`
+}
+
+// LookupCode performs a READ-ONLY pre-check of an activation code.
+//
+// This exists so the activation screen can tell a student whether their code is
+// actually recognised (exists in the database, not suspended/expired/bound to
+// someone else) BEFORE they commit to the 30s activation round-trip — the old
+// ValidateCode only checked the Luhn checksum locally, so "✓ Valid" meant
+// "well-formed", not "real".
+//
+// It never binds the device and is safe to call repeatedly. Callers should treat
+// any transport error as "unknown" and fall back to validating on Activate
+// rather than blocking the student.
+func (c *Client) LookupCode(ctx context.Context, code, fingerprint string) (*LookupResponse, error) {
+	cleaned := stripFormatting(code)
+	if len(cleaned) != CodeTotalLen {
+		return nil, ErrInvalidCode
+	}
+	if !luhnModNCheck(cleaned) {
+		return nil, ErrChecksumFailed
+	}
+
+	req := ActivateRequest{
+		Code:        FormatCode(cleaned),
+		Fingerprint: fingerprint,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot marshal lookup request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.hubURL+"/api/code-lookup", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("cannot create lookup request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", "Locus-Client/2.0")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, ErrTimeout
+		}
+		return nil, fmt.Errorf("%w: %v", ErrServerUnreachable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// A hub without the lookup route (older deployment) returns 404 with a
+	// non-JSON body. Treat that as "unknown" rather than an error so the UI
+	// degrades to the activate-time check instead of showing a false failure.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: lookup endpoint not available", ErrServerUnreachable)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrRateLimited
+	}
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read lookup response: %w", err)
+	}
+
+	var lr LookupResponse
+	if err := json.Unmarshal(respBody, &lr); err != nil {
+		return nil, fmt.Errorf("cannot decode lookup response: %w", err)
+	}
+	return &lr, nil
 }

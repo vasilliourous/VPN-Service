@@ -1,6 +1,6 @@
-// MyVPN Hiddify Links Hook — PocketBase 0.22 compatible
+// Locus Hiddify Links Hook — PocketBase 0.22 compatible
 // Generates Hiddify-compatible ss:// subscription links for testing
-// without requiring the dedicated MyVPN client.
+// without requiring the dedicated Locus client.
 //
 // Endpoints:
 //   GET /api/hiddify?code=CODE           — returns ss:// link for the code's tier
@@ -10,12 +10,52 @@
 // Usage from any HTTP client (curl, browser, Hiddify import):
 //   curl "https://networkingguides.duckdns.org/api/hiddify?code=RQ-XXXX-XXXX-XXXX-X"
 
-function sanitizeFilter(val) {
-    if (typeof val !== "string") return "";
-    return val.replace(/\\/g, "").replace(/'/g, "");
-}
+// NOTE on scope: PocketBase's JS hook runtime does NOT expose top-level
+// function declarations to the route handler — a helper defined at file scope
+// throws "is not defined" at request time (verified live 2026-09-19; this had
+// made the whole /api/hiddify endpoint return HTTP 500). Helpers must be
+// declared INSIDE the handler, or replaced with inline expressions.
+//
+// Also: `$app.findRecordsByFilter` does not exist, and the DAO's
+// `findRecordsByFilter` silently returns zero rows on this build. Use
+// `findFirstRecordByFilter` / `findRecordsByExpr` instead.
 
 routerAdd("GET", "/api/hiddify", function(e) {
+    // ── PocketBase date parsing ──────────────────────────────────────────────
+    // CRITICAL: `new Date("2027-09-19 00:00:00.000Z")` returns NaN in goja.
+    // The ECMAScript date-string format requires a "T" separator; PocketBase
+    // stores a space. Measured against the live hub on 2026-09-19.
+    //
+    // Every expiry check used to read:
+    //     var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) ...
+    // and because the parse ALWAYS returned NaN, the isNaN guard was always
+    // taken and the comparison NEVER RAN — so no code ever expired. The guard
+    // converted a parse failure into "still valid", the most dangerous default
+    // for an expiry check.
+    //
+    // Defined inside the callback on purpose: goja does not hoist function
+    // declarations across scopes, so a file-level helper is invisible here.
+    function parsePBDate(value) {
+        if (value === null || value === undefined || value === "") return 0;
+        if (typeof value === "number") return value;
+        var s = String(value).trim();
+        if (!s) return 0;
+        var direct = new Date(s).getTime();
+        if (!isNaN(direct)) return direct;
+        var swapped = new Date(s.replace(" ", "T")).getTime();
+        if (!isNaN(swapped)) return swapped;
+        if (/^[0-9]+$/.test(s)) {
+            var n = parseInt(s, 10);
+            return s.length <= 10 ? n * 1000 : n;
+        }
+        return NaN;
+    }
+
+    // Inline re-implementation of the former file-scope helper.
+    function sanitizeFilter(val) {
+        if (typeof val !== "string") return "";
+        return val.replace(/\\/g, "").replace(/'/g, "");
+    }
     try {
         var req = e.request();
         var code = req.url.query().get("code") || "";
@@ -31,24 +71,24 @@ routerAdd("GET", "/api/hiddify", function(e) {
             ? s.substring(0,2)+"-"+s.substring(2,6)+"-"+s.substring(6,10)+"-"+s.substring(10,14)+"-"+s.substring(14,15)
             : code;
         var safeCode = sanitizeFilter(canonical);
-        var records = $app.findRecordsByFilter(
-            "codes",
-            "code={:code}",
-            "", 0, 1,
-            { code: safeCode }
-        );
-        if (records.length === 0) return e.json(404, {code: 404, message: "Code not found"});
-        var record = records[0];
+        var record = null;
+        try {
+            record = $app.dao().findFirstRecordByFilter("codes", "code = '" + safeCode + "'");
+        } catch (noCode) {
+            record = null;
+        }
+        if (!record) return e.json(404, {code: 404, message: "Code not found"});
 
         // ── Check suspension & expiry ──
         if (record.getBool("suspended")) return e.json(403, {code: 403, message: "Code suspended"});
         var exp = record.get("expires_at");
-        if (exp) { var ed = new Date(exp).getTime(); if (!isNaN(ed) && ed < Date.now()) return e.json(410, {code: 410, message: "Code expired"}); }
+        var expMsH = parsePBDate(exp);
+        if (!isNaN(expMsH) && expMsH > 0 && expMsH < Date.now()) return e.json(410, {code: 410, message: "Code expired"});
 
         var userTier = record.getString("tier");
 
         // ── Resolve server domain ──
-        var allCfgs = $app.findRecordsByFilter("tier_configs", "active={:active}", "", 0, 0, { active: true });
+        var allCfgs = $app.dao().findRecordsByExpr("tier_configs", $dbx.exp("active = true"));
         var domain = "";
         if (allCfgs.length > 0) {
             try {
@@ -66,12 +106,14 @@ routerAdd("GET", "/api/hiddify", function(e) {
         if (allTiers) {
             configs = allCfgs;
         } else {
-            var tierCfgs = $app.findRecordsByFilter(
-                "tier_configs",
-                "tier={:tier} && active={:active}",
-                "", 0, 1,
-                { tier: sanitizeFilter(userTier), active: true }
-            );
+            var tierCfgs = [];
+            try {
+                var one = $app.dao().findFirstRecordByFilter("tier_configs",
+                    "tier = '" + sanitizeFilter(userTier) + "' && active = true");
+                tierCfgs = [one];
+            } catch (noTier) {
+                tierCfgs = [];
+            }
             if (tierCfgs.length > 0) configs = [tierCfgs[0]];
         }
 
@@ -92,7 +134,10 @@ routerAdd("GET", "/api/hiddify", function(e) {
 
             var userInfo = method + ":" + password;
             var encoded = btoa(userInfo);
-            var tag = tierName.charAt(0).toUpperCase() + tierName.slice(1) + " - MyVPN";
+            // The tag is the display name a student sees in their shadowsocks
+            // client, so it is the one piece of branding here that is genuinely
+            // user-visible. It said "MyVPN" long after the product was renamed.
+            var tag = tierName.charAt(0).toUpperCase() + tierName.slice(1) + " - Locus";
             var ssLink = "ss://" + encoded + "@" + server + ":" + port + "#" + encodeURIComponent(tag);
 
             var sipObj = { method: method, password: password, server: server, server_port: port };

@@ -1,4 +1,4 @@
-# MyVPN Server — Secrets and transient files
+# Locus Server — Secrets and transient files
 
 # Age-encrypted secrets key (NEVER commit the private key)
 age-key.txt

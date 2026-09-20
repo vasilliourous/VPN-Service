@@ -1,12 +1,51 @@
 # Gaming UDP — Implementation Plan (Consolidated 2026-08-14)
 
-> **Status:** DEPLOYED (2026-08-14) — server UoT endpoint LIVE on the
-> production VPS (134.199.155.166, port 8446) and client UoT support shipped.
-> **UoT transport VALIDATED end-to-end (2026-08-14):** sing-box client with
-> `udp_over_tcp: true` → :8446 → sing-box server → UDP to 1.1.1.1:53 → DNS
-> reply returned through the UoT chain (2 answers, QR flag set) — the first
-> successful UDP-over-TCP round-trip on this stack. Remaining P1 item: a REAL
-> game session (SCP:SL) on the school network.
+> **Status: LIVE on the current host (`170.64.196.179`) — enabled 2026-09-19.**
+>
+> `sing-box-uot` is active and listening on **TCP+UDP 8446**, and the strike tier
+> advertises `udp_relay=true` + `uot_port=8446`. Verified end-to-end on the live
+> host: a sing-box client with `udp_over_tcp: true` → 127.0.0.1:8446 → sing-box
+> server → UDP to 8.8.8.8:53 → DNS reply returned. The server log confirms the
+> mechanism explicitly:
+>
+> ```
+> inbound/shadowsocks[strike-uot]: inbound connection to sp.v2.udp-over-tcp.arpa:0
+> inbound/shadowsocks[strike-uot]: inbound UoT connection to 8.8.8.8:53
+> outbound/direct: outbound packet connection
+> ```
+>
+> The same test also confirmed **raw** UDP (via the ordinary 8445 shadowsocks
+> port) relays correctly on this host.
+>
+> **Still outstanding: a real game session on a school network.** The transport
+> is proven; the acceptance gate in §P1 (5-minute SCP:SL or similar, on N4L,
+> versus the raw-UDP baseline) has still never been run. Until it is, treat
+> Strike's gaming claim as unvalidated in the field.
+>
+> **Historically:** the code landed and the UoT transport was first validated
+> 2026-08-14 on the then-live VPS (`134.199.155.166`, port 8446). That host is
+> now **retired and offline**, and the current host was deployed while UoT was
+> still opt-in, which is why this needed enabling by hand.
+>
+> **Default now:** `02-shadowsocks.sh` and `setup.sh` build the UoT endpoint
+> unless `ENABLE_UOT=0` is set, `08-firewall.sh` opens 8446 TCP+UDP, and
+> `seed-pb.py` advertises `uot_port` on the strike tier. So a fresh deployment
+> gets working game-UDP handling with no extra flags. Opting out is the
+> exception and needs `ENABLE_UOT=0` **plus** a re-seed, or clients are told to
+> use a port nothing is listening on.
+>
+> **Testing note (learned the hard way):** do not test the UDP path by sending a
+> bare DNS datagram at a `mixed` inbound. The client's sing-box sniffs and
+> hijacks DNS, and UDP through the tunnel is reached via **SOCKS5 UDP
+> ASSOCIATE**, not by throwing an unauthenticated packet at the port. Two
+> apparently-failing tests here were bad tests, not a broken server — the raw
+> UDP and UoT paths both worked once exercised the way the tunnel actually
+> carries UDP.
+
+> This document consolidates the analysis from the packet-level debugging narrative (diag/ toolkit, FIXES.md, CONTEXT.md) into an ordered change plan
+> to make the Strike tier's gaming promise actually function on N4L school
+> networks. Read `CONTEXT.md` and `FIXES.md` for the full debugging history.
+>
 > **P1 throughput baselines (2026-08-14, via the Stealth TCP path — clash
 > config `clash-verge-stealth.yaml`):** school network 25.3 down / 113.6 up
 > @ 51ms (single-flow: 2.47 down — school shapes downloads PER-FLOW ~2.5
@@ -51,21 +90,27 @@ UoT. sing-box (the engine already on every client) is that server.
 
 ### P0 — Transport fix: UDP-over-TCP on a server that implements it (the core change)
 
-✅ **DEPLOYED to production — 2026-08-14** (VPS 134.199.155.166). What
-landed and is live:
+✅ **Code landed and transport validated — 2026-08-14** (on the then-live VPS
+`134.199.155.166`, since retired). What landed and still exists in the repo:
 
 | Piece | Where | Detail |
 |-------|-------|--------|
-| Server UoT endpoint | `v5/server/modules/02-shadowsocks.sh` | Gated `ENABLE_UOT=1` section: installs sing-box server (v1.12.1), shadowsocks inbound on `UOT_PORT` (default 8446) with Strike creds, systemd unit `sing-box-uot.service`. **Config corrections from live deploy:** sing-box REJECTS `"network": "tcp_and_udp"` and rejects `"udp_over_tcp"` on the INBOUND — both omitted (default = tcp+udp; UoT magic-domain connections handled automatically by the inbound). Verified listening on TCP+UDP 8446 |
-| Advertising | `v5/server/scripts/seed-live.py`, `seed-pb.py` | With `ENABLE_UOT=1`, strike's tier_configs config gains `"uot_port"` + `udp_relay=true`. **Live:** strike tier_configs = `{"server":"networkingguides.duckdns.org","server_port":8445,"uot_port":8446,...}` |
+| Server UoT endpoint | `v5/server/modules/02-shadowsocks.sh` | Default-on section (`ENABLE_UOT=0` to skip): installs sing-box server (v1.12.1), shadowsocks inbound on `UOT_PORT` (default 8446) with Strike creds, systemd unit `sing-box-uot.service`. **Config corrections from live deploy:** sing-box REJECTS `"network": "tcp_and_udp"` and rejects `"udp_over_tcp"` on the INBOUND — both omitted (default = tcp+udp; UoT magic-domain connections handled automatically by the inbound). Verified listening on TCP+UDP 8446 |
+| Idempotent installer | `v5/server/scripts/enable-uot.sh` | Installs/starts the UoT endpoint on an **already-deployed** box without re-running full setup; touches none of the 8443/44/45 services, Caddy, PocketBase, tc or backups |
+| Advertising | `v5/server/scripts/seed-live.py`, `seed-pb.py` | With `ENABLE_UOT=1`, strike's tier_configs config gains `"uot_port"` + `udp_relay=true` |
 | Client UoT outbound | `v5/client/internal/manager/process.go` | When `UDPRelay && ServerPortUOT > 0`: adds a `proxy-uot` shadowsocks outbound (`udp_over_tcp: true`, port = uot_port) + a `network: udp` route rule pinning UDP to it. TCP stays on the standard port/outbound — the working path never changes |
 | Plumbing | `heartbeat.go`, `activation.go`, `storage.go`, `app.go` | `server_port_uot` parsed from server config in all three paths (activation, heartbeat refresh, persisted state) and applied to the manager Config |
-| Verified live | activation + heartbeat | `POST /api/activate` → 200 with `server_config.uot_port:8446, udp_relay:true`; `POST /api/heartbeat` → 200 with the same config refresh |
+| Verified live (2026-08-14) | activation + heartbeat | `POST /api/activate` → 200 with `server_config.uot_port:8446, udp_relay:true`; `POST /api/heartbeat` → 200 with the same config refresh |
+
+**Current state (2026-09-19 host):** none of the above is *running* on
+`170.64.196.179`. `ENABLE_UOT=1` has not been used there, so Strike clients get
+no `uot_port` and send raw UDP. Nothing is broken — UoT is simply not switched on.
 
 **Deploy commands (repeatable):**
 1. DNS for the domain must resolve to the VPS FIRST (00-env hard-fails)
 2. `scp -r v5/server age-key.txt root@VPS:/root/server/`
-3. `ENABLE_UOT=1 DOMAIN=… /root/server/setup.sh` (idempotent)
+3. `ENABLE_UOT=1 DOMAIN=… /root/server/setup.sh` (idempotent) — or, on an
+   already-deployed box, just `UOT_PORT=8446 bash v5/server/scripts/enable-uot.sh`
 4. `ENABLE_UOT=1 DOMAIN=… python3 /root/server/scripts/seed-pb.py` (re-seed after any setup re-run)
 5. Existing Strike clients pick up `uot_port` on their next heartbeat (no re-activation needed)
 6. Disable: `systemctl disable --now sing-box-uot` + drop `uot_port` from the tier config

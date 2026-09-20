@@ -1,4 +1,4 @@
-// MyVPN Heartbeat Hook — PocketBase 0.22 compatible
+// Locus Heartbeat Hook — PocketBase 0.22 compatible
 // Changed from GET to POST to avoid leaking activation codes in server access logs.
 // Code and fingerprint are sent in the JSON body, not URL query parameters.
 routerAdd("POST", "/api/heartbeat", function(e) {
@@ -20,7 +20,16 @@ routerAdd("POST", "/api/heartbeat", function(e) {
             : code;
 
         // Use findFirstRecordByData (same approach as activation hook — confirmed working on PB 0.22.21)
-        var record = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        // NOTE: it THROWS "sql: no rows in result set" for an unknown code rather
+        // than returning null, so the `if (!record)` check below is only reached
+        // once the throw is caught. Without the try/catch an unknown code
+        // surfaced as HTTP 500 instead of a clean 404 (found live 2026-09-19).
+        var record = null;
+        try {
+            record = $app.dao().findFirstRecordByData("codes", "code", canonical);
+        } catch (notFound) {
+            record = null;
+        }
         if (!record) return e.json(404, {code:404, message:"Code not found"});
 
         if (record.getBool("suspended")) return e.json(403, {code:403, message:"Account suspended — contact your middleman"});
@@ -28,13 +37,27 @@ routerAdd("POST", "/api/heartbeat", function(e) {
         var response = {status:"ok", server_time:new Date().toISOString()};
 
         // Staged rollout check — read from update_config
+        //
+        // IMPORTANT: use findFirstRecordByFilter, NOT findRecordsByFilter.
+        // In this PocketBase build (0.22.21) findRecordsByFilter silently
+        // returns ZERO rows for every collection and filter, even `1=1` on a
+        // populated table, with no error raised. That made the update gate a
+        // permanent no-op: no client was ever offered an update regardless of
+        // rollout_percent. findFirstRecordByFilter and findRecordsByExpr both
+        // work reliably (verified live 2026-09-19), including on bool fields.
         try {
-            var updateRecs = $app.dao().findRecordsByFilter("update_config", "active=true", "", 0, 1);
-            if (updateRecs.length > 0) {
-                var u = updateRecs[0];
+            var u = null;
+            try {
+                u = $app.dao().findFirstRecordByFilter("update_config", "active = true");
+            } catch (noRow) {
+                u = null; // no active row — nothing to advertise
+            }
+            if (u) {
                 var pct = parseInt(u.get("rollout_percent") || "0", 10);
                 if (pct > 0) {
-                    // Simple hash for eligibility
+                    // Deterministic bucket per device: the same fingerprint
+                    // always lands in the same bucket, so a client cannot
+                    // flip in and out of the rollout between heartbeats.
                     var key = fingerprint || code, hash = 0;
                     for (var i = 0; i < key.length; i++) { hash = ((hash << 5) - hash) + key.charCodeAt(i); hash |= 0; }
                     var bucket = Math.abs(hash) % 100;
@@ -46,19 +69,47 @@ routerAdd("POST", "/api/heartbeat", function(e) {
                         if (u.get("download_windows")) response.update_windows = u.get("download_windows");
                         if (u.get("download_macos_intel")) response.update_macos_intel = u.get("download_macos_intel");
                         if (u.get("download_macos_arm")) response.update_macos_arm = u.get("download_macos_arm");
+                        // Per-platform hashes: the client verifies the bytes it
+                        // actually downloads, so a single update_sha256 is not
+                        // enough (it can only ever match one platform, and the
+                        // updater refuses to apply an update with an empty hash).
+                        if (u.get("sha256_linux")) response.update_sha256_linux = u.get("sha256_linux");
+                        if (u.get("sha256_windows")) response.update_sha256_windows = u.get("sha256_windows");
+                        if (u.get("sha256_macos_intel")) response.update_sha256_macos_intel = u.get("sha256_macos_intel");
+                        if (u.get("sha256_macos_arm")) response.update_sha256_macos_arm = u.get("sha256_macos_arm");
                     }
                 }
             }
-        } catch(ex) { /* no update_config collection */ }
+        } catch(ex) { /* update_config missing or unreadable — skip updates */ }
 
-        // Newest record wins (defends against duplicate records from older
-        // seed runs — see FIXES.md). Inline filter value — {:param} binding
-        // is unreliable on PB 0.22.
+        // Server config for this tier.
+        // Same findRecordsByFilter caveat as above — findFirstRecordByFilter is
+        // the working call. The previous version relied on a lookup that could
+        // return nothing, which would omit server_config from the heartbeat and
+        // leave clients unable to refresh their tunnel settings.
         var tier = record.getString("tier");
         var tierVal = tier.replace(/[^a-zA-Z0-9_]/g, "_");
-        var cfgRecs = $app.dao().findRecordsByFilter("tier_configs", "tier='"+tierVal+"'", "-created", 1, 0);
-        var cfgRec = cfgRecs.length > 0 ? cfgRecs[0] : null;
+        var cfgRec = null;
+        try {
+            cfgRec = $app.dao().findFirstRecordByFilter("tier_configs", "tier = '" + tierVal + "'");
+        } catch (noCfg) {
+            cfgRec = null;
+        }
         if (cfgRec) {
+            // ─── FROZEN WIRE CONTRACT — DO NOT RENAME ───────────────────────
+            // The tier's config JSON is passed through VERBATIM, so the UoT
+            // endpoint reaches the client under its stored key, "uot_port".
+            //
+            // That key is load-bearing and cannot be changed: clients already
+            // in the field read "uot_port", and an unknown-to-them key is a
+            // SILENT no-op rather than an error — the exact failure that made
+            // UDP-over-TCP dead fleet-wide until 2026-09-19 (the client struct
+            // declared only "server_port_uot"). The client now tolerates both
+            // spellings via internal/uotkey, but the hub must keep emitting
+            // "uot_port" because older builds cannot be updated retroactively.
+            //
+            // See FIXES.md entry 29 and internal/uotkey for the full history.
+            // ────────────────────────────────────────────────────────────────
             try { response.server_config = JSON.parse(cfgRec.get("config")); } catch(ex) { response.server_config = cfgRec.get("config"); }
             response.udp_relay = cfgRec.get("udp_relay");
         }

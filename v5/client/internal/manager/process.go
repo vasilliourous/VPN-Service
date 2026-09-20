@@ -48,8 +48,18 @@ const (
 	// Max consecutive health check failures before force-restart.
 	maxHealthFailures = 3
 
-	// Graceful shutdown timeout.
-	shutdownTimeout = 10 * time.Second
+	// Graceful shutdown timeout: how long we wait for sing-box to exit on its
+	// own before force-killing it. Kept short deliberately — sing-box exits
+	// promptly on SIGTERM/exit in practice, and this value is the worst-case
+	// delay a student sees between tapping Disconnect and the UI responding.
+	// It previously sat at 10s, which made Disconnect feel broken.
+	shutdownTimeout = 2 * time.Second
+
+	// cmdWaitGrace is how long Stop() waits for cmd.Wait() to observe the exit
+	// AFTER the process group has been force-killed. It exists because Wait()
+	// can remain blocked if a detached orphan still holds the inherited
+	// stdout/stderr pipes; we must never block on it indefinitely.
+	cmdWaitGrace = 2 * time.Second
 
 	// Max restart attempts within 5 minutes.
 	maxRestarts   = 3
@@ -67,6 +77,22 @@ var (
 	// health loop and the watchdog sharing locus0.
 	errEngineAlreadyRunning = fmt.Errorf("sing-box engine is already running")
 )
+
+// looksLikePermissionError reports whether sing-box's output indicates the
+// engine could not obtain the privileges TUN creation needs. Kept as a small
+// shared helper because both the startup probe and the watchdog path need the
+// same classification, and the wording differs between Windows and Unix.
+func looksLikePermissionError(detail string) bool {
+	d := strings.ToLower(detail)
+	return strings.Contains(d, "operation not permitted") ||
+		strings.Contains(d, "permission denied") ||
+		strings.Contains(d, "access is denied") ||
+		strings.Contains(d, "not permitted") ||
+		strings.Contains(d, "permission") ||
+		strings.Contains(d, "cap_net_admin") ||
+		strings.Contains(d, "needs root") ||
+		strings.Contains(d, "must be root")
+}
 
 // boundedBuffer is a thread-safe writer that keeps only the last max bytes
 // written — used to capture sing-box stderr without unbounded memory growth.
@@ -96,6 +122,28 @@ func (b *boundedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return string(b.buf)
+}
+
+// managerLogWriter forwards sing-box output to the app's logger.
+//
+// WHY NOT os.Stdout/os.Stderr: the client is a GUI binary with no console. Handing
+// a child process our stdout/stderr makes Windows allocate a fresh console for
+// it (a flashing terminal window), and gives us no diagnostics anyway. Going
+// through log.Printf puts the same lines in the client's own log file, which is
+// where anyone debugging actually looks (%APPDATA%\locus\locus.log).
+//
+// Lines are passed through verbatim (sing-box prefixes its own timestamps and
+// levels), including any trailing newline, so the log stays readable.
+type managerLogWriter struct{}
+
+func (managerLogWriter) Write(p []byte) (int, error) {
+	// log.Printf adds its own timestamp/newline; trim so we do not emit blank
+	// lines for every newline-terminated line the engine writes.
+	msg := strings.TrimRight(string(p), "\r\n")
+	if msg != "" {
+		log.Printf("[sing-box] %s", msg)
+	}
+	return len(p), nil
 }
 
 // HelperClient communicates with the privileged TUN helper service.
@@ -161,9 +209,20 @@ func (hc *HelperClient) SendCommand(action string, args []string) (bool, string,
 
 // Manager controls the sing-box tunnel process.
 type Manager struct {
-	mu               sync.Mutex
-	cmd              *exec.Cmd
-	exited           chan struct{} // closed by the cmd.Wait goroutine when the process exits
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	exited chan struct{} // closed by the cmd.Wait goroutine when the process exits
+
+	// procCtx governs the LIFETIME of the sing-box process (exec.CommandContext).
+	// It is deliberately NOT the context passed to Start(): that one carries the
+	// caller's startup deadline and is cancelled as soon as Start() returns. In
+	// Go, cancelling a context created with exec.CommandContext KILLS the child,
+	// so binding sing-box to the caller's ctx meant every fresh connect started
+	// an engine that was killed moments later — the watchdog then restarted it
+	// (via a context.Background() path), which is why connecting appeared to
+	// take forever. procCtx is cancelled only by Stop()/Shutdown().
+	procCtx          context.Context
+	procCancel       context.CancelFunc
 	configPath       string
 	singBoxPath      string
 	helperPath       string
@@ -228,11 +287,14 @@ func (c *Config) Validate() error {
 
 // NewManager creates a new tunnel manager.
 func NewManager(singBoxPath, configPath, helperPath string) *Manager {
+	procCtx, procCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		singBoxPath:  singBoxPath,
 		configPath:   configPath,
 		helperPath:   helperPath,
 		helperClient: NewHelperClient(),
+		procCtx:      procCtx,
+		procCancel:   procCancel,
 	}
 	// On Windows, default to helper mode since TUN requires admin privileges.
 	if runtime.GOOS == "windows" {
@@ -257,19 +319,45 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if already running
-	if m.processAlive() {
-		return fmt.Errorf("tunnel is already running")
+	// Reconcile our tracking with reality BEFORE deciding anything.
+	//
+	// `m.cmd != nil` is only our belief about the engine; it can be stale in
+	// both directions (a crashed child we still track, or a live child we no
+	// longer do). Treating the stale belief as truth is what produced the
+	// "⚠ tunnel is already running" dead end: after the watchdog had already
+	// disconnected, or after a Stop raced a Start, an orphaned sing-box kept
+	// running while the UI showed Disconnected, and the ONLY way out was to
+	// restart the app because this guard refused to proceed and the cleanup
+	// below it was unreachable.
+	//
+	// So: drop tracking if the tracked process is gone, and if an untracked
+	// engine is running, adopt it into the normal stop path instead of
+	// refusing. Only a LIVE, TRACKED engine means we are genuinely connected.
+	if m.cmd != nil && !m.processAlive() {
+		log.Printf("Start: clearing stale engine tracking (tracked process is gone)")
+		m.cmd = nil
+		m.exited = nil
+	}
+
+	if m.processAlive() && m.cmd != nil {
+		return errEngineAlreadyRunning
 	}
 
 	// Auto-clean before connecting. Previously this hard-failed with "close it
 	// in Task Manager" — a manual dead-end for students. A leftover sing-box
 	// (orphaned after a crash) or a stale locus0 TUN will corrupt routing if we
 	// stack a fresh engine on top, so we clear both first, then start clean.
+	//
+	// This now runs for an UNTRACKED engine too (the case above), so a leftover
+	// from a previous session or a racing disconnect is reclaimed rather than
+	// being a dead end.
 	if foreignSingBoxRunning() {
 		log.Printf("Leftover sing-box detected before connect; killing it and clearing stale TUN")
 		killForeignEngines()
 		_ = removeStaleTUN()
+		// Give the OS a moment to actually reap the killed processes, otherwise
+		// the fresh engine can collide with the dying one over locus0.
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Retain the tunnel config so the watchdog can restart/recover it later
@@ -288,77 +376,133 @@ func (m *Manager) Start(ctx context.Context, cfg Config) error {
 			log.Println("TUN helper not running, attempting to start it...")
 			if startErr := m.autoStartHelper(); startErr != nil {
 				log.Printf("Cannot auto-start helper (%v), falling back to direct mode...", startErr)
-				// Fall back to direct mode — disable helper so stopLocked
+				// Fall back to direct mode — disable helper so Stop()
 				// doesn't try IPC that will never work.
 				m.useHelper = false
-				return m.startDirect(ctx, configJSON)
+				return m.startDirect(ctx, m.procCtx, configJSON)
 			}
 			// Wait a moment for the helper to start listening
 			time.Sleep(2 * time.Second)
 		}
 		return m.startWithHelper(configJSON)
 	}
-	return m.startDirect(ctx, configJSON)
+	return m.startDirect(ctx, m.procCtx, configJSON)
 }
 
 // Stop terminates the sing-box process gracefully.
+//
+// The wait for the process to exit deliberately happens OUTSIDE m.mu. Holding
+// the lock across shutdownTimeout serialized every other Manager call behind it
+// — including GetStatus, which the UI polls — so a tap on Disconnect froze the
+// whole interface for the duration of the wait. We now take only what we need
+// under the lock, release it, then wait.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	return m.stopLocked()
-}
-
-// stopLocked stops the process, must be called with mu held.
-func (m *Manager) stopLocked() error {
-	// Stop health check loop
+	// Stop the health check loop.
 	if m.stopHealthCheck != nil {
 		close(m.stopHealthCheck)
 		m.stopHealthCheck = nil
 	}
 
-	if m.useHelper {
+	// Snapshot what we need, then release the lock for the slow part.
+	useHelper := m.useHelper
+	cmd := m.cmd
+	exited := m.exited
+
+	// Clear the tracked process up-front so a concurrent Stop/State call sees a
+	// stopping manager rather than waiting on the same process twice.
+	m.cmd = nil
+	m.exited = nil
+	m.tunnelHealthy = false
+
+	m.mu.Unlock()
+
+	if useHelper {
 		// Only try helper IPC if the helper is actually reachable.
 		if ok, _, _ := m.helperClient.SendCommand("ping", nil); ok {
 			_, _, err := m.helperClient.SendCommand("stop-singbox", nil)
+			// Cancel procCtx so a helper-managed engine also loses its context
+			// parent; harmless if there is no direct child.
+			m.cancelProcCtx()
 			return err
 		}
 		// Helper not reachable — fall through to clean up any direct-mode process
 	}
 
-	if m.cmd == nil || m.cmd.Process == nil {
+	if cmd == nil || cmd.Process == nil {
+		m.cancelProcCtx()
+		m.cleanupConfigFile()
 		return nil // Already stopped
 	}
 
 	// Graceful shutdown: wait for the exit goroutine (started in startDirect)
 	// to finish. cmd.Wait must only be called ONCE per process — spawning a
 	// second Wait here would error out immediately and skip the kill.
-	exited := m.exited
+	// The wait is bounded and, on expiry, kills the WHOLE process group: an
+	// orphaned grandchild holding the inherited pipes keeps cmd.Wait blocked
+	// even after the direct child dies, which previously made Disconnect hang.
 	if exited == nil {
 		exited = make(chan struct{})
-		go func() { _ = m.cmd.Wait(); close(exited) }()
+		go func() { _ = cmd.Wait(); close(exited) }()
 	}
 
 	select {
 	case <-exited:
 		// Process exited cleanly
 	case <-time.After(shutdownTimeout):
-		// Force kill
-		if err := m.cmd.Process.Kill(); err != nil {
+		// Force kill the whole tree, then give Wait a short grace period to
+		// observe the exit. We do NOT block indefinitely on `exited` here: if a
+		// detached orphan somehow still holds a pipe, blocking would reintroduce
+		// the hang this fix exists to remove.
+		if err := killProcessGroup(cmd.Process); err != nil {
 			return fmt.Errorf("cannot kill sing-box: %w", err)
 		}
-		<-exited
+		select {
+		case <-exited:
+		case <-time.After(cmdWaitGrace):
+			log.Printf("stop: process group killed but Wait did not return within %v; continuing", cmdWaitGrace)
+		}
 	}
 
-	m.cmd = nil
-	m.exited = nil
+	// Cancel the process-lifetime context and give the NEXT Start a fresh one,
+	// so a subsequent connect is not bound to an already-cancelled parent.
+	m.cancelProcCtx()
 
-	// Clean up config file from disk
+	m.cleanupConfigFile()
+	return nil
+}
+
+// cancelProcCtx cancels the current process-lifetime context and installs a
+// fresh one for the next Start. Safe to call when no process is running.
+func (m *Manager) cancelProcCtx() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.procCancel != nil {
+		m.procCancel()
+	}
+	m.procCtx, m.procCancel = context.WithCancel(context.Background())
+}
+
+// procCtxValue returns the current process-lifetime context under the lock.
+// Used by callers that do NOT already hold m.mu (watchdog recovery, health
+// loop); Start reads the field directly because it holds the lock.
+func (m *Manager) procCtxValue() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.procCtx == nil {
+		// Defensive: Manager is always built via NewManager, which sets this.
+		ctx, cancel := context.WithCancel(context.Background())
+		m.procCtx, m.procCancel = ctx, cancel
+	}
+	return m.procCtx
+}
+
+// cleanupConfigFile removes the on-disk sing-box config, if any.
+func (m *Manager) cleanupConfigFile() {
 	if m.configPath != "" {
 		_ = os.Remove(m.configPath)
 	}
-
-	return nil
 }
 
 // processAlive reports whether the current sing-box process is still running.
@@ -411,10 +555,12 @@ func (m *Manager) autoStartHelper() error {
 		// On Windows, use PowerShell Start-Process with RunAs verb to trigger UAC
 		// This shows a UAC elevation prompt and starts the helper as administrator.
 		// The PowerShell window itself is hidden so only the UAC prompt appears.
-		cmd := exec.Command("powershell", "-Command",
+		// hiddenCommand applies HideWindow, which is what actually suppresses the
+		// console — passing -WindowStyle Hidden to powershell alone still lets the
+		// OS allocate a console for the powershell process itself.
+		cmd := hiddenCommand("powershell", "-Command",
 			"Start-Process", "-FilePath", m.helperPath,
 			"-Verb", "RunAs", "-WindowStyle", "Hidden")
-		cmd.SysProcAttr = newProcAttr()
 		return cmd.Start()
 	case "linux", "darwin":
 		// On Unix, try pkexec (PolKit) or sudo for elevation
@@ -466,7 +612,15 @@ func (m *Manager) startWithHelper(configJSON []byte) error {
 }
 
 // startDirect spawns sing-box directly as a subprocess.
-func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
+//
+// startupCtx bounds only the CONNECT handshake (how long we wait for the engine
+// to come up before giving up). procCtx governs the process LIFETIME and must
+// outlive this call — see the procCtx field comment for why binding the child
+// to the caller's context was a bug. Callers pass procCtx explicitly (rather
+// than reading m.procCtx here) because this method is invoked both with m.mu
+// held, from Start, and without it, from the watchdog/health-loop recovery
+// paths; a self-locking accessor would deadlock on sync.Mutex.
+func (m *Manager) startDirect(startupCtx context.Context, procCtx context.Context, configJSON []byte) error {
 	// Guard against concurrent double-spawn (e.g. the health loop and the
 	// watchdog both trying to recover at once): two sing-box instances sharing
 	// locus0 corrupt routing. Prefer the running instance over spawning a second.
@@ -487,21 +641,56 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	// Start sing-box. stderr is mirrored to our log AND captured in a bounded
 	// buffer so startup failures can be reported back to the UI with the real
 	// sing-box error (e.g. TUN "Access is denied" on non-elevated Windows).
+	//
+	// The child is bound to procCtx (the process-lifetime context passed in by
+	// the caller), NOT startupCtx. Cancelling a context made with
+	// exec.CommandContext kills the child, and startupCtx's deadline fires when
+	// the caller's Connect() returns — so using it here reliably killed a
+	// freshly-started engine, leaving the watchdog to churn it back up (the
+	// "takes forever to connect" symptom).
 	stderrBuf := &boundedBuffer{max: 8192}
-	cmd := exec.CommandContext(ctx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
+	cmd := exec.CommandContext(procCtx, m.singBoxPath, "run", "-c", m.configPath, "-D", filepath.Dir(m.configPath))
+
+	// sing-box output goes to OUR LOG, never to os.Stdout/os.Stderr.
+	//
+	// This is a GUI process: it has no console, so attaching the engine's
+	// inherited handles to the process's stdout/stderr is both useless (nobody
+	// reads it) and harmful. On Windows a child given no usable stdout handle
+	// makes the OS allocate a console for it, which is one of the ways a
+	// terminal window flashes on screen. Routing both streams into the log file
+	// keeps the diagnostics (the TUN "Access is denied" banner is read from
+	// stderrBuf) without ever touching a console.
+	logSink := managerLogWriter{}
+	cmd.Stdout = logSink
+	cmd.Stderr = io.MultiWriter(logSink, stderrBuf)
 
 	// Detach — allow parent to manage lifecycle (platform-specific)
 	cmd.SysProcAttr = newProcAttr()
 
+	// Publish the tracked process BEFORE starting it.
+	//
+	// Previously m.cmd/m.exited were set after cmd.Start() returned. In that
+	// window processAlive() reported false while a child was already running,
+	// so a concurrent Stop() (notably the watchdog's auto-disconnect, or a user
+	// tapping Disconnect during connect) found m.cmd == nil, took the "already
+	// stopped" path and returned without killing anything. The engine survived
+	// as an orphan that the UI no longer tracked — which is exactly the
+	// "disconnected, but sing-box.exe is still running and Connect now says
+	// 'tunnel is already running'" report.
+	//
+	// The exit goroutine is started only after Start() succeeds, so we never
+	// wait on a process that was never created. If Start() fails we roll the
+	// tracking fields back.
+	exited := make(chan struct{})
+	m.cmd = cmd
+	m.exited = exited
+
 	if err := cmd.Start(); err != nil {
+		m.cmd = nil
+		m.exited = nil
 		return fmt.Errorf("cannot start sing-box: %w", err)
 	}
 
-	m.cmd = cmd
-	m.exited = make(chan struct{})
-	exited := m.exited
 	go func() {
 		_ = cmd.Wait()
 		close(exited)
@@ -514,6 +703,10 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 	// config error or permission denial (e.g. "Access is denied" on Windows).
 	// The liveness check uses the exited channel — Process.Signal(0) does not
 	// work on Windows and would block forever in cmd.Wait() below.
+	// The wait is bounded by BOTH a short fixed delay and the caller's deadline
+	// (startupCtx), so a caller that has already given up is not kept waiting.
+	probeTimer := time.NewTimer(500 * time.Millisecond)
+	defer probeTimer.Stop()
 	select {
 	case <-exited:
 		// Process already exited — the Wait goroutine has released resources
@@ -526,9 +719,23 @@ func (m *Manager) startDirect(ctx context.Context, configJSON []byte) error {
 		if strings.Contains(detail, "Access is denied") {
 			return fmt.Errorf("TUN interface creation was denied — run Locus as administrator: %s", detail)
 		}
+		// Unix permission failures surface as "operation not permitted" /
+		// "permission denied" when the engine cannot open /dev/net/tun or
+		// install routes. Translate them, because the raw text ("sing-box exited
+		// immediately: ...") tells a student nothing actionable. This is the
+		// failure mode produced by the known Linux elevation gap.
+		if looksLikePermissionError(detail) {
+			return fmt.Errorf("TUN interface creation was denied — Locus needs root privileges on this system: %s", detail)
+		}
 		return fmt.Errorf("sing-box exited immediately: %s", detail)
-	case <-time.After(500 * time.Millisecond):
+	case <-probeTimer.C:
 		// Still running — startup probe passed
+	case <-startupCtx.Done():
+		// The caller's startup deadline elapsed while we were waiting. The
+		// engine may still be fine (it is bound to procCtx, not startupCtx), so
+		// report a startup timeout rather than killing it — the watchdog owns
+		// recovery from here.
+		return fmt.Errorf("starting the tunnel took too long: %w", startupCtx.Err())
 	}
 
 	// Start health check loop
@@ -577,7 +784,7 @@ func (m *Manager) healthLoop() {
 						m.mu.Unlock()
 						return
 					}
-					if startErr := m.startDirect(context.Background(), configJSON); startErr == nil {
+					if startErr := m.startDirect(context.Background(), m.procCtxValue(), configJSON); startErr == nil {
 						m.mu.Lock()
 						m.healthFailures = 0
 						m.mu.Unlock()
@@ -788,6 +995,25 @@ func generateConfig(cfg Config) ([]byte, error) {
 	// When UoT IS advertised: UDP is pinned to a dedicated UoT outbound on
 	// the sing-box server port, while TCP stays on the standard port — the
 	// school firewall only sees TCP, and game UDP rides inside it.
+	//
+	// LIVE SINCE 2026-09-19 (server side): the strike tier advertises uot_port=8446, backed by
+	// a sing-box UoT listener on the hub. Verified end-to-end (client UoT
+	// outbound -> :8446 -> UDP -> DNS answer). Note DNS does NOT use this
+	// outbound: dns-tunnel detours via "proxy" (8445) and the hijack-dns rule
+	// matches before any network:udp rule, so only non-DNS UDP rides UoT.
+	//
+	// The magic-domain detail still matters: only a sing-box server implements
+	// this protocol. Pointing uot_port at a shadowsocks-rust port silently
+	// breaks UDP rather than falling back.
+	//
+	// LIVE STATE (corrected 2026-09-19, FIXES.md 29): the strike tier DOES
+	// advertise uot_port=8446 and a sing-box UoT listener IS running on the
+	// live hub (verified: `ss -lntup` shows sing-box on TCP+UDP 8446). This
+	// comment previously claimed the feature was live, but it was not: the
+	// client's ServerConfig structs declared only "server_port_uot" while the
+	// hub sends "uot_port", so ServerPortUOT was permanently 0 and this branch
+	// never executed on any build. It now does. Stripe's gaming path is
+	// therefore active for the first time as of 2.1.0.
 	uotEnabled := cfg.UDPRelay && cfg.ServerPortUOT > 0
 	if uotEnabled {
 		config.Outbounds = append(config.Outbounds, Outbound{

@@ -34,7 +34,7 @@ write_tc_helper() {
 
     cat > "$TC_HELPER" << 'HELPER'
 #!/usr/bin/env bash
-# MyVPN tc apply helper — called by systemd oneshot services
+# Locus tc apply helper — called by systemd oneshot services
 # Usage: myvpn-tc-apply.sh <port> <rate> <classid>
 # Example: myvpn-tc-apply.sh 8443 5mbit 1:10
 set -euo pipefail

@@ -18,13 +18,20 @@ func init() {
 func swapLinux(newPath, currentPath string) error {
 	// On Linux, we can atomically rename the new binary over the current one.
 	// The old binary is still backed up in .locus-backups/
-	if err := os.Rename(newPath, currentPath); err != nil {
-		return fmt.Errorf("rename failed: %w", err)
+	//
+	// The chmod happens BEFORE the rename, not after. Renaming first and then
+	// failing the chmod (e.g. a restrictive umask or a read-only filesystem)
+	// would return an error even though the new binary is already installed —
+	// the caller would treat a successful swap as a failed update and the
+	// two-phase sentinel would be left in a state that no longer matches the
+	// binary on disk. Making the new binary executable first keeps the rename
+	// as the single commit point.
+	if err := os.Chmod(newPath, 0755); err != nil {
+		return fmt.Errorf("chmod of the downloaded binary failed: %w", err)
 	}
 
-	// Ensure the binary is executable
-	if err := os.Chmod(currentPath, 0755); err != nil {
-		return fmt.Errorf("chmod failed: %w", err)
+	if err := os.Rename(newPath, currentPath); err != nil {
+		return fmt.Errorf("rename failed: %w", err)
 	}
 
 	return nil

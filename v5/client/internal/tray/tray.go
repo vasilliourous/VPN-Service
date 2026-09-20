@@ -1,3 +1,5 @@
+//go:build !darwin
+
 // Package tray provides an optional system-tray controller for the Locus
 // desktop app (Wails v2 has no native tray support, so we use
 // getlantern/systray).
@@ -10,6 +12,16 @@
 //     gated behind LOCUS_TRAY=1 and OFF by default so it can never regress a
 //     normal release. Validate on each real desktop OS before enabling it.
 //   - Any panic in the tray goroutine is recovered and logged (never fatal).
+//
+// BUILD TAGS — WHY !darwin:
+//
+//	systray's macOS implementation (systray_darwin.m) declares an Objective-C
+//	class named AppDelegate, which collides with the AppDelegate that Wails
+//	itself links in on darwin, producing at link time:
+//	    duplicate symbol '_OBJC_CLASS_$_AppDelegate'
+//	    duplicate symbol '_OBJC_METACLASS_$_AppDelegate'
+//	Neither implementation can be renamed, so on macOS we compile this file
+//	out entirely and use the API-compatible no-op in tray_darwin.go instead.
 package tray
 
 import (

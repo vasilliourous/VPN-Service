@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN Code Generator
+# Locus Code Generator
 # Generates activation codes with Luhn-mod-N checksum.
 #
 # Code format: RQ-XXXX-XXXX-XXXX-C
@@ -166,7 +166,7 @@ EXPIRES=$(date -d "+${EXPIRY_DAYS} days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
           echo "unknown")
 
 echo "═══════════════════════════════════════════"
-echo " MyVPN Code Generator"
+echo " Locus Code Generator"
 echo "═══════════════════════════════════════════"
 echo " Hub URL:      ${HUB_URL}"
 echo " Tier:         ${TIER}"
@@ -179,7 +179,7 @@ echo "════════════════════════�
 # Generate codes
 CODES=()
 echo "" > "$OUTPUT_FILE"
-echo "# MyVPN ${TIER^} Activation Codes" >> "$OUTPUT_FILE"
+echo "# Locus ${TIER^} Activation Codes" >> "$OUTPUT_FILE"
 echo "# Generated: $(date)" >> "$OUTPUT_FILE"
 echo "# Expires: ${EXPIRES}" >> "$OUTPUT_FILE"
 echo "# Checksum: Luhn-mod-N" >> "$OUTPUT_FILE"

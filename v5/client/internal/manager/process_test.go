@@ -63,6 +63,94 @@ func TestLifecycle(t *testing.T) {
 	}
 }
 
+// TestStartSurvivesCallerContextCancel is the regression test for the
+// "VPN takes forever to connect" bug.
+//
+// It reproduces the exact shape of App.Connect: a short-lived context that is
+// cancelled as soon as Start returns. Because startDirect used to pass that
+// context to exec.CommandContext, cancelling it KILLED the sing-box child, and
+// the watchdog then had to churn it back up. The engine must outlive the
+// caller's startup context.
+//
+// Note the fake binary sleeps far longer than the test's context, so unlike
+// TestLifecycle (where the fake exits before the deferred cancel fires) this
+// test actually exercises the cancel-while-alive path.
+func TestStartSurvivesCallerContextCancel(t *testing.T) {
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "fakesingbox")
+	script := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(fakeBin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(fakeBin, filepath.Join(dir, "config.json"), "")
+	m.SetHelperMode(false)
+
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+
+	// Mirror App.Connect: a startup deadline that is cancelled on return.
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := m.Start(startupCtx, cfg); err != nil {
+		cancelStartup()
+		t.Fatalf("Start: %v", err)
+	}
+	cancelStartup() // the caller has returned — this must NOT kill the engine
+
+	// Give the cancellation a moment to propagate if it were (wrongly) wired to
+	// the process, then assert the engine is still alive.
+	time.Sleep(500 * time.Millisecond)
+	if !m.IsRunning() {
+		t.Fatal("engine died after the caller's startup context was cancelled — " +
+			"the process must be bound to the manager's procCtx, not the caller's ctx")
+	}
+	if st := m.State(); st != "running" {
+		t.Fatalf("State after caller-cancel = %q, want running", st)
+	}
+
+	// Stop() must still be able to tear it down cleanly.
+	done := make(chan error, 1)
+	go func() { done <- m.Stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return within 5s — it must not block on the process-lifetime context")
+	}
+	if st := m.State(); st != "stopped" {
+		t.Fatalf("State after Stop = %q, want stopped", st)
+	}
+}
+
+// TestStopIsPrompt asserts Stop() returns quickly when the engine ignores the
+// graceful window. It guards the Disconnect responsiveness work: the graceful
+// shutdownTimeout is 2s, so a force-kill stop must complete well inside 5s.
+func TestStopIsPrompt(t *testing.T) {
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "fakesingbox")
+	// Ignore SIGTERM (trap) so the graceful path cannot succeed and the manager
+	// is forced down the force-kill branch.
+	script := "#!/bin/sh\ntrap '' TERM\nsleep 30\n"
+	if err := os.WriteFile(fakeBin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(fakeBin, filepath.Join(dir, "config.json"), "")
+	m.SetHelperMode(false)
+
+	cfg := Config{Server: "example.com", ServerPort: 8443, Password: "x", Method: "aes-256-gcm"}
+	if err := m.Start(context.Background(), cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	start := time.Now()
+	if err := m.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Stop took %v — too slow for an interactive Disconnect (want <= ~2s)", elapsed)
+	}
+}
+
 // TestImmediateExit verifies the startup probe surfaces sing-box stderr.
 func TestImmediateExit(t *testing.T) {
 	dir := t.TempDir()

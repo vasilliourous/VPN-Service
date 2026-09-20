@@ -98,32 +98,47 @@ and refreshed tier config.
 | `code` | string | ✅ | Full activation code |
 | `fingerprint` | string | ❌ | Device fingerprint (used for staged rollout hashing) |
 
-**Response `200` (normal):**
+**Response `200` (strike tier — carries a UoT endpoint):**
 ```json
 {
   "status": "ok",
-  "server_time": "2026-07-24T14:30:00.000Z",
-  "tier": "eco",
+  "server_time": "2026-09-19T10:09:42.945Z",
+  "tier": "strike",
   "server_config": {
     "server": "networkingguides.duckdns.org",
-    "server_port": 8443,
+    "server_port": 8445,
     "password": "...",
-    "method": "aes-256-gcm"
+    "method": "aes-256-gcm",
+    "uot_port": 8446
   },
-  "udp_relay": false
+  "udp_relay": true
 }
 ```
+
+> **`uot_port` is a frozen wire key.** The tier config JSON is passed through
+> verbatim, so the UoT endpoint arrives under its stored name. Do **not** rename
+> it to `server_port_uot`: clients already in the field read `uot_port`, and an
+> unrecognised key is a silent no-op rather than an error — which is exactly how
+> UDP-over-TCP was dead fleet-wide until 2026-09-19 (FIXES.md 29). `udp_relay`
+> and `uot_port` are **both** required before the client sends UDP over TCP.
 
 **Response `200` (with update available, within rollout bucket):**
 ```json
 {
   "status": "ok",
-  "server_time": "2026-07-24T14:30:00.000Z",
+  "server_time": "2026-09-19T10:09:42.945Z",
   "tier": "eco",
-  "update_available": "1.1.0",
-  "update_url": "https://networkingguides.duckdns.org/updates/v1.1.0/myvpn-linux-amd64",
+  "update_available": "2.1.0",
+  "update_url": "https://networkingguides.duckdns.org/updates/2.1.0/locus-linux-amd64",
   "update_sha256": "abc123...",
-  "update_windows": "https://...myvpn.exe"
+  "update_linux": "https://.../updates/2.1.0/locus-linux-amd64",
+  "update_windows": "https://.../updates/2.1.0/locus-windows-amd64.exe",
+  "update_macos_intel": "https://.../updates/2.1.0/locus-darwin-amd64",
+  "update_macos_arm": "https://.../updates/2.1.0/locus-darwin-arm64",
+  "update_sha256_linux": "abc123...",
+  "update_sha256_windows": "def456...",
+  "update_sha256_macos_intel": "ghi789...",
+  "update_sha256_macos_arm": "jkl012..."
 }
 ```
 
@@ -131,13 +146,25 @@ Update fields are only present when:
 1. `update_config` collection has an active record with `rollout_percent > 0`
 2. `hash(fingerprint || code) % 100 < rollout_percent`
 
+`update_url` / `update_sha256` are the **legacy single-platform** fields and
+describe the linux binary only. They exist so clients predating per-platform
+support still update. A client that finds its own platform's field missing falls
+back to them — which means a record missing `download_<platform>` silently
+offers Windows and macOS a Linux executable. The `update_<platform>` fields come
+from the record's `download_<platform>` keys; see `internal/updatecfg` for the
+full three-layer contract (FIXES.md 31).
+
 **Error responses:**
 
 | Status | Code | Message | Meaning |
 |:------:|:----:|---------|---------|
-| 400 | 400 | "Missing code" | No code query parameter |
+| 400 | 400 | "Missing code" | No `code` in the request body |
 | 403 | 403 | "Account suspended — contact your middleman" | Code is suspended |
-| 404 | 404 | "Code not found" | Code doesn't exist |
+| 404 | 404 | "Code not found" | Code doesn't exist or is unparseable |
+
+> **Expiry is enforced on every heartbeat, not just at activation.** A code that
+> passes its `expires_at` stops working here even on a device that is already
+> bound, which is what makes the 7-day grace period bounded.
 
 ---
 
@@ -233,11 +260,17 @@ PocketBase admin interface at `https://networkingguides.duckdns.org/_/`.
 ## 7. Client→Server Protocol Summary
 
 ```
-Activation:    POST /api/activate         ─── JSON body
+Activation:    POST /api/activate            ─── JSON body
+Code lookup:   POST /api/code-lookup         ─── JSON body (read-only pre-check)
 Heartbeat:     POST /api/heartbeat           ─── JSON body
-Admin Unbind:  POST /api/admin/unbind-code ─── JSON body (with admin_token)
-Health:        GET  /api/health           ─── Plain GET
-Update Config: GET  /update.json          ─── Static file
+Admin Unbind:  POST /api/admin/unbind-code   ─── JSON body (with admin_token)
+Admin API:     POST /api/admin/*             ─── JSON body (admin_token; Web UI)
+Release fetch: POST /api/admin/fetch-release ─── JSON body (admin_token; hub pulls from GitHub)
+Release link:  GET  /api/admin/fetch-release  ─── One-shot signed trigger link (no token)
+Fetch link:    GET  /api/admin/fetch-link     ─── Mint a one-shot link (admin_token)
+Health:        GET  /api/health              ─── Plain GET
+Update Config: GET  /update.json             ─── Static file
+Update assets: GET  /updates/<version>/<file>─── Static file (no directory listing)
 ```
 
 ---
@@ -262,9 +295,24 @@ HTTP status code matches the `code` field in the JSON body.
 | Endpoint | Limit | Window | Mechanism |
 |----------|:-----:|:------:|-----------|
 | `/api/activate` | 5 | 10 minutes | Caddy + JS hook |
+| `/api/code-lookup` | 10 | 10 minutes | JS hook (own bucket) |
 | `/api/heartbeat` | 1 | 10 seconds | Caddy |
 | `/api/*` (general) | 100 | 10 seconds | Caddy default zone |
-| `/api/admin/unbind-code` | None | — | Not rate limited |
+| `/api/admin/unbind-code` | None | — | Admin token required instead |
+| `/api/admin/fetch-release` | None | — | Admin token, **or** a one-shot signed link |
+| `/api/admin/fetch-link` | None | — | Admin token; mints a single-use link |
+| `/updates/*` | None | — | Large one-shot downloads |
 
-Rate limiting keys on `{remote_host}` (client IP) in Caddy. The activation hook
-also implements fingerprint-keyed rate limiting in the JS hook as a second layer.
+Caddy keys on `{remote_host}` (client IP). The two PocketBase hooks add a
+second, fingerprint-keyed layer in the `activation_attempts` table.
+
+**The two hook buckets are deliberately separate**, via a key prefix
+(`activate_…` vs `lookup_…`). They previously shared one, and that was actively
+harmful: `/api/code-lookup` exists so a student can confirm a code is recognised
+*before* committing to an activation, but mistyping on the activation screen
+consumed the lookup allowance — locking the student out of the affordance that
+would have explained the mistake. Confirmed live 2026-09-19. See FIXES.md 33.
+
+A successful activation clears that device's `activate_…` rows, so a student who
+finds their code is not counted against themselves afterwards. Lookups are never
+cleared, since they are the enumeration surface.

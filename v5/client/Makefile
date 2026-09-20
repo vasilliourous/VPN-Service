@@ -35,7 +35,18 @@ CLIENT_DIR     := $(dir $(lastword $(MAKEFILE_LIST)))
 VERSION_FILE   := $(realpath $(CLIENT_DIR)../VERSION)
 VERSION        := $(firstword $(shell cat $(VERSION_FILE) 2>/dev/null))
 ifeq ($(strip $(VERSION)),)
-VERSION := 2.0.0
+# Reached only when v5/VERSION is missing or unreadable. Fail loudly rather
+# than substituting a literal: a hardcoded fallback here is a version that no
+# longer exists in the source tree, so the build would report a number that
+# contradicts v5/VERSION and the shipped Windows resource — the exact drift
+# version_consistency_test.go exists to prevent. That test cannot see this
+# file, so the guard has to live here.
+#
+# Deliberately NOT `VERSION := 2.x.y`. For a scratch build without v5/VERSION,
+# pass VERSION=<x.y.z> on the command line.
+$(error v5/VERSION is missing or empty (looked at $(VERSION_FILE)). \
+v5/VERSION is the single source of truth for the release version; restore it, \
+or pass VERSION=<x.y.z> explicitly for a scratch build)
 endif
 LDFLAGS        := -s -w -X main.version=$(VERSION)
 

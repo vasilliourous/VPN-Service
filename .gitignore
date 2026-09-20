@@ -1,4 +1,10 @@
 # Locus Root .gitignore
+#
+# NOTE: gitignore has no inline comments. A `#` only starts a comment at the
+# BEGINNING of a line — anywhere else it is part of the pattern. Two secret
+# files were "ignored" here with trailing comments and were therefore NOT
+# ignored at all, and ended up committed with a live tier password in them
+# (removed in FIXES.md 34). Never put a comment on the same line as a pattern.
 
 # Generated code files
 *-codes.txt
@@ -27,6 +33,10 @@ Thumbs.db
 diag/
 whale.txt
 
+# Local Go toolchain bootstrapped for builds on a host with no system Go.
+# Never part of the repository; see docs for the bootstrap procedure.
+.gotool/
+
 # IDE
 .idea/
 .vscode/
@@ -35,5 +45,11 @@ whale.txt
 # Secrets (encrypted is fine; plaintext never)
 .secrets.env
 age-key.txt
-clash-verge-stealth.yaml  # contains tier password — never commit
-clash-verge-stealth-notun.yaml  # contains tier password — never commit
+
+# Clash Verge client profiles. These embed the tier's shadowsocks password in
+# cleartext, so they must never be committed.
+clash-verge-stealth.yaml
+clash-verge-stealth-notun.yaml
+clash-verge-*.yaml
+
+.obsidian/workspace.json

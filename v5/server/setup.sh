@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MyVPN Modular VPS Setup — Orchestrator
+# Locus Modular VPS Setup — Orchestrator
 # Usage:
 #   1. scp -r v5/server age-key.txt root@your-vps:/root/server/
 #   2. ssh root@your-vps "/root/server/setup.sh"
@@ -79,6 +79,17 @@ fi
 : "${DOMAIN:?DOMAIN is required (e.g. networkingguides.duckdns.org)}"
 : "${FORCE:=}"  # Set to 1 to continue on module failure
 
+# ── Deployment toggles (resolved once, exported to every module) ──
+# These MUST be exported: run_module runs each module as a child process and
+# only forwards DOMAIN/FORCE inline. Without exporting these, setup.sh would
+# honour ENABLE_UOT=0 in its own summary while the modules that actually act on
+# it (02-shadowsocks, 08-firewall, 06-pocketbase/seed-pb) still saw the default
+# and enabled the feature — a silently half-applied opt-out.
+: "${ENABLE_UOT:=1}"          # 1 = install Strike UDP-over-TCP (:8446)
+: "${UOT_PORT:=8446}"
+: "${SKIP_CONSOLE:=0}"        # 1 = skip deploying the admin console
+export ENABLE_UOT UOT_PORT SKIP_CONSOLE
+
 # ── Detect if running interactively ──
 if [ -t 0 ]; then
     LOCAL_MODE=1
@@ -107,8 +118,13 @@ run_module() {
     local rc_file
     rc_file=$(mktemp /tmp/myvpn-rc-XXXXXX)
 
-    # Run module, tee output, capture exit code
-    DOMAIN="$DOMAIN" FORCE="$FORCE" bash "$module" 2>&1 | tee -a "$LOGFILE"
+    # Run module, tee output, capture exit code.
+    # Deployment toggles are passed explicitly as well as being exported, so a
+    # module can never silently act on the default when setup.sh was told
+    # otherwise (see the toggle block near the top).
+    DOMAIN="$DOMAIN" FORCE="$FORCE" \
+    ENABLE_UOT="$ENABLE_UOT" UOT_PORT="$UOT_PORT" SKIP_CONSOLE="$SKIP_CONSOLE" \
+    bash "$module" 2>&1 | tee -a "$LOGFILE"
     # shellcheck disable=SC2320
     exitcode=${PIPESTATUS[0]:-$?}
 
@@ -128,7 +144,7 @@ run_module() {
 # ── Show header ──
 cat << EOF
 ╔═══════════════════════════════════════════╗
-║     MyVPN VPS — Modular Setup             ║
+║     Locus VPS — Modular Setup             ║
 ║     Domain: ${DOMAIN}                      ║
 ╚═══════════════════════════════════════════╝
 EOF
@@ -176,10 +192,11 @@ for svc in shadowsocks-eco shadowsocks-stealth shadowsocks-strike; do
     fi
 done
 
-# Start services and verify
-# Core tiers + tc caps; sing-box-uot is added when ENABLE_UOT=1.
+# Start services and verify.
+# sing-box-uot (Strike UDP-over-TCP, port 8446) is part of the default
+# deployment; ENABLE_UOT=0 opts out of it.
 SERVICES="shadowsocks-eco shadowsocks-stealth shadowsocks-strike tc-eco-cap tc-stealth-cap tc-strike-cap"
-if [ "${ENABLE_UOT:-0}" = "1" ]; then
+if [ "${ENABLE_UOT:-1}" = "1" ]; then
     SERVICES="${SERVICES} sing-box-uot"
 fi
 for svc in $SERVICES; do
@@ -243,10 +260,101 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/scripts" 2>/dev/null && pwd || 
 SMOKE_TEST="${SCRIPT_DIR}/smoke-test.sh"
 if [ -f "$SMOKE_TEST" ]; then
     log "Running post-deploy smoke test..."
-    DOMAIN="$DOMAIN" bash "$SMOKE_TEST" 2>&1 | tee -a "$LOGFILE" || true
+    DOMAIN="$DOMAIN" ENABLE_UOT="$ENABLE_UOT" UOT_PORT="$UOT_PORT" \
+        bash "$SMOKE_TEST" 2>&1 | tee -a "$LOGFILE" || true
 else
     warn "Smoke test script not found at ${SMOKE_TEST}"
 fi
+
+# ── Generate a first batch of activation codes (optional) ──
+# A fresh hub with zero codes is not usable out of the box — the operator has
+# to go and generate some before anything can be sold. Set FIRST_BATCH to mint
+# them during deploy.
+#
+#   FIRST_BATCH=20                  each tier gets 20 codes (eco/stealth/strike)
+#   FIRST_BATCH_ECO=50              per-tier overrides
+#   FIRST_BATCH_STEALTH=30
+#   FIRST_BATCH_STRIKE=10
+#   FIRST_BATCH_MIDDLEMAN=Sarah     recorded against every code in the batch
+#   FIRST_BATCH_EXPIRES=2027-09-19  optional expiry (YYYY-MM-DD)
+#
+# Idempotent by design: codes are minted ONCE and recorded in
+# /root/.first_batch_done. Re-running setup.sh does not mint a second batch
+# (which would silently create unsold inventory). Delete that file to re-arm.
+generate_first_batch() {
+    local marker="/root/.first_batch_done"
+    local eco_n="${FIRST_BATCH_ECO:-${FIRST_BATCH:-0}}"
+    local stealth_n="${FIRST_BATCH_STEALTH:-${FIRST_BATCH:-0}}"
+    local strike_n="${FIRST_BATCH_STRIKE:-${FIRST_BATCH:-0}}"
+
+    if [ "$eco_n" = "0" ] && [ "$stealth_n" = "0" ] && [ "$strike_n" = "0" ]; then
+        return 0   # nothing requested
+    fi
+
+    if [ -f "$marker" ]; then
+        log "First-batch codes already generated ($(cat "$marker")) — skipping."
+        log "  To generate another batch, use the admin console, or remove ${marker}"
+        return 0
+    fi
+
+    # The generator needs a PocketBase ADMIN JWT (not ADMIN_API_TOKEN — PB 0.22
+    # rejects the latter for record access).
+    local pb_token="" pb_email="" pb_pass=""
+    if [ -f /root/.pb_admin_creds ]; then
+        pb_token=$(grep '^PB_TOKEN=' /root/.pb_admin_creds | cut -d= -f2)
+        pb_email=$(grep '^PB_ADMIN_EMAIL=' /root/.pb_admin_creds | cut -d= -f2)
+        pb_pass=$(grep '^PB_ADMIN_PASS=' /root/.pb_admin_creds | cut -d= -f2)
+    fi
+    if [ -z "$pb_token" ] && [ -n "$pb_email" ] && [ -n "$pb_pass" ]; then
+        pb_token=$(curl -sf -X POST "http://127.0.0.1:8090/api/admins/auth-with-password" \
+            -H "Content-Type: application/json" \
+            -d "{\"identity\":\"${pb_email}\",\"password\":\"${pb_pass}\"}" 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    fi
+    if [ -z "$pb_token" ]; then
+        warn "First-batch codes requested but no PocketBase admin token is available."
+        warn "  Check /root/.pb_admin_creds, then generate codes from the admin console."
+        return 0
+    fi
+
+    local gen="${SCRIPT_DIR}/../scripts/generate_codes.sh"
+    if [ ! -f "$gen" ]; then
+        warn "generate_codes.sh not found at ${gen} — generate codes from the admin console."
+        return 0
+    fi
+
+    log "Generating first batch of activation codes..."
+    local made=0
+    for pair in "eco:${eco_n}" "stealth:${stealth_n}" "strike:${strike_n}"; do
+        local tier="${pair%%:*}" n="${pair##*:}"
+        [ "$n" = "0" ] && continue
+        log "  ${tier}: ${n} codes"
+        if ( cd "${SCRIPT_DIR}/.." && ADMIN_TOKEN="$pb_token" \
+             bash "$gen" "https://${DOMAIN}" "$pb_token" "$tier" "$n" ) >>"$LOGFILE" 2>&1; then
+            made=$((made + n))
+        else
+            warn "  ${tier}: generation failed — see ${LOGFILE}. Use the admin console."
+        fi
+    done
+
+    if [ "$made" -gt 0 ]; then
+        # Stamp middleman/expiry on the batch, if asked for. Done through the
+        # admin console API so it takes the same path the operator would (and
+        # records code_events for each change).
+        if [ -n "${FIRST_BATCH_MIDDLEMAN:-}" ] || [ -n "${FIRST_BATCH_EXPIRES:-}" ]; then
+            python3 "${SCRIPT_DIR}/stamp-batch.py" "$ADMIN_API_TOKEN" \
+                "${FIRST_BATCH_MIDDLEMAN:-}" "${FIRST_BATCH_EXPIRES:-}" >>"$LOGFILE" 2>&1 || \
+                warn "  Could not stamp middleman/expiry — set them in the console."
+        fi
+
+        echo "generated ${made} codes ($(date -Is))" > "$marker"
+        chmod 600 "$marker"
+        log "✓ First batch generated: ${made} codes (recorded in ${marker})"
+        log "  View, export and label them in the admin console → Codes & Clients"
+    fi
+}
+
+generate_first_batch
 
 # ── Summary ──
 log "══════════════════════════════════════════"
@@ -257,25 +365,19 @@ else
 fi
 log ""
 log "═══════════════════════════════════════════"
-log " NEXT STEPS"
+log " WHAT WAS DEPLOYED (no manual steps needed)"
 log "═══════════════════════════════════════════"
 log ""
-log " 1. Create or verify PocketBase admin:"
-log "    https://${DOMAIN}/_/"
-log "    Auto-created admin credentials (if first run):"
-log "    cat /root/.pb_admin_creds"
+log "   Admin console:  https://${DOMAIN}/admin/"
+log "     Sign in with the admin token: $(cat ${ADMIN_API_TOKEN_FILE} 2>/dev/null || echo '(see the file)')"
+log "     Or bookmark:  https://${DOMAIN}/admin/?token=<token>"
 log ""
-log " 2. Verify tier configs were seeded:"
-log "    Check tier_configs collection in admin UI"
-log "    If missing, run: DOMAIN=${DOMAIN} python3 ${SCRIPT_DIR}/seed-pb.py"
+log "   PocketBase UI:  https://${DOMAIN}/_/"
+log "                   admin: $(grep '^PB_ADMIN_EMAIL=' /root/.pb_admin_creds 2>/dev/null | cut -d= -f2 || echo 'see /root/.pb_admin_creds')"
 log ""
-log " 3. Generate activation codes:"
-log "    PB_TOKEN=\$(grep PB_TOKEN /root/.pb_admin_creds | cut -d= -f2)"
-log "    ./scripts/generate_codes.sh https://${DOMAIN} \${PB_TOKEN} eco 50"
-log "    (uses the PocketBase ADMIN JWT — the ADMIN_API_TOKEN is rejected by PB 0.22)"
-log ""
-log " 4. Verify backups are running:"
-log "    systemctl status pocketbase-backup.timer --no-pager"
+log "   Tier configs:   seeded automatically (eco/stealth/strike)"
+log "   Backups:        pocketbase-backup.timer (hourly -> B2)"
+log "   SSH access:     fail2ban protected (no ufw rate-limit on port 22)"
 log ""
 log "═══════════════════════════════════════════"
 log " Service Summary"
@@ -284,13 +386,42 @@ log "   Domain:        ${DOMAIN}"
 log "   Eco port:      8443 (BBR, 5 Mbps tc)"
 log "   Stealth port:  8444 (BBR, 100 Mbps tc)"
 log "   Strike port:   8445 (BBR+UDP, 200 Mbps tc)"
+if [ "${ENABLE_UOT:-1}" = "1" ]; then
+log "   Strike UoT:    ${UOT_PORT:-8446} (TCP+UDP, UDP-over-TCP for game traffic)"
+else
+log "   Strike UoT:    disabled (ENABLE_UOT=0)"
+fi
 log "   PocketBase:    https://${DOMAIN}/_/"
+log "   Admin console: https://${DOMAIN}/admin/"
 log "   Admin API:     ${ADMIN_API_TOKEN_FILE}"
 log "   Log file:      ${LOGFILE}"
 log ""
 log "   Tier passwords:   /root/.tier_passwords"
 log "   B2 credentials:   /root/.b2-creds"
-log "   Admin creds:      /root/.pb_admin_creds (if auto-created)"
+log "   Admin creds:      /root/.pb_admin_creds"
 log ""
 log "   Smoke test:       /var/log/myvpn-smoke-test.log"
+log ""
+log "═══════════════════════════════════════════"
+log " OPTIONAL (only if you want them)"
+log "═══════════════════════════════════════════"
+log ""
+if [ -f /root/.first_batch_done ]; then
+log "   First-batch codes were generated ($(cat /root/.first_batch_done))."
+log "   Print them:    ./scripts/print_codes.sh <tier>-codes.txt out.pdf"
+log "   Manage them:   admin console -> Codes & Clients"
+else
+log "   Issue codes when you are ready:"
+log "     * Console:    Codes & Clients -> Generate (recommended)"
+log "     * Or deploy with a batch next time:"
+log "         FIRST_BATCH=50 FIRST_BATCH_MIDDLEMAN=Sarah setup.sh"
+log "     * Or from your workstation:"
+log "         ./scripts/generate_codes.sh https://${DOMAIN} <PB_ADMIN_JWT> eco 50"
+log "       (PB_ADMIN_JWT is the PB_TOKEN line in /root/.pb_admin_creds —"
+log "        the ADMIN_API_TOKEN is rejected for record access by PB 0.22)"
+fi
+log ""
+log "   Publish a client release: tag v* -> CI -> v5/server/scripts/publish-release.sh"
+log ""
+log "═══════════════════════════════════════════"
 log "══════════════════════════════════════════"

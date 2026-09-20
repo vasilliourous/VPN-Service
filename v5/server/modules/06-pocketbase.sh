@@ -95,7 +95,7 @@ create_service() {
 
     cat > "$service_file" <<SERVICE
 [Unit]
-Description=PocketBase — MyVPN Admin Backend
+Description=PocketBase — Locus Admin Backend
 After=network.target
 
 [Service]
@@ -134,15 +134,25 @@ systemctl daemon-reload
 log "Starting PocketBase (first start creates database)..."
 systemctl enable pocketbase 2>/dev/null || true
 systemctl restart pocketbase 2>&1 | tail -3
-sleep 3
+
+# Wait for the API to actually answer, instead of a fixed sleep. A fixed 3s
+# was racy on small (512MB) droplets where PB's first-start migration can take
+# longer; seeding then hit a half-initialised server.
+READY=0
+for _ in $(seq 1 30); do
+    if curl -sf "http://127.0.0.1:${PB_PORT}/api/health" >/dev/null 2>&1; then
+        READY=1
+        break
+    fi
+    sleep 1
+done
 
 if systemctl is-active --quiet pocketbase; then
     log "✓ PocketBase is running"
-    # Check that WAL mode was applied
-    if curl -sf "http://127.0.0.1:${PB_PORT}/api/health" >/dev/null 2>&1; then
+    if [ "$READY" = "1" ]; then
         log "✓ PocketBase health check passed"
     else
-        warn "PocketBase health check endpoint not responding"
+        fail "PocketBase did not become healthy within 30s. Check: journalctl -u pocketbase -n 30 --no-pager"
     fi
 else
     fail "PocketBase failed to start. Check: journalctl -u pocketbase -n 30 --no-pager"
@@ -157,10 +167,14 @@ SEED_SCRIPT="${SCRIPT_DIR}/../scripts/seed-pb.py"
 
 if [ -f "$SEED_SCRIPT" ]; then
     log "Running automated PocketBase bootstrap..."
-    if DOMAIN="$DOMAIN" python3 "$SEED_SCRIPT" 2>&1; then
+    # The bootstrap is NOT optional: without it there are no collections and
+    # every hook returns 500. Previously failures were downgraded to a warning,
+    # which let a broken hub report "setup complete" (observed 2026-09-19).
+    if DOMAIN="$DOMAIN" PB_BINARY="$PB_BINARY" PB_DATA_DIR="$PB_DATA_DIR" \
+         python3 "$SEED_SCRIPT" 2>&1; then
         log "✓ PocketBase bootstrap completed"
     else
-        warn "PocketBase bootstrap encountered errors — check output above"
+        fail "PocketBase bootstrap FAILED — collections/tiers were not seeded. Hub is unusable. Check output above."
     fi
 else
     fail "Seed script not found at ${SEED_SCRIPT} — must deploy scripts/seed-pb.py alongside modules/"

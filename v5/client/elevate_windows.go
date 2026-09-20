@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 )
 
 var (
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
 	advapi32         = syscall.NewLazyDLL("advapi32.dll")
 	shell32          = syscall.NewLazyDLL("shell32.dll")
 	openProcessToken = advapi32.NewProc("OpenProcessToken")
@@ -38,18 +38,39 @@ func isElevated() bool {
 	if ok == 0 {
 		return false
 	}
-	defer syscall.CloseHandle(hToken)
+	// Best-effort close: a leaked token handle is harmless for a
+	// short-lived elevation probe, and the linter rightly complains about an
+	// unchecked call in a defer.
+	defer func() { _ = syscall.CloseHandle(hToken) }()
 
 	var elevated uint32
 	var retLen uint32
-	// GetTokenInformation(hToken, TokenElevation, &elevated, 4, &retLen)
+	// GetTokenInformation(hToken, TokenElevation, &elevated, sizeof(elevated), &retLen)
+	//
+	// FIVE arguments — the buffer LENGTH (4) is its own parameter, and &retLen
+	// is the FIFTH. An earlier revision passed only four, omitting the length,
+	// so &retLen's pointer value was consumed as the buffer size and the real
+	// ReturnLength out-parameter read an unrelated stack slot. The call could
+	// still report success while never writing to `elevated`, which made this
+	// return false on processes that genuinely WERE elevated — the exact cause
+	// of "Windows did not grant administrator permission" being shown to a user
+	// who had approved the prompt.
 	ok, _, _ = getTokenInfo.Call(
 		uintptr(hToken),
 		uintptr(tokenElevation),
 		uintptr(unsafe.Pointer(&elevated)),
+		unsafe.Sizeof(elevated),
 		uintptr(unsafe.Pointer(&retLen)),
 	)
 	if ok == 0 {
+		return false
+	}
+	// A BOOL success with ReturnLength != 4 means the call did not deliver a
+	// TOKEN_ELEVATION value; treat that as "cannot determine" rather than
+	// trusting an unwritten (zero) buffer, which would read as "not elevated".
+	if retLen != uint32(unsafe.Sizeof(elevated)) {
+		log.Printf("isElevated: GetTokenInformation returned %d bytes, want %d — assuming not elevated",
+			retLen, unsafe.Sizeof(elevated))
 		return false
 	}
 	return elevated != 0
@@ -60,6 +81,13 @@ func isElevated() bool {
 // command-line args. It returns an error only if the elevation could not be
 // started (including when the user cancels the UAC prompt, which surfaces as
 // ERROR_CANCELLED / SE_ERR_ACCESSDENIED).
+//
+// IMPORTANT — arg handling: argsToAdd are added IDEMPOTENTLY. The previous
+// version appended unconditionally, so a handoff from a process that was itself
+// started with --autoconnect produced "--autoconnect --autoconnect" (and grew
+// with each attempt). Duplicated flags are harmless by themselves, but they
+// made the "am I an elevated relaunch?" test non-deterministic, which is what
+// turned a slow UAC consent into a confusing permission error.
 func relaunchElevated(argsToAdd ...string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -71,9 +99,28 @@ func relaunchElevated(argsToAdd ...string) error {
 	// Build the full command line from current args plus the extras. On Windows
 	// we rebuild args as a single quoted command line so spaces in paths are
 	// preserved.
-	allArgs := append([]string(nil), os.Args[1:]...)
-	allArgs = append(allArgs, argsToAdd...)
-	cmdLine := quoteCommandLine(allArgs)
+	merged := mergeArgs(os.Args[1:], argsToAdd)
+	cmdLine := quoteCommandLine(merged)
+
+	// UTF16PtrFromString replaces the deprecated StringToUTF16Ptr and returns
+	// an error instead of panicking, so a bad path is reported rather than
+	// crashing the app mid-elevation.
+	verbPtr, err := syscall.UTF16PtrFromString("runas")
+	if err != nil {
+		return fmt.Errorf("cannot encode elevation verb: %w", err)
+	}
+	exePtr, err := syscall.UTF16PtrFromString(exe)
+	if err != nil {
+		return fmt.Errorf("cannot encode executable path: %w", err)
+	}
+	argsPtr, err := syscall.UTF16PtrFromString(cmdLine)
+	if err != nil {
+		return fmt.Errorf("cannot encode command line: %w", err)
+	}
+	dirPtr, err := syscall.UTF16PtrFromString(exeDir)
+	if err != nil {
+		return fmt.Errorf("cannot encode working directory: %w", err)
+	}
 
 	// ShellExecuteW(hwnd=0, "runas", exe, cmdLine, dir=exeDir, showCmd=SW_SHOWNORMAL).
 	// Passing the executable directory as the working directory ensures the
@@ -81,10 +128,10 @@ func relaunchElevated(argsToAdd ...string) error {
 	// how it was launched.
 	res, _, _ := shellExecuteW.Call(
 		0,
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("runas"))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exe))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(cmdLine))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(exeDir))),
+		uintptr(unsafe.Pointer(verbPtr)),
+		uintptr(unsafe.Pointer(exePtr)),
+		uintptr(unsafe.Pointer(argsPtr)),
+		uintptr(unsafe.Pointer(dirPtr)),
 		1, // SW_SHOWNORMAL
 	)
 
@@ -103,6 +150,11 @@ func elevationRequestRejected() error {
 	// all indicate the user declined or elevation couldn't begin.
 	return errElevationCancelled
 }
+
+// elevationUnsupportedReason returns "" on Windows: elevation IS supported
+// (UAC), so a non-elevated process simply relaunches. Kept for build parity
+// with elevate_unix.go — the Unix build is where this can be non-empty.
+func elevationUnsupportedReason() string { return "" }
 
 // errElevationCancelled is returned when the UAC prompt is declined or cannot be
 // shown. Its numeric value is ERROR_CANCELLED for diagnostics.

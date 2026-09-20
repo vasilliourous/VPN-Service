@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""MyVPN live-seed for a PocketBase on a (re-)provisioned VPS.
+"""DEPRECATED — use seed-pb.py instead.
+
+This file was a near-duplicate of seed-pb.py: same collections, same tier
+seeding, same update_config upsert. Two scripts describing the same schema
+means one of them is always slightly out of date, and nothing tells you which.
+
+Its one unique behaviour — a throwaway end-to-end activation test — has been
+ported into seed-pb.py behind VERIFY=1:
+
+    cd v5/server && DOMAIN=$DOMAIN VERIFY=1 python3 scripts/seed-pb.py
+
+Retired 2026-09-19 (FIXES.md 36). Kept as a guard rather than deleted so an
+existing runbook or shell history lands on an explanation instead of a
+"no such file" error.
+
+--- original docstring follows ---
+
+Locus live-seed for a PocketBase on a (re-)provisioned VPS.
 
 Creates the collections, update_config, tier_configs (reading passwords from
 /etc/shadowsocks/*.json — the single source of truth on the box) and seeds
@@ -15,6 +32,15 @@ import os
 import secrets
 import subprocess
 import sys
+
+sys.exit(
+    "seed-live.py is retired — use seed-pb.py instead.\n"
+    "\n"
+    "  cd v5/server && DOMAIN=$DOMAIN python3 scripts/seed-pb.py\n"
+    "\n"
+    "Add VERIFY=1 to also run the throwaway end-to-end activation check that\n"
+    "used to live only in this file. See FIXES.md 36."
+)
 
 API = "http://127.0.0.1:8090"
 DOMAIN = os.environ.get("DOMAIN", "networkingguides.duckdns.org")
@@ -180,13 +206,17 @@ def main():
             print(f"  tier {t}: MISSING {path} — skipping")
             continue
         cfg = json.load(open(path))
-        # UDP-over-TCP (UoT) is ONLY advertised when the sing-box UoT endpoint
-        # is deployed (02-shadowsocks.sh ENABLE_UOT=1). Otherwise udp_relay
-        # stays false and UDP flows via standard ss UDP — the default server
-        # (shadowsocks-rust) does not implement sing-box's proprietary
+        # UDP-over-TCP (UoT) is advertised whenever the sing-box UoT endpoint
+        # is deployed. That endpoint is part of the DEFAULT deployment now
+        # (02-shadowsocks.sh: ENABLE_UOT defaults to 1), so the default here
+        # matches — set ENABLE_UOT=0 in BOTH places to turn it off. Advertising
+        # uot_port with no service listening sends Strike game UDP to a dead
+        # port until the client times out and falls back to raw UDP.
+        # Without UoT, UDP flows via standard ss UDP — the plain
+        # shadowsocks-rust server does not implement sing-box's proprietary
         # UDP-over-TCP and RSTs it (observed 2026-08-01: every UoT conn RST
         # after ~300ms).
-        uot_enabled = os.environ.get("ENABLE_UOT") == "1"
+        uot_enabled = os.environ.get("ENABLE_UOT", "1") != "0"
         uot_port = int(os.environ.get("UOT_PORT", "8446"))
         udp = uot_enabled and t == "strike"
         cfg_dict = {

@@ -109,7 +109,7 @@ Persistent state management. Single JSON file, thread-safe, atomic writes.
   "server_config": { "server": "...", "server_port": 8443, "password": "...", "method": "aes-256-gcm" },
   "udp_relay": false,
   "activated": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "update_pending": false,
   "update_version": "",
   "update_sha256": "",
@@ -189,12 +189,29 @@ The generated config looks like this:
 }
 ```
 
-(`LOCUS_DEBUG=1` switches the log level to `debug`. UDP is NOT wrapped in
-UDP-over-TCP: sing-box's `udp_over_tcp` is a proprietary SagerNet protocol
-(magic domains `sp.udp-over-tcp.arpa` / `sp.v2.udp-over-tcp.arpa`) that
-shadowsocks-rust rejects with RST (observed 2026-08-01 — see FIXES.md
-Follow-up 9). `udp_relay` is informational; UDP goes raw (standard ss UDP,
-server `tcp_and_udp` on Strike) and works only where the network allows UDP.)
+(`LOCUS_DEBUG=1` switches the log level to `debug`. UDP handling depends on the
+tier:
+
+- **No `uot_port` in the tier's config (eco, stealth):** UDP goes raw — standard
+  ss UDP against the `tcp_and_udp` shadowsocks-rust listener. Works only where
+  the network permits UDP.
+- **`uot_port` set AND `udp_relay` true (strike):** UDP is wrapped in
+  UDP-over-TCP. This is sing-box's `udp_over_tcp`, a proprietary SagerNet
+  protocol using the magic domains `sp.udp-over-tcp.arpa` /
+  `sp.v2.udp-over-tcp.arpa`. **The endpoint must be a sing-box listener.** A
+  shadowsocks-rust port rejects these dials with RST (observed 2026-08-01, see
+  FIXES.md Follow-up 9) — which is why `enable-uot.sh` installs a separate
+  sing-box listener rather than reusing 8443/8444/8445.
+
+  Both fields are required: `udp_relay` alone is a no-op, and `uot_port` alone
+  advertises an endpoint no client is told to use.
+
+  **Correction (2026-09-19).** This document previously said UoT was "never
+  enabled". That was true for the shadowsocks-rust-port attempt described in
+  Follow-up 9, but a sing-box listener on :8446 makes the protocol viable, and it
+  is live on the hub. Careful: the client could not actually *use* it until
+  2.1.0 — the hub sent `uot_port` while the client parsed `server_port_uot`, so
+  the UoT outbound was never emitted. See FIXES.md 29 for the full account.)
 
 **Process lifecycle:**
 - `Start()` → generate config → write config file → spawn sing-box → 500ms
@@ -452,7 +469,7 @@ user must right-click → Open or run `xattr -cr` (see `CLIENT-GUIDE.md`).
 |------|-----|
 | **Only 2 binaries** (locus + sing-box) | Less breakage surface area. No helper, no tun2socks, no sslocal. |
 | **No TLS in the tunnel** | JA3 fingerprinting is the #1 detection method. Shadowsocks AEAD has no TLS fingerprint. |
-| **UDP attempted raw, TCP fallback** | N4L drops all UDP, so UDP (incl. Strike's relay) only works on permissive networks; browsers fall back to TCP. sing-box's UoT is proprietary — never enabled (see FIXES.md Follow-up 9). |
+| **UDP attempted raw, TCP fallback** | N4L drops all UDP, so UDP (incl. Strike's relay) only works on permissive networks; browsers fall back to TCP. sing-box's UoT is proprietary but **IS implemented and enabled** on Strike via a dedicated sing-box listener on :8446 — it exists precisely so game UDP survives a UDP-blocking network. It requires both `udp_relay` and `uot_port`; see the UDP section above and FIXES.md 29. |
 | **Server-enforced caps** | Client can't bypass its tier cap. tc caps (5/100/200 Mbps) are on the VPS. |
 | **Permanent device binding** | One code = one device forever. No deactivation. Admin can suspend (not destroy) binding. |
 | **Crash-safe updates** | Two-phase sentinel with auto-revert. No update signing keys needed. |
