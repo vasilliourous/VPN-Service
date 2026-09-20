@@ -97,14 +97,19 @@ patch` would treat `--no-tag` as the version word.
 ## What it does, in order
 
 1. **`./bump.sh <arg> --no-verify`** — rewrites the six version-bearing files
-   and regenerates `rsrc_windows_{amd64,arm64}.syso`.
-2. **`git checkout -- v5/client/go.mod v5/client/go.sum`** — `bump.sh`'s
-   `go:generate` drags winres dependencies into the module files. This drops
-   that noise so the release commit contains only version changes.
-3. **`git add -A && git commit -m "chore(release): <version>"`**
-4. **`git tag -a v<version>`** — annotated. Immediately deleted again if you
+   and stamps `rsrc_windows_{amd64,arm64}.syso` via
+   `v5/server/scripts/stamp-syso.py` (no Go toolchain needed).
+2. **A stale-artifact gate.** `stamp-syso.py --check` reads the version back
+   **out of the committed `.syso` bytes** and refuses to continue if they do not
+   match `v5/VERSION`. This is what makes it impossible to tag the 2.2.7 bug
+   again: that tag pointed at a tree whose resources still said 2.2.6.
+3. **`git checkout -- v5/client/go.mod v5/client/go.sum`** — `bump.sh`'s
+   `go:generate` fallback drags winres dependencies into the module files. This
+   drops that noise so the release commit contains only version changes.
+4. **`git add -A && git commit -m "chore(release): <version>"`**
+5. **`git tag -a v<version>`** — annotated. Immediately deleted again if you
    passed `--no-tag`.
-5. **`git push <url> main`**, then **`git push <url> v<version>`** — the token
+6. **`git push <url> main`**, then **`git push <url> v<version>`** — the token
    is in `<url>`. The tag is skipped under `--no-tag`.
 
 On success it prints the version, whether a tag was pushed, the `gh run watch`
@@ -112,11 +117,44 @@ command, and the `publish-release.sh` line for the next step.
 
 ---
 
-## The `--no-verify` flag, and why it is unconditional
+## Windows resources (`.syso`) — the trap that broke 2.2.7
 
-Line 20 passes `--no-verify` to `bump.sh`, which skips the version-consistency
-test gate. On this machine that gate **always fails**, and it is not a real
-failure:
+`rsrc_windows_{amd64,arm64}.syso` are the compiled VS_VERSION_INFO blocks that
+fill in the Windows file Properties tab. They are **committed**, and for a long
+time nothing regenerated them automatically — `go generate` was manual.
+
+That produced a defect which hides from every text-based check. A correct
+`go:generate` *directive* says nothing about the *artifact*, so the committed
+`.syso` can be stale while every grep in CI passes and the release still ships a
+Windows exe reporting a version that does not exist. It happened at 2.1.0
+(stamped `2.0.0` / product `MyVPN`) and again at 2.2.7 (stamped `2.2.6`).
+
+**The step no longer needs Go.** A patch-level bump (2.2.6 → 2.2.7) changes only
+four bytes: the two UTF-16LE display strings and the packed `VS_FIXEDFILEINFO`
+block. `stamp-syso.py` rewrites exactly those with the standard library, and its
+output is byte-for-byte identical to `go-winres`' own — verified in both
+directions against the real historical artifacts.
+
+```bash
+python3 v5/server/scripts/stamp-syso.py 2.2.8            # stamp
+python3 v5/server/scripts/stamp-syso.py 2.2.8 --check    # CI / pre-tag gate
+```
+
+It refuses (exit 3) rather than guessing when the version *width* changes
+(`2.9.9` → `2.10.0` is not a byte patch), or when the file is not a resource it
+recognises. In those cases use `go generate`:
+
+```bash
+cd v5/client && go generate -tags windows
+```
+
+---
+
+## The `--no-verify` flag
+
+Line 20 passes `--no-verify` to `bump.sh`, which skips the Go version-consistency
+**test** gate. On this machine that gate fails for an unrelated reason and is not
+a real failure:
 
 ```
 github.com/getlantern/systray: exec: "pkg-config": executable file not found in $PATH
@@ -124,19 +162,19 @@ FAIL	locus [build failed]
 ```
 
 The Go client needs `libwebkit2gtk` and `pkg-config` to build, and neither is
-installed here. The check that actually matters — `./internal/winres`, which
-reads the version back **out of the compiled `.syso`** — passes:
+installed here.
 
-```bash
-cd v5/client && go test ./internal/winres/... -count=1   # ok
-```
+> **`--no-verify` skips the tests, never the artifacts.** This distinction is the
+> whole fix for the 2.2.7 failure. The `.syso` stamping runs *before* the flag is
+> consulted, so a `--no-verify` release still gets current resources; and
+> `release-cut.sh` re-checks them with `stamp-syso.py --check`, which needs no
+> toolchain and cannot be skipped for one.
 
-So the flag is baked in rather than being something you have to remember. To
-turn the gate back on, edit `--no-verify` out of line 20 and run from a host
-with `pkg-config` installed. CI does this properly on every release.
+To turn the full gate back on, edit `--no-verify` out of line 20 and run from a
+host with `pkg-config` installed. CI does this properly on every release.
 
-The `did not find icon winres/icon.png` warning from the `.syso` regeneration
-is pre-existing and harmless.
+The `did not find icon winres/icon.png` warning from a `go generate` run is
+pre-existing and harmless. `stamp-syso.py` does not emit it.
 
 ---
 
@@ -212,6 +250,9 @@ git ls-remote --tags origin | grep v2.2.7
 | `set GH_TOKEN first` | `GH_TOKEN` not exported in this shell |
 | `working tree is dirty` | `bump.sh` refuses a dirty tree. Commit or stash first. |
 | `bump.sh` consistency gate fails | `pkg-config` missing. Expected here — see above. |
+| `committed rsrc_windows_*.syso do not match vX.Y.Z` | The resources went stale. `release-cut.sh` refuses to tag. Fix with `python3 v5/server/scripts/stamp-syso.py <version>`. |
+| `version width changed (5 -> 6)` | A `2.9.9` → `2.10.0`-style bump cannot be byte-patched. Run `cd v5/client && go generate -tags windows`. |
+| CI fails `Check version consistency` with a `.syso` mismatch | Same cause. Stamp, commit, and re-push the tag. |
 | Push hangs, then times out | `GH_TOKEN` unset, or the token lacks `repo` scope |
 | CI green but no release | The tag never reached origin. See above. |
 | `tag v2.2.7 already exists` | You already cut this version. Bump again, or delete the local tag. |
@@ -227,4 +268,8 @@ git ls-remote --tags origin | grep v2.2.7
   rotated
 - `bump.sh` / `v5/server/scripts/bump-version.sh` — the version rewrite itself
   and the consistency checks it runs
+- `v5/server/scripts/stamp-syso.py` — stamps the version into the committed
+  Windows resources with no toolchain; also the `--check` gate
+- `v5/server/scripts/smoke-bump.sh` — offline regression suite for all of the
+  above, including the "stamped under `--no-verify`" case
 - `v5/server/scripts/publish-release.sh` — pushing a built release to the hub

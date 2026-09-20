@@ -16,10 +16,32 @@ BUMP="${1:-patch}"
 TAG_IT=1
 [ "${2:-}" = "--no-tag" ] && TAG_IT=0
 
-# bump.sh rewrites the six version files. It does NOT touch git.
+# bump.sh rewrites the six version files and stamps the Windows resources. It
+# does NOT touch git, and it does NOT need a Go toolchain (see stamp-syso.py).
+#
+# --no-verify skips only the Go test gate, never the artifact update. That
+# distinction is the whole fix for the 2.2.7 failure: the previous release
+# tagged a tree whose committed rsrc_windows_*.syso still said 2.2.6, and CI
+# rejected the release. Passing --no-verify here is safe for the ARTIFACTS but
+# still skips the tests, so the explicit gate below re-checks the resources with
+# the one tool that needs no toolchain.
 GO_BIN="${GO_BIN:-go}" ./bump.sh "$BUMP" --no-verify
 
 NEXT="$(tr -d '[:space:]' < v5/VERSION)"
+
+# ── Refuse to tag a tree with stale Windows resources ──────────────────────
+# This is the guard whose absence let 2.2.7 ship a broken tag. It reads the
+# version OUT of the committed .syso bytes, using only the standard library, so
+# it costs nothing and cannot be skipped for lack of a toolchain.
+if command -v python3 >/dev/null 2>&1; then
+    if ! python3 v5/server/scripts/stamp-syso.py "$NEXT" --check --quiet; then
+        echo "ERROR: committed rsrc_windows_*.syso do not match v${NEXT}." >&2
+        echo "       CI would fail the release at 'Check version consistency'." >&2
+        echo "       Fix:  python3 v5/server/scripts/stamp-syso.py ${NEXT}" >&2
+        echo "       Refusing to commit or tag. Nothing was pushed." >&2
+        exit 3
+    fi
+fi
 
 # bump.sh's go:generate drags winres deps into go.mod/go.sum. Drop that noise.
 git checkout -- v5/client/go.mod v5/client/go.sum 2>/dev/null || true

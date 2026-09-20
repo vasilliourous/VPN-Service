@@ -288,42 +288,99 @@ EOF
     log "drift guard: no unaccounted copies of ${CURRENT}"
 fi
 
-# ── Self-check: regenerate the Windows resources, then read them back ──────
-# This is the 2.1.0 failure. The .syso is committed, the directive is text, and
-# only the compiled artifact carries the truth. Regenerating is not optional:
-# a correct directive with a stale .syso passes every grep-based check in CI and
-# still ships a Windows exe whose Properties tab names the wrong version.
+# ── Self-check: stamp the Windows resources, then read them back ───────
+# This is the 2.1.0 failure, and it came back in 2.2.7. The .syso is committed,
+# the directive is text, and only the compiled artifact carries the truth. A
+# correct directive with a stale .syso passes every grep-based check in CI and
+# still ships a Windows exe whose Properties tab names a wrong version — the
+# exact breakage that failed the 2.2.7 release.
+#
+# ── WHY THIS NO LONGER NEEDS A GO TOOLCHAIN ───────────────────────────────
+# It used to be `go generate -tags windows`, which meant every release depended
+# on a working Go install AND on skipping the step under --no-verify, which is
+# how the artifacts went stale twice. A patch-level bump (2.2.6 -> 2.2.7) only
+# changes four bytes: the two UTF-16LE display strings and the packed
+# VS_FIXEDFILEINFO block. stamp-syso.py rewrites exactly those with the standard
+# library, and its output is byte-for-byte identical to go-winres' own (verified
+# in both directions against the real 2.1.0..2.2.7 artifacts).
+#
+# So the stamping now happens BEFORE the --no-verify branch, and unconditionally:
+# --no-verify skips the *test* gate, never the artifact update. A version bump
+# that changes the string WIDTH (2.9.9 -> 2.10.0) cannot be byte-patched; the
+# tool refuses, and this script falls back to go generate when one is available.
 if [ "$DRY_RUN" = "1" ]; then
-    log "DRY RUN — skipping .syso regeneration and consistency tests"
+    log "DRY RUN — skipping .syso stamping and consistency tests"
     log "done (dry run): ${CURRENT} -> ${NEXT}"
     exit 0
 fi
 
+GO="${GO_BIN:-go}"
+STAMP="${REPO_ROOT}/v5/server/scripts/stamp-syso.py"
+stamped=0
+
+if [ -f "$STAMP" ] && command -v python3 >/dev/null 2>&1; then
+    # Force the client dir to the repo copy so an out-of-tree CWD cannot stamp
+    # the wrong artifacts.
+    #
+    # `set -e` is active, so the call must be guarded with `|| rc=$?` rather than
+    # tested directly — and the code has to be captured in the same statement,
+    # because `$?` after an `if`/`elif` belongs to the last command the shell
+    # ran, not to the one you meant.
+    rc=0
+    python3 "$STAMP" "$NEXT" --client-dir "v5/client" || rc=$?
+    case "$rc" in
+        0) stamped=1 ;;
+        # 3 = "this is not a file I know how to byte-patch" (a width change, or
+        # an unfamiliar resource format). Not fatal on its own: fall back to
+        # go-winres below if it is available.
+        3) warn "stamp-syso.py could not byte-patch these artifacts (a version"
+           warn "width change, or an unfamiliar resource format). Will fall back"
+           warn "to go generate if a Go toolchain is available." ;;
+        2) warn "stamp-syso.py reported the artifacts stale but did not patch them." ;;
+        *) fail "stamp-syso.py failed (exit ${rc})" 3 ;;
+    esac
+else
+    warn "stamp-syso.py or python3 missing — cannot stamp the Windows resources directly."
+fi
+
+if [ "$stamped" != "1" ]; then
+    if command -v "$GO" >/dev/null 2>&1; then
+        # `go generate -tags windows` fetches winres via the directive, so this
+        # needs network on a first run.
+        log "regenerating rsrc_windows_{amd64,arm64}.syso with go-winres…"
+        ( cd v5/client && "$GO" generate -tags windows ) || fail "go generate -tags windows failed" 3
+        stamped=1
+    else
+        warn "no Go toolchain on PATH and stamp-syso.py did not run."
+        warn "The committed rsrc_windows_*.syso are STALE for ${NEXT}."
+        warn "CI will fail 'Check version consistency' on this tree."
+        warn "Fix: install Go (docs/OPS.md) or ensure python3 is available,"
+        warn "     then re-run: ./bump.sh ${NEXT}"
+    fi
+fi
+
+for arch in amd64 arm64; do
+    syso="v5/client/rsrc_windows_${arch}.syso"
+    [ -f "$syso" ] || fail "expected ${syso}" 3
+done
+
+# A byte-identical .syso after a real bump means the stamp silently did nothing.
+if [ "$stamped" = "1" ] && [ "$VERIFY" = "1" ] && git diff --quiet -- v5/client/rsrc_windows_amd64.syso; then
+    warn "rsrc_windows_amd64.syso is byte-identical after stamping — expected a version change."
+fi
+
 if [ "$VERIFY" != "1" ]; then
-    warn "--no-verify: skipping .syso regeneration and the consistency tests."
-    warn "Do NOT tag a release from this tree until you run: cd v5/client && go generate -tags windows && go test . ./internal/winres/ -run 'Version|Syso' -count=1"
+    if [ "$stamped" = "1" ]; then
+        warn "--no-verify: the .syso artifacts ARE stamped for ${NEXT}; the test gate is skipped."
+        warn "Run before tagging: cd v5/client && go test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1"
+    fi
     printf '\nNext:\n  git add -A && git commit -m "chore(release): %s"\n  git tag -a v%s -m "Locus %s"\n  git push origin main\n  git push origin v%s\n' "$NEXT" "$NEXT" "$NEXT" "$NEXT"
     exit 0
 fi
 
-GO="${GO_BIN:-go}"
 command -v "$GO" >/dev/null 2>&1 || fail "no Go toolchain on PATH (set GO_BIN=/path/to/go).\n"\
+"The artifacts were stamped, but the consistency gate needs Go.\n"\
 "Local toolchain bootstrap is documented in v5/docs/OPS.md." 3
-
-# `go generate -tags windows` needs the winres tool. It is fetched by the
-# directive itself (go run ...@latest), so this requires network on first run.
-log "regenerating rsrc_windows_{amd64,arm64}.syso from the new directive…"
-( cd v5/client && "$GO" generate -tags windows ) || fail "go generate -tags windows failed" 3
-
-for arch in amd64 arm64; do
-    syso="v5/client/rsrc_windows_${arch}.syso"
-    [ -f "$syso" ] || fail "expected ${syso} after generation" 3
-    if git diff --quiet -- "$syso"; then
-        warn "${syso} is byte-identical after regeneration — expected a version change. Is the directive correct?"
-    else
-        log "  ${syso} regenerated"
-    fi
-done
 
 log "running the version-consistency gate…"
 # Run the two guards that matter here and nothing else: the full suite is the
@@ -333,7 +390,7 @@ log "running the version-consistency gate…"
 ( cd v5/client && "$GO" test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1 ) \
     || fail "version consistency tests FAILED — the tree is inconsistent. Fix before committing." 3
 
-log "✓ ${CURRENT} -> ${NEXT} — all copies updated, resources regenerated, consistency gate passed"
+log "✓ ${CURRENT} -> ${NEXT} — all copies updated, resources stamped, consistency gate passed"
 cat <<EOF
 
 Nothing has been committed. Next:

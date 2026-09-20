@@ -1,3 +1,84 @@
+## RELEASE TAGGING — THE .syso WENT STALE AGAIN, AND THE GATE THAT KNEW (2026-09-20)
+
+CI failed the 2.2.7 release in **Check version consistency**:
+
+```
+rsrc_windows_amd64.syso FileVersion = "2.2.6", want "2.2.7"
+rsrc_windows_arm64.syso ProductVersion = "2.2.6", want "2.2.7"
+```
+
+The reaction this invites is "rerun `go generate` and push" — which is what the
+first fix did. That is the wrong read, because the same thing had already
+happened once and the guard built to stop it was bypassed, not missing. Fixing
+only the artifact would have guaranteed a third occurrence.
+
+### 57. `release-cut.sh` passed `--no-verify`, which skipped the artifact update too
+
+`bump-version.sh` regenerated the `.syso` and re-read them as a self-check — that
+gate was added after 2.1.0 shipped resources stamped `2.0.0` / product `MyVPN`.
+But `--no-verify` short-circuited the script **before** that block, and
+`scripts/release-cut.sh` line 20 passed `--no-verify` unconditionally. So the
+automated release path — the one that actually cuts tags — never regenerated
+anything, and warned only in text a reader could scroll past.
+
+Evidence in the history: `cd4dbc0` (2.2.6) changed 8 files including both `.syso`;
+`916aec7` (2.2.7) changed only 6, with no resources. Nothing noticed until CI ran.
+
+This is the second-order version of the 2.1.0 bug. There, the guard did not exist.
+Here it existed and the fast path routed around it — which is worse, because it
+looks protected.
+
+### 58. The fix depended on a Go toolchain that the release host does not have
+
+The documented remedy was `cd v5/client && go generate -tags windows`. That needs
+a Go install and network access to fetch `go-winres`, and this machine has no
+system Go — so "regenerate the artifacts" was advice that could not be followed
+where releases are actually cut. A step that is awkward to run is a step that
+gets skipped, which is how the artifacts went stale twice.
+
+It does not need a toolchain. A patch-level bump changes only four bytes: the two
+UTF-16LE display strings after `FileVersion`/`ProductVersion`, and the packed
+`VS_FIXEDFILEINFO` block whose `dwFileVersionMS/LS` and `dwProductVersionMS/LS`
+carry the same number in binary. Missing the second one is the subtle failure —
+the Properties *string* would read the new version while Windows' own version
+comparisons and the installer still see the old one.
+
+`v5/server/scripts/stamp-syso.py` rewrites both with the standard library. Its
+output is **byte-for-byte identical** to `go-winres`' — verified in both
+directions against the real 2.2.6 and 2.2.7 artifacts, and against the historical
+2.2.6 bytes recovered from `cd4dbc0`. It refuses (exit 3) rather than guessing on
+a version-width change such as `2.9.9` → `2.10.0`, where the fixed-size fields no
+longer fit and `go generate` really is required.
+
+### 59. The guard ran after the expensive work, and after the tag
+
+Even when it fired, `TestCommittedSysoMatchesRepoVersion` ran deep inside the
+`lint` job, producing an error that reads like a Go test failure rather than
+"your artifacts are stale" — which is exactly how the 2.2.7 report was misread as
+a generation-command problem. And it only ever ran **after** a tag had been
+pushed, so the tag was already public and wrong.
+
+Three changes, at three points in the pipeline:
+
+| Where | What |
+|---|---|
+| `bump-version.sh` | The `.syso` stamping now runs **before** the `--no-verify` branch, unconditionally, with no toolchain. `--no-verify` skips the *test* gate, never the artifact update. |
+| `release-cut.sh` | Re-checks the committed resources with `stamp-syso.py --check` and **refuses to commit or tag** a stale tree. Toolchain-free, so it cannot be skipped for want of one. |
+| `build.yml` | The same check runs first among the version guards, so a stale artifact is attributed to the artifact and not to a failing test. |
+
+### 60. The regression suite did not cover the path that broke
+
+`smoke-bump.sh` ran every case with `--no-verify` and explicitly documented that
+the `.syso` regeneration was "covered by CI, not by this smoke test" — so the
+exact combination that failed (no-verify, plus no toolchain) had no offline test.
+It now seeds a **real** `.syso` pair, stamps it down to the scratch version, and
+asserts under `GO_BIN=definitely-not-a-real-go` that a bump still moves the
+artifacts, that the packed `VS_FIXEDFILEINFO` fields move with the strings, that
+the brand text survives, and that `--check` reports stale without writing.
+`smoke-bump` went from 21 assertions to 33.
+
+---
+
 ## CLIENT UPDATE — THE PORTABLE BINARY COULD NOT REPLACE ITSELF (2026-09-20)
 
 Field report, immediately after 2.2.3 was published:

@@ -146,7 +146,14 @@ jobs:
           # binary whose Properties tab disagrees with the app's own version.
           grep -q -- "--product-version $V --file-version $V" v5/client/main.go || {
             echo "::error::main.go go:generate product/file version does not match v5/VERSION ($V)"; fail=1; }
-          # ...but a correct DIRECTIVE does not mean the ARTIFACTS are current.
+          # ...and the ARTIFACTS must match too, checked here with no toolchain at
+          # all. This is the cheap, self-explaining guard; the Go test below is
+          # the authoritative one. It runs FIRST so a stale .syso is attributed
+          # to a stale artifact rather than looking like a Go test failure --
+          # which is how the 2.2.7 release was misread.
+          python3 v5/server/scripts/stamp-syso.py "$V" --check --quiet || {
+            echo "::error::committed rsrc_windows_*.syso are stale for $V — run: python3 v5/server/scripts/stamp-syso.py $V"; fail=1; }
+          # A correct DIRECTIVE does not mean the ARTIFACTS are current.
           # Nothing re-runs `go generate` automatically, so the committed .syso
           # files can be stale while every text check above passes. That is
           # exactly what shipped in 2.1.0: version_consistency_test.go's

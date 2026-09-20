@@ -25,11 +25,34 @@ BUMP="${1:-${REPO_ROOT}/v5/server/scripts/bump-version.sh}"
 [ -f "$BUMP" ] || { echo "smoke: no such script: $BUMP" >&2; exit 1; }
 BUMP="$(cd "$(dirname "$BUMP")" && pwd)/$(basename "$BUMP")"
 
+# The .syso stamper lives beside bump-version.sh and is now part of the release
+# path, so it gets exercised here too.
+STAMP="$(dirname "$BUMP")/stamp-syso.py"
+[ -f "$STAMP" ] || { echo "smoke: no such script: $STAMP" >&2; exit 1; }
+
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
+# A real artifact to stamp, so the stamping path is exercised against the actual
+# go-winres byte layout rather than a stand-in. We normalise a copy to 2.2.0 (the
+# scratch repo's starting version) and seed the scratch tree from it. If the real
+# artifact or python3 is missing, the stamp cases report SKIP instead of passing
+# vacuously.
+SYSO_SRC=""
+SYSO_SEED=""
+if [ -f "${REPO_ROOT}/v5/client/rsrc_windows_amd64.syso" ] && command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$SCRATCH/seed"
+    cp "${REPO_ROOT}/v5/client/rsrc_windows_amd64.syso" "$SCRATCH/seed/rsrc_windows_amd64.syso"
+    cp "${REPO_ROOT}/v5/client/rsrc_windows_arm64.syso" "$SCRATCH/seed/rsrc_windows_arm64.syso"
+    # Bring the seed down to 2.2.0 so it agrees with the scratch repo's VERSION.
+    python3 "$STAMP" 2.2.0 --client-dir "$SCRATCH/seed" --quiet >/dev/null 2>&1 || true
+    SYSO_SEED="$SCRATCH/seed/rsrc_windows_amd64.syso"
+    SYSO_SRC="$SCRATCH/seed/rsrc_windows_arm64.syso"
+fi
+
 pass=0
 failed=0
+skipped=0
 check() {
     local what="$1"; shift
     if "$@"; then
@@ -38,13 +61,13 @@ check() {
         printf '\033[0;31m  FAIL\033[0m %s\n' "$what"; failed=$((failed + 1))
     fi
 }
+skip() { printf '\033[1;33m  SKIP\033[0m %s\n' "$1"; skipped=$((skipped + 1)); }
 
 # ── Build a minimal scratch repo ───────────────────────────────────────────
 # The bump script needs: a git repo (it refuses a dirty tree), the six
 # accounted files, and enough of v5/client for the drift scan to have something
-# to walk. It does NOT need the Go toolchain, because every case below runs
-# with --no-verify (the .syso regeneration is the slow, network-dependent part
-# and is covered by CI, not by this smoke test).
+# to walk. It does NOT need the Go toolchain: the .syso stamping is now done by
+# stamp-syso.py with the standard library, so it runs here too and IS covered.
 setup_scratch() {
     rm -rf "${SCRATCH:?}/repo"
     mkdir -p "$SCRATCH/repo/v5/client/internal/buildinfo" \
@@ -103,6 +126,17 @@ EOF
     # Real scripts, so we exercise the code we are shipping rather than a copy.
     cp "$BUMP" v5/server/scripts/bump-version.sh
     chmod +x v5/server/scripts/bump-version.sh
+    cp "$STAMP" v5/server/scripts/stamp-syso.py
+    chmod +x v5/server/scripts/stamp-syso.py
+
+    # A REAL .syso pair, so the stamping path is exercised against the actual
+    # go-winres byte layout rather than a stand-in, normalised to 2.2.0 so the
+    # scratch tree starts self-consistent.
+    if [ -n "$SYSO_SEED" ]; then
+        cp "$SYSO_SEED" v5/client/rsrc_windows_amd64.syso
+        cp "$SYSO_SRC"  v5/client/rsrc_windows_arm64.syso
+    fi
+
     git add -A
     git commit -qm "scratch"
 }
@@ -202,6 +236,113 @@ for spec in "major:3.0.0" "minor:2.3.0" "patch:2.2.1"; do
     check "'$word' produces $want" [ "$got" = "$want" ]
 done
 
+# ── Case 7: the .syso stamping is NOT skipped by --no-verify ───────────────
+# This is the 2.2.7 regression. release-cut.sh calls bump.sh with --no-verify,
+# which used to skip the artifact update entirely, so the release tag pointed at
+# a tree whose committed resources still named the previous version and CI
+# rejected it. The artifacts must now be stamped on that path, with no Go
+# toolchain present.
+echo "case 7 — syso stamped even under --no-verify and without a toolchain"
+if [ -z "$SYSO_SEED" ] || ! command -v python3 >/dev/null 2>&1; then
+    skip "no real .syso seed or no python3 available"
+else
+    setup_scratch
+    cd "$SCRATCH/repo"
+
+    # The tree starts consistent at 2.2.0. Prove the stamper agrees, so a later
+    # failure is attributable to the bump rather than a bad fixture.
+    check "seed artifacts read 2.2.0 before the bump" \
+        python3 v5/server/scripts/stamp-syso.py 2.2.0 --check --quiet
+
+    # GO_BIN points at nothing: the point is that no toolchain is needed.
+    GO_BIN=definitely-not-a-real-go \
+        v5/server/scripts/bump-version.sh patch --no-verify >"$SCRATCH/c7.log" 2>&1 || true
+
+    check "VERSION advanced to 2.2.1" [ "$(cat v5/VERSION)" = "2.2.1" ]
+    check "artifacts were stamped to 2.2.1 (--no-verify did not skip them)" \
+        python3 v5/server/scripts/stamp-syso.py 2.2.1 --check --quiet
+    # Byte-level: the old build digit must be gone from BOTH the UTF-16LE strings
+    # and the packed VS_FIXEDFILEINFO block, and the untouched FileDescription
+    # must still be there. Done in python because the artifact is UTF-16LE and
+    # shell/grep cannot carry NUL bytes through a command substitution.
+    check "old version is gone, brand text is intact" python3 - <<'PY'
+import sys
+SY = bytes.fromhex("bd04effe")
+raw = open("v5/client/rsrc_windows_amd64.syso", "rb").read()
+if "2.2.0".encode("utf-16-le") in raw:
+    sys.exit("stale UTF-16LE display string still mentions 2.2.0")
+if "2.2.1".encode("utf-16-le") not in raw:
+    sys.exit("new UTF-16LE display string missing")
+if "Locus".encode("utf-16-le") not in raw:
+    sys.exit("product name lost")
+i = raw.find(SY)
+if i < 0:
+    sys.exit("VS_FIXEDFILEINFO signature missing")
+import struct
+fms, fls = struct.unpack_from("<2I", raw, i + 8)
+if (fms >> 16, fms & 0xFFFF, fls >> 16, fls & 0xFFFF) != (2, 2, 1, 0):
+    sys.exit(f"packed FileVersion is wrong: {fms:#x}/{fls:#x}, want 2.2.1.0")
+PY
+    check "ProductName is still Locus, not the legacy brand" \
+        bash -c "python3 v5/server/scripts/stamp-syso.py 2.2.1 --check --quiet"
+fi
+
+# ── Case 8: the stamping guards refuse rather than guess ───────────────────
+echo "case 8 — syso stamper refuses what it cannot do safely"
+if [ -z "$SYSO_SEED" ] || ! command -v python3 >/dev/null 2>&1; then
+    skip "no real .syso seed or no python3 available"
+else
+    # A width change (2.2.0 -> 2.10.0) is NOT a byte patch: the UTF-16LE strings
+    # and the packed dwords change size, so the file must be regenerated with
+    # go-winres. The stamper has to say so instead of corrupting the artifact.
+    setup_scratch
+    cd "$SCRATCH/repo"
+    if python3 v5/server/scripts/stamp-syso.py 2.10.0 --client-dir v5/client \
+            >"$SCRATCH/c8a.log" 2>&1; then
+        check "refuses a version-width change" false
+    else
+        check "refuses a version-width change" true
+        check "the refusal names go generate" grep -q "go generate" "$SCRATCH/c8a.log"
+    fi
+    check "the artifact is unmodified after a refusal" \
+        python3 v5/server/scripts/stamp-syso.py 2.2.0 --check --quiet
+
+    # A file it cannot parse must fail loudly. Passing silently here is the
+    # "blind guard" failure that let a stale .syso ship for two releases.
+    setup_scratch
+    cd "$SCRATCH/repo"
+    printf '\000\001\002\003\377\376' > v5/client/rsrc_windows_amd64.syso
+    if python3 v5/server/scripts/stamp-syso.py 2.2.1 --client-dir v5/client \
+            >"$SCRATCH/c8b.log" 2>&1; then
+        check "refuses an unparseable resource instead of passing blindly" false
+    else
+        check "refuses an unparseable resource instead of passing blindly" true
+    fi
+fi
+
+# ── Case 9: a stale artifact is caught before anything is committed ────────
+# The stamping in case 7 makes this hard to reach through bump.sh, which is the
+# point. This asserts the CHECK itself, which is what CI and release-cut.sh use
+# as the backstop -- it must report stale, and must not write.
+echo "case 9 — a stale artifact is reported stale, and --check writes nothing"
+if [ -z "$SYSO_SEED" ] || ! command -v python3 >/dev/null 2>&1; then
+    skip "no real .syso seed or no python3 available"
+else
+    setup_scratch
+    cd "$SCRATCH/repo"
+    before="$(cksum v5/client/rsrc_windows_amd64.syso)"
+    if python3 v5/server/scripts/stamp-syso.py 2.2.5 --check --quiet >/dev/null 2>&1; then
+        check "--check reports a mismatched artifact as stale" false
+    else
+        check "--check reports a mismatched artifact as stale" true
+    fi
+    check "--check wrote nothing" [ "$before" = "$(cksum v5/client/rsrc_windows_amd64.syso)" ]
+    check "the artifact still reads 2.2.0" \
+        python3 v5/server/scripts/stamp-syso.py 2.2.0 --check --quiet
+fi
+
 echo
-printf 'smoke-bump: %d passed, %d failed\n' "$pass" "$failed"
+printf 'smoke-bump: %d passed, %d failed' "$pass" "$failed"
+[ "$skipped" -gt 0 ] && printf ', %d skipped' "$skipped"
+printf '\n'
 [ "$failed" -eq 0 ]
