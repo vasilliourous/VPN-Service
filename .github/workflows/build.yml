@@ -582,9 +582,83 @@ jobs:
           PY
           cat manifest.json
 
+      # ── Guard: the upload list must not contain a duplicate filename ────────
+      # A pattern list that resolves to the same file twice makes
+      # action-gh-release upload it twice; the second attempt is read as an
+      # asset UPDATE and 404s, failing the whole release after every asset has
+      # already uploaded. That is a silent, total loss of the release, so it is
+      # asserted here rather than rediscovered in a tag push.
+      #
+      # This deliberately parses the `files:` block out of the workflow itself,
+      # so it keeps checking whatever is actually configured.
+      - name: Assert release asset list has no duplicates
+        run: |
+          python3 - <<'PY'
+          import fnmatch, os, re, sys
+          from collections import Counter
+
+          # Parse the `files:` block straight out of the workflow, so this keeps
+          # checking whatever is actually configured rather than a stale copy.
+          # Anchored on the action's `uses:` line so it cannot accidentally read
+          # some other step's `files: |` block.
+          wf = open(".github/workflows/build.yml").read()
+          anchor = wf.find("softprops/action-gh-release")
+          if anchor < 0:
+              sys.exit("::error::could not find the release action — update this guard")
+          m = re.search(r"\n\s+files: \|\n((?:\s{10,}[^\s|#].*\n)+)", wf[anchor:])
+          if not m:
+              sys.exit("::error::could not parse the files: block — update this guard")
+          patterns = [l.strip() for l in m.group(1).splitlines() if l.strip()]
+          if not patterns:
+              sys.exit("::error::the files: block parsed as empty — update this guard")
+
+          # Everything staged for release: the raw binaries, the bundles, the
+          # per-file hashes and the two generated files.
+          present = [
+              f for f in sorted(os.listdir("."))
+              if os.path.isfile(f)
+              and (f.startswith("locus-") or f.endswith((".zip", ".dmg", ".exe", ".sha256"))
+                   or f in ("checksums.sha256", "manifest.json"))
+          ]
+
+          resolved = [f for p in patterns for f in present if fnmatch.fnmatch(f, p)]
+          dupes = {n: c for n, c in Counter(resolved).items() if c > 1}
+          print(f"patterns={len(patterns)} resolved={len(resolved)} distinct={len(set(resolved))}")
+          for f in sorted(set(resolved)):
+              print("  ", f)
+
+          if not resolved:
+              sys.exit("::error::the files: block matched nothing — the layout changed")
+          if dupes:
+              for n, c in dupes.items():
+                  print(f"::error::release asset {n!r} is matched by {c} patterns "
+                        f"in the files: list. A duplicate filename makes the action "
+                        f"treat the second upload as an asset update, which 404s "
+                        f"and fails the entire release.", file=sys.stderr)
+              sys.exit(1)
+          print("OK: no duplicate asset filenames")
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # ── Every pattern here must match a DISJOINT set of files ──────────
+          # `checksums.sha256` is already covered by `*.sha256`, so listing it
+          # again made the action upload that one filename twice. The second
+          # upload is treated as an UPDATE to an asset that does not exist yet,
+          # and GitHub answers 404:
+          #
+          #   ⬆️ Uploading checksums.sha256...
+          #   ⬆️ Uploading checksums.sha256...
+          #   Error: Not Found - .../releases/assets#update-a-release-asset
+          #
+          # That is the 2.2.8 failure. The release was created, all 15 distinct
+          # assets uploaded, and the run still failed — leaving no release
+          # behind at all (GET /releases/tags/v2.2.8 -> 404). Successful
+          # releases carry exactly 15 assets; this list produced 16 entries.
+          #
+          # Do not re-add `checksums.sha256`: it is redundant, and a duplicate
+          # filename here fails the whole release rather than just itself.
           files: |
             *.zip
             *.dmg
@@ -594,7 +668,6 @@ jobs:
             locus-darwin-amd64
             locus-darwin-arm64
             *.sha256
-            checksums.sha256
             manifest.json
           generate_release_notes: true
           body: |
