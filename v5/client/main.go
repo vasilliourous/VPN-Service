@@ -27,6 +27,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -104,6 +105,23 @@ func main() {
 		return // never launch the interactive GUI for a --revert invocation
 	}
 
+	// ── Handoff after a self-update ──
+	//
+	// The updater forks this process to take over from the copy it just
+	// replaced, then the OLD process quits. Both are alive for a short window,
+	// and because the fork is what happens *first*, the new window used to
+	// appear while the old one was still on screen — the user saw two Locus
+	// windows, the stale one lingering until the parent finished tearing down.
+	//
+	// The fork passes --handoff so the new process knows it is a successor
+	// rather than a fresh launch: it waits for the predecessor to exit before
+	// creating its window, so exactly one window is ever visible. The wait is
+	// bounded and the flag is absent on a normal launch, so nothing is added to
+	// the ordinary startup path.
+	if hasArg(updater.HandoffFlag) {
+		waitForPredecessor()
+	}
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{
@@ -163,6 +181,26 @@ func hasArg(want string) bool {
 		}
 	}
 	return false
+}
+
+// waitForPredecessor blocks briefly so the process we replaced has exited
+// before this one puts its window on screen.
+//
+// The delay is fixed rather than a real synchronisation primitive on purpose.
+// There is no shared handle to wait on: the predecessor is a different process
+// that has already forked us and is on its way out, and the thing we are
+// avoiding is purely cosmetic (two windows visible for a moment). Anything more
+// elaborate — a named mutex, a pipe the parent closes — would add a failure
+// mode to the update path in exchange for tightening a pause the user cannot
+// perceive. If the predecessor is somehow still up after this, the window still
+// appears; nothing is blocked indefinitely.
+//
+// 1200ms is chosen to sit just inside the parent's own 1500ms quit delay, so
+// the child settles immediately after the parent goes.
+func waitForPredecessor() {
+	const handoffDelay = 1200 * time.Millisecond
+	log.Printf("Handoff: waiting %s for the previous process to exit", handoffDelay)
+	time.Sleep(handoffDelay)
 }
 
 // openLogFile opens (appends to) a log file in the platform config dir so

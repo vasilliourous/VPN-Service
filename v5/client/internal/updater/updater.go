@@ -47,6 +47,13 @@ const (
 	// BackupDir is where the previous binary is saved during update.
 	BackupDir = ".locus-backups"
 
+	// HandoffFlag is appended to the successor process's arguments when the
+	// updater forks it. The successor waits for this process to exit before
+	// showing its window, so the user never sees two Locus windows during an
+	// update. Shared as a constant so main and the updater cannot drift on the
+	// spelling — a mismatch would silently reintroduce the double window.
+	HandoffFlag = "--handoff"
+
 	// DownloadTimeout is the max time for downloading an update.
 	DownloadTimeout = 5 * time.Minute
 

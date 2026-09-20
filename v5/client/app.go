@@ -356,6 +356,15 @@ func (a *App) Startup(ctx context.Context) {
 
 		// Run update recovery before anything else
 		updater.CleanStaleMarkers(loc.Dir, 48*time.Hour)
+
+		// Reclaim what previous updates left behind. The Windows swap cannot
+		// delete the binary it replaced (it is the running image), so each
+		// update strands a full copy of the application in the install
+		// directory. This is the only thing that removes them, and it has to
+		// run on every launch — a machine that updated a dozen times otherwise
+		// carries a hundred megabytes of dead executables in Program Files.
+		updater.Housekeeping(loc.Dir, loc.Binary)
+
 		if _, err := updater.CheckOnStartup(false); err != nil {
 			wailsruntime.LogWarning(a.ctx, "Update recovery warning: "+err.Error())
 		}
