@@ -241,15 +241,31 @@ if [ -n "${ADMIN_API_TOKEN:-}" ]; then
     fi
     log "✓ ADMIN_API_TOKEN configured from secrets"
 elif [ ! -f "$ADMIN_API_TOKEN_FILE" ]; then
-    # Fallback: generate a random token if no secrets file was used
+    # Fallback: generate a random token if no secrets file was used.
+    #
+    # Like the tier passwords and PB_ADMIN_PASS, this is a FLEET-WIDE secret:
+    # it authenticates the /api/admin/* hub endpoints (unbind, code generation)
+    # and it is written into /etc/environment, where the hooks read it. A host
+    # that invents its own token answers 401 to admin calls made with the
+    # operator's recorded token -- an "admin console is broken" symptom whose
+    # real cause is a diverged secret. So: opt-in only, never silent.
+    if [ "${ALLOW_GENERATED_ADMIN_TOKEN:-0}" != "1" ]; then
+        fail "ADMIN_API_TOKEN is not set and ${ADMIN_API_TOKEN_FILE} does not exist.
+     Refusing to invent a fleet-wide secret.
+     Fix: deploy via setup.sh so secrets.env.age is decrypted, or pass
+     ADMIN_API_TOKEN=... explicitly, or set ALLOW_GENERATED_ADMIN_TOKEN=1 to
+     generate one deliberately (you must then record it -- see
+     docs/SECRETS-MANAGEMENT.md -> \"Generated credentials write-back\")."
+    fi
     ADMIN_API_TOKEN=$(openssl rand -base64 24 | tr '/+' '_-')
     echo "$ADMIN_API_TOKEN" > "$ADMIN_API_TOKEN_FILE"
     chmod 600 "$ADMIN_API_TOKEN_FILE"
     echo "ADMIN_API_TOKEN=${ADMIN_API_TOKEN}" >> /etc/environment
     systemctl restart pocketbase 2>/dev/null || true
-    log "✓ ADMIN_API_TOKEN generated (random) and saved to ${ADMIN_API_TOKEN_FILE}"
-    log "  ⚠  This is a random fallback. For reproducible deploys, set ADMIN_API_TOKEN"
-    log "  ⚠  in secrets.env.age. See docs/SECRETS-MANAGEMENT.md"
+    log "✓ ADMIN_API_TOKEN GENERATED (random) and saved to ${ADMIN_API_TOKEN_FILE}"
+    log "  ⚠  ALLOW_GENERATED_ADMIN_TOKEN=1 was set. This host DIVERGES from the"
+    log "  ⚠  fleet until you complete the write-back in docs/SECRETS-MANAGEMENT.md"
+    ADMIN_TOKEN_GENERATED=1
 else
     ADMIN_API_TOKEN=$(cat "$ADMIN_API_TOKEN_FILE")
     log "ADMIN_API_TOKEN loaded from ${ADMIN_API_TOKEN_FILE}"
@@ -356,6 +372,29 @@ generate_first_batch() {
 
 generate_first_batch
 
+# ── Write the single admin credentials file ──
+# Runs LAST, after every secret exists (tier passwords from module 02,
+# PB admin creds from module 06, /etc/environment from the block above,
+# the fetch link secret from locus-fetch's first run). Doing it here rather
+# than inside a module guarantees nothing is missing yet.
+#
+# Written unconditionally -- including on a re-run -- so the file can never
+# go stale, which is the failure mode /root/.pb_admin_creds hit.
+CREDS_SCRIPT="${SCRIPT_DIR}/scripts/write-admin-credentials.sh"
+if [ -f "$CREDS_SCRIPT" ]; then
+    # Both flags are exported by the code that actually generated a secret,
+    # and are the ONLY evidence of fleet divergence. Pass them through
+    # explicitly so the file can say so rather than guess.
+    TIER_PASSWORDS_GENERATED="${TIER_PASSWORDS_GENERATED:-0}" \
+    ADMIN_TOKEN_GENERATED="${ADMIN_TOKEN_GENERATED:-0}" \
+    DOMAIN="$DOMAIN" \
+        bash "$CREDS_SCRIPT" 2>&1 | tee -a "$LOGFILE" || \
+        warn "Could not write the admin credentials file — run it by hand: ${CREDS_SCRIPT}"
+else
+    warn "write-admin-credentials.sh not found at ${CREDS_SCRIPT} — skipping the"
+    warn "credential summary. Credentials are still in their individual files."
+fi
+
 # ── Summary ──
 log "══════════════════════════════════════════"
 if [ "$ALL_OK" = true ]; then
@@ -371,6 +410,11 @@ log ""
 log "   Admin console:  https://${DOMAIN}/admin/"
 log "     Sign in with the admin token: $(cat ${ADMIN_API_TOKEN_FILE} 2>/dev/null || echo '(see the file)')"
 log "     Or bookmark:  https://${DOMAIN}/admin/?token=<token>"
+log ""
+log "   ALL credentials: /root/locus-credentials.txt  (chmod 600)"
+log "     Tier passwords, PB admin, admin token, B2, fetch secret — all in one"
+log "     file, with where each value came from. Paste the tier passwords"
+log "     straight into a Clash Verge Rev config."
 log ""
 log "   PocketBase UI:  https://${DOMAIN}/_/"
 log "                   admin: $(grep '^PB_ADMIN_EMAIL=' /root/.pb_admin_creds 2>/dev/null | cut -d= -f2 || echo 'see /root/.pb_admin_creds')"

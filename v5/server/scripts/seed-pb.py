@@ -138,10 +138,23 @@ if not token_valid:
         except OSError:
             pass
     if not admin_pass:
-        admin_pass = subprocess.run(
-            ["openssl", "rand", "-base64", "24"],
-            capture_output=True, text=True).stdout.strip()
-        log("  WARN: PB_ADMIN_PASS not provided — generated a random password")
+        # No PB_ADMIN_PASS from the environment AND none recorded locally.
+        # This used to generate a random password and carry on with a WARN.
+        # That is the same fleet-forking defect as the tier passwords: the
+        # admin password also lives INSIDE the PocketBase database, which
+        # restore.sh restores from B2. A host that invents its own admin
+        # password cannot be restored onto a DB whose admin record holds a
+        # different one, and the operator is locked out of their own hub with
+        # no clue why. Refuse instead. (See docs/SECRETS-MANAGEMENT.md.)
+        sys.exit(
+            "FATAL: PB_ADMIN_PASS is not set and no /root/.pb_admin_creds exists.\n"
+            "  The PocketBase admin password is fleet-wide and must come from\n"
+            "  secrets.env.age. It is deliberately NOT generated here: it is\n"
+            "  stored inside the database that restore.sh restores, so a\n"
+            "  generated value makes disaster recovery impossible.\n"
+            "  Fix: deploy via v5/server/setup.sh (which decrypts the secrets),\n"
+            "  or pass PB_ADMIN_PASS=... explicitly."
+        )
 
     # 1. Can we log in with the resolved password?
     token = admin_login(ADMIN_EMAIL, admin_pass)

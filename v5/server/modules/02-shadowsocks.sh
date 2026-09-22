@@ -53,6 +53,12 @@ install_ssserver() {
 
 # ── Load or generate tier passwords ──
 # Priority: 1) env vars from decrypted secrets  2) existing file on VPS  3) auto-generate
+#
+# Branch 3 is a DELIBERATE ACT, not a fallback. See module 00 for the
+# precondition check and docs/SECRETS-MANAGEMENT.md for why: these passwords
+# are fleet-wide, so inventing them on one host silently forks it from every
+# other host. It requires ALLOW_GENERATED_TIER_PASSWORDS=1, and when it runs
+# the generated values must be written back to secrets.env.age afterwards.
 setup_passwords() {
     ECO_PASS="${ECO_PASS:-}"
     STEALTH_PASS="${STEALTH_PASS:-}"
@@ -60,15 +66,26 @@ setup_passwords() {
 
     if [ -n "$ECO_PASS" ] && [ -n "$STEALTH_PASS" ] && [ -n "$STRIKE_PASS" ]; then
         log "Using tier passwords from environment (decrypted secrets)."
+        TIER_PASSWORDS_GENERATED=0
     elif [ -f "$PASS_FILE" ]; then
         log "Loading existing passwords from ${PASS_FILE}"
         . "$PASS_FILE"
-    else
-        log "WARNING: No secrets file and no existing password file found."
-        log "Auto-generating tier passwords (non-reproducible — existing clients will break on re-deploy)."
+        TIER_PASSWORDS_GENERATED=0
+    elif [ "${ALLOW_GENERATED_TIER_PASSWORDS:-0}" = "1" ]; then
+        warn "No secrets and no existing password file."
+        warn "ALLOW_GENERATED_TIER_PASSWORDS=1 — GENERATING new tier passwords."
+        warn "This host now DIVERGES from the fleet until you complete the"
+        warn "write-back in docs/SECRETS-MANAGEMENT.md."
         ECO_PASS=$(openssl rand -hex 16)
         STEALTH_PASS=$(openssl rand -hex 16)
         STRIKE_PASS=$(openssl rand -hex 16)
+        TIER_PASSWORDS_GENERATED=1
+    else
+        # Should be unreachable: module 00 fails the deploy first. Kept as a
+        # belt-and-braces guard so this module cannot fork the fleet if it is
+        # ever run standalone (`bash 02-shadowsocks.sh`).
+        fail "No tier passwords available and ALLOW_GENERATED_TIER_PASSWORDS is not set.
+     Refusing to invent fleet-wide credentials. See docs/SECRETS-MANAGEMENT.md."
     fi
 
     # Persist to file so seed-pb.py and later runs can find them
@@ -81,6 +98,7 @@ EOF
 
     # Export for use in config files
     export ECO_PASS STEALTH_PASS STRIKE_PASS
+    export TIER_PASSWORDS_GENERATED
     log "✓ Tier passwords ready (eco/stealth/strike)"
 }
 

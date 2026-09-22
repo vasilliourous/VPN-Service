@@ -2,8 +2,13 @@
 # deploy-console.sh — build the admin console and push it to the live hub.
 #
 # Usage:
-#   v5/server/scripts/deploy-console.sh
-#   VPS=root@host v5/server/scripts/deploy-console.sh
+#   VPS=root@host DOMAIN=host v5/server/scripts/deploy-console.sh
+#
+# Both VPS and DOMAIN are required and have NO default. VPS is the host to
+# upload to; DOMAIN is the hostname the script verifies against afterwards.
+# They are usually the same host, but are separate because a box can be
+# reached by IP before its DNS name is live (set DOMAIN to whatever resolves
+# to that box, or the verification step will test a different server).
 #
 # Why a script: the console is a static SPA that Caddy serves from
 # /var/www/admin. Getting a new build there means "build, tar, upload, extract,
@@ -17,14 +22,24 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 CONSOLE_DIR="${REPO_ROOT}/v5/console"
-VPS="${VPS:-root@networkingguides.duckdns.org}"
-DOMAIN="${DOMAIN:-networkingguides.duckdns.org}"
 REMOTE_BUNDLE="/root/server/console-dist.tar.gz"
 REMOTE_DIR="/var/www/admin"
 
 log()  { printf '\033[0;32m[console]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[console][WARN]\033[0m %s\n' "$*"; }
 fail() { printf '\033[0;31m[console][FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── Target must be explicit ──
+# This script used to default VPS/DOMAIN to the production DigitalOcean hub.
+# That default fails in the worst possible direction: pointed at a new host
+# without the env vars set, it would upload the bundle to production AND then
+# verify https://<production>/admin/ — which answers 200, so the script
+# reported success while having done nothing to the host you asked for.
+# Requiring both explicitly makes the target a deliberate choice.
+: "${VPS:?VPS is required, e.g. VPS=root@hub.example.com $0}"
+: "${DOMAIN:?DOMAIN is required, e.g. DOMAIN=hub.example.com $0}"
+log "Target VPS:    ${VPS}"
+log "Verify domain: ${DOMAIN}"
 
 [ -d "$CONSOLE_DIR" ] || fail "console directory not found: $CONSOLE_DIR"
 

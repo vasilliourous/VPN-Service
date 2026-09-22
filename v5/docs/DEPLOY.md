@@ -84,6 +84,41 @@ Once this is done, **all credentials are auto-injected at deploy time** from
 
 ## 4. Deploy
 
+### Staging the server tree (read this before Option A or B)
+
+`setup.sh` reads **two things that a bare `scp -r v5/server` does not put
+there for you**. The first is a hard failure; the second already ships in the
+repo, but is worth knowing about because module 05 refuses to deploy without
+it:
+
+| Path on the VPS | Required by | Produce it with |
+|---|---|---|
+| `/root/server/console-dist.tar.gz` | `05-caddy.sh` → `deploy_console()` | `v5/server/scripts/deploy-console.sh` (builds the SPA with npm, uploads the tarball) |
+| `/root/server/scripts/fetch-release.py` | `05-caddy.sh` → `install_fetch_service()` | already in the repo — it arrives with `scp -r v5/server` |
+
+So on a **fresh** host the order is:
+
+```bash
+# 1. Stage the server tree (fetch-release.py comes along; the console bundle does not)
+scp -r v5/server age-key.txt root@your-vps:/root/server/
+
+# 2. Build + upload the console bundle to /root/server/console-dist.tar.gz
+VPS=root@your-vps DOMAIN=hub.example.com \
+  v5/server/scripts/deploy-console.sh
+
+# 3. Deploy
+ssh root@your-vps "/root/server/setup.sh"
+```
+
+`deploy-console.sh` needs `npm` on **your** machine (not the VPS — the VPS has
+no Node and the console source is not shipped to it). Both `VPS` and `DOMAIN`
+MUST be set explicitly: the script has no usable default for a new host.
+
+If you cannot build the console, deploy with `SKIP_CONSOLE=1` — the hub, the
+tiers and the API all come up without it, and you can add the console later by
+running `deploy-console.sh` and re-running `setup.sh` (module 05 extracts the
+bundle if it is present).
+
 ### Option A: Local Machine with Key File (Recommended)
 
 ```bash
@@ -129,8 +164,11 @@ The setup script does **everything** automatically:
 7. Installs PocketBase with JS hooks and SQLite WAL mode, **creates the admin,
    the collections, the schema and the tier configs** (a failure here is fatal —
    it used to be a warning, which made a hub serving 500s look deployed)
-8. Deploys the **admin console** to `/admin/` and the **release uploader**
-   (both are required, not optional — a missing bundle fails the deploy)
+8. Deploys the **admin console** to `/admin/` (required, not optional — a
+   missing bundle fails the deploy; see "Staging the server tree" below)
+   and installs the **release fetch service** (`locus-fetch` on
+   `127.0.0.1:8091`, required — it is what the console's Releases page
+   calls to pull a GitHub Release onto the hub)
 9. Configures hourly B2 backup systemd timer
 10. Sets up UFW firewall (including 8446 TCP+UDP) + **fail2ban** for SSH
 

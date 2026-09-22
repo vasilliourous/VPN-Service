@@ -38,6 +38,79 @@ if [ -z "${DOMAIN:-}" ]; then
 fi
 log "✓ Domain: ${DOMAIN}"
 
+# ── Shared secrets must be configured BEFORE anything is provisioned ──
+#
+# These are the credentials that are SHARED ACROSS EVERY DEPLOYMENT: the tier
+# passwords and the PocketBase admin password. They arrive from
+# secrets.env.age (decrypted on the operator's workstation and passed down) or
+# from environment variables.
+#
+# The check is here, in module 00, specifically so it fires BEFORE module 01
+# starts installing things. It used to be implicit: 02-shadowsocks.sh would
+# happily openssl-rand three hex strings if it found none, so a failed secrets
+# decrypt produced a host that looked perfectly deployed, served clients, and
+# silently held passwords DIFFERENT from every other host in the fleet. The
+# same defect existed for PB_ADMIN_PASS in seed-pb.py and ADMIN_API_TOKEN in
+# setup.sh.
+#
+# Nothing downstream may invent one of these. Generating a shared secret by
+# accident forks the fleet; see docs/SECRETS-MANAGEMENT.md.
+#
+# ALLOW_GENERATED_TIER_PASSWORDS=1 is the deliberate opt-in. Use it when you
+# actually want fresh tier passwords (e.g. building new Clash test configs).
+# -- and then do the write-back described in SECRETS-MANAGEMENT.md, or the
+# fleet forks anyway.
+MISSING_SECRETS=""
+for v in ECO_PASS STEALTH_PASS STRIKE_PASS PB_ADMIN_PASS; do
+    eval "val=\${${v}:-}"
+    if [ -z "$val" ]; then
+        MISSING_SECRETS="${MISSING_SECRETS} ${v}"
+    fi
+done
+
+if [ -n "$MISSING_SECRETS" ]; then
+    if [ "${ALLOW_GENERATED_TIER_PASSWORDS:-0}" = "1" ]; then
+        warn "Secrets not supplied:${MISSING_SECRETS}"
+        warn "ALLOW_GENERATED_TIER_PASSWORDS=1 — tier passwords will be GENERATED"
+        warn "on this host. This host will DIVERGE from the fleet until the"
+        warn "generated values are written back to secrets.env.age."
+        warn "See docs/SECRETS-MANAGEMENT.md -> \"Generated credentials write-back\"."
+    else
+        cat >&2 <<'SOFT_FAIL'
+
+╔══════════════════════════════════════════════════════════════╗
+║  FATAL: shared secrets are missing.                         ║
+╚══════════════════════════════════════════════════════════════╝
+
+SOFT_FAIL
+        echo "  Missing:${MISSING_SECRETS}" >&2
+        cat >&2 <<'SOFT_FAIL'
+
+  These are FLEET-WIDE credentials. They are not generated here, because
+  a host that invents its own values serves different passwords from every
+  other host, and clients activated against one hub stop working on another.
+
+  Fix one of:
+    1. Deploy from the operator workstation (recommended):
+         scp -r v5/server root@host:/root/server/     # includes decrypted secrets
+         ssh root@host "/root/server/setup.sh"
+       (setup.sh decrypts secrets.env.age and exports these.)
+
+    2. Pass them explicitly:
+         ECO_PASS=... STEALTH_PASS=... STRIKE_PASS=... PB_ADMIN_PASS=... \
+           ssh root@host "/root/server/setup.sh"
+
+    3. Deliberately generate fresh tier passwords for a TEST host:
+         ALLOW_GENERATED_TIER_PASSWORDS=1 ssh root@host "/root/server/setup.sh"
+       Then do the write-back in docs/SECRETS-MANAGEMENT.md, or the fleet
+       forks and you will not be told again.
+
+SOFT_FAIL
+        fail "Missing shared secrets:${MISSING_SECRETS}"
+    fi
+fi
+log "✓ Shared secrets present (tier passwords, PB admin password)"
+
 # ── Network: Check DNS resolves (HARD FAIL) ──
 # Caddy needs DNS to provision Let's Encrypt TLS certificates.
 # Without DNS working, the entire deployment is unusable.

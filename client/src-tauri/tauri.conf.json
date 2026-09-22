@@ -1,0 +1,51 @@
+{
+  "version": "2.5.5",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "active": true,
+    "longDescription": "Locus VPN client",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/Assets.car"
+    ],
+    "resources": ["resources"],
+    "publisher": "Locus",
+    "externalBin": ["sidecar/verge-mihomo", "sidecar/verge-mihomo-alpha"],
+    "category": "Utility",
+    "shortDescription": "Locus VPN client",
+    "createUpdaterArtifacts": false
+  },
+  "build": {
+    "beforeBuildCommand": "pnpm run web:build",
+    "frontendDist": "../dist",
+    "beforeDevCommand": "pnpm run web:dev",
+    "devUrl": "http://localhost:3000/",
+    "removeUnusedCommands": true
+  },
+  "productName": "Locus",
+  "identifier": "com.locus.client",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["locus"]
+      }
+    }
+  },
+  "app": {
+    "security": {
+      "capabilities": ["desktop-capability", "migrated"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**"],
+          "requireLiteralLeadingDot": false
+        }
+      },
+      "csp": null
+    }
+  }
+}

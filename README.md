@@ -207,11 +207,14 @@ ssh root@your-vps "/root/server/setup.sh"
 This provisions: BBR, 3× Shadowsocks, tc shaping (Eco 5 / Stealth 100 / Strike 200
 Mbps, all with fq_codel), the Strike UDP-over-TCP endpoint on :8446, Caddy + TLS
 (serving `/admin/` and `/updates/`), PocketBase (+ collections/admin/hooks/tier
-configs), the admin console, the release uploader, B2 backups, UFW + fail2ban.
+configs), the admin console, the release fetch service (`locus-fetch`), B2
+backups, UFW + fail2ban.
 
 **No follow-up steps.** Verify with `smoke-test.sh` (expect 23 passed / 0 failed).
 Note `setup.sh` deploys **from the copy on the VPS**, not from your working tree —
-keep `/root/server/` in sync with the repo.
+keep `/root/server/` in sync with the repo. A fresh host also needs the console
+bundle staged (`deploy-console.sh`) or `SKIP_CONSOLE=1`; see `v5/docs/DEPLOY.md`
+→ "Staging the server tree".
 
 Optional extras:
 
