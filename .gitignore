@@ -19,6 +19,13 @@ node_modules/
 *.zip
 *.tar.gz
 
+# Rust/Tauri client build output. `client/` has its own .gitignore covering
+# these; repeated here so a root-level `git add -A` cannot pick them up.
+client/target/
+client/src-tauri/sidecar/
+client/src-tauri/resources/
+client/src-tauri/gen/schemas/
+
 # Python
 __pycache__/
 *.pyc
@@ -52,4 +59,7 @@ clash-verge-stealth.yaml
 clash-verge-stealth-notun.yaml
 clash-verge-*.yaml
 
-.obsidian/workspace.json
+# Obsidian vault config (personal notes tooling, not part of the project).
+# Was partially tracked — only workspace.json was ignored — which is why the
+# whole directory is ignored now. Files stay on disk; none are tracked.
+.obsidian/

@@ -7,8 +7,10 @@ package updatecfg_test
 // just a comment, so these tests read the OTHER files and assert they agree.
 //
 // This is the check whose absence let publish-release.sh and publish-update.sh
-// write mutually incompatible update_config records while both looked correct in
-// isolation. See internal/updatecfg's package comment and FIXES.md 31.
+// write incomplete update_config records while both looked correct in isolation.
+// See internal/updatecfg's package comment for the corrected account (an earlier
+// version of these comments blamed a field-name disagreement that the scripts do
+// not actually have) and FIXES.md 31.
 
 import (
 	"os"
@@ -101,16 +103,14 @@ func TestGoClientParsesTheResponseFieldsTheHookEmits(t *testing.T) {
 	}
 }
 
-// TestPublishScriptsWriteTheRecordFieldsTheHookReads pins layer 1 across BOTH
-// publish paths. They previously disagreed, and the disagreement was invisible
-// until a client tried to update.
+// TestPublishScriptsWriteTheRecordFieldsTheHookReads pins layer 1 across the
+// surviving publish path. Previously there were two, neither constrained to the
+// full column set, and the gap was invisible until a client tried to update.
 //
-// The two scripts construct the field names differently — publish-release.sh
-// concatenates a prefix with the platform key from its PLATFORMS array, while
-// publish-update.sh emits them as a literal heredoc — so this checks for the
-// prefix in the former and the full names in the latter. Asserting the literal
-// `download_linux` against both would produce a false failure on the script
-// that gets it right by construction.
+// publish-release.sh concatenates a prefix with the platform key from its
+// PLATFORMS array, so this checks for the prefix there. Asserting the literal
+// `download_linux` would produce a false failure on a script that gets it right
+// by construction.
 func TestPublishScriptsWriteTheRecordFieldsTheHookReads(t *testing.T) {
 	const prefix = "download_"
 	if !strings.HasPrefix(updatecfg.DownloadField(updatecfg.PlatformLinux), prefix) {
@@ -138,23 +138,18 @@ func TestPublishScriptsWriteTheRecordFieldsTheHookReads(t *testing.T) {
 		}
 	})
 
-	t.Run("scripts/publish-update.sh", func(t *testing.T) {
-		body := readRepoFile(t, "scripts/publish-update.sh")
-		for _, platform := range updatecfg.Platforms {
-			// This script emits literals in a heredoc. It must write the RECORD
-			// name, not the response name — the hub reads the former.
-			responseName := updatecfg.ResponseURLField(platform)
-			recordName := updatecfg.DownloadField(platform)
-			if strings.Contains(body, `"`+responseName+`"`) {
-				t.Errorf("publish-update.sh writes %q, which is the HEARTBEAT "+
-					"response name, not the update_config record name (%q). The hub "+
-					"reads the latter and would find nothing, silently disabling "+
-					"per-platform updates.", responseName, recordName)
-			}
-			if !strings.Contains(body, `"`+recordName+`"`) {
-				t.Errorf("scripts/publish-update.sh does not write %q — the hub reads "+
-					"that exact field name from update_config", recordName)
-			}
+	// The second publish path, scripts/publish-update.sh, has been RETIRED to
+	// legacy/publish-update.sh.broken: it wrote no sha256_<platform> columns and
+	// its macOS URLs did not match CI's filenames. This asserts the retirement is
+	// deliberate rather than an accidental deletion, because a resurrected
+	// publisher that skips the hash columns would silently disable verification
+	// on every platform — the exact class of fault this package exists to catch.
+	t.Run("retired second publisher stays retired", func(t *testing.T) {
+		if _, err := os.Stat(filepath.Join(repoRoot(t), "scripts/publish-update.sh")); err == nil {
+			t.Errorf("scripts/publish-update.sh is back. It was retired because it " +
+				"wrote no sha256_<platform> columns (clients could not verify) and " +
+				"used locus-macos-* URLs that 404 against CI's locus-darwin-* " +
+				"filenames. Use server/scripts/publish-release.sh.")
 		}
 	})
 }

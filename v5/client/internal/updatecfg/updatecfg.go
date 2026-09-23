@@ -3,22 +3,34 @@
 //
 // # WHY THIS EXISTS
 //
-// Two independent publish paths write `update_config`, and they disagreed on
-// the per-platform download field names:
+// Two independent publish paths write `update_config`, and neither was
+// constrained to produce the full set of columns the hub reads.
 //
-//	publish-release.sh (server)  wrote  download_linux, download_windows, ...
-//	publish-update.sh  (root)    wrote  update_linux,   update_windows,   ...
+// CORRECTION (2026-09-23): an earlier version of this comment claimed
+// publish-update.sh wrote `update_linux`/`update_windows` instead of
+// `download_*`. That is NOT accurate — publish-update.sh contains zero
+// `update_linux`/`update_windows` occurrences; both scripts write `download_*`.
+// Verified by grep and by `-S'update_linux'` over all history, which returns
+// nothing for that file. Do not reintroduce that explanation.
+//
+// The real defect in publish-update.sh is different, and has two parts:
+//
+//  1. It emits no `sha256_<platform>` columns at all (only a single legacy
+//     `update_sha256`). The client refuses an empty per-platform hash, so
+//     clients could not verify any download.
+//  2. Its macOS URLs point at `locus-macos-amd64`/`locus-macos-arm64`, but CI
+//     produces `locus-darwin-amd64`/`locus-darwin-arm64` — a 404 on macOS.
 //
 // The hub reads `download_*` when building the heartbeat response, and the
-// client reads the response's `update_*` keys. So a record written by
-// publish-update.sh produced a heartbeat with every per-platform URL and hash
-// missing. `PlatformDownloadURL()` then fell through to the legacy single
-// `update_url` — which both scripts point at the LINUX binary — so every
-// platform, including Windows and macOS, would have downloaded a Linux
-// executable and failed the checksum.
+// client reads the response's `update_*` keys. When a per-platform download key
+// is missing, `PlatformDownloadURL()` falls through to the legacy single
+// `update_url`, which both scripts point at the LINUX binary — so every
+// platform, including Windows and macOS, would download a Linux executable and
+// then fail the checksum.
 //
-// Neither script was internally wrong. There was simply no shared definition,
-// so nothing could notice they described the same record differently.
+// The underlying lesson stands: there was no shared definition, so nothing
+// could notice the scripts described the same record differently. That is what
+// this package provides.
 //
 // THE CONTRACT (three layers, deliberately distinct)
 //

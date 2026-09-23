@@ -8,6 +8,17 @@ Utility scripts for Locus code generation, printing, and operations.
 |--------|---------|
 | `generate_codes.sh` | Generate Luhn-mod-N activation codes and import to PocketBase |
 | `print_codes.sh`    | Format codes into printable PDF card sheets |
+| `release-cut.sh`    | Cut a release: bump VERSION, stamp resources, tag, print publish command |
+| `vps-test/`         | Read-only network probes run against the live VPS |
+
+Releasing and publishing live under `server/scripts/`:
+`bump-version.sh` (the single version-writing implementation, driven by the root
+`bump.sh`), `publish-release.sh` (the correct publish path), and
+`fetch-release.py`.
+
+> **Retired:** `publish-update.sh` was moved to
+> `legacy/publish-update.sh.broken`. It wrote no `sha256_<platform>` columns and
+> its macOS URLs did not match CI's filenames. Use `publish-release.sh`.
 
 ## Quick Start
 

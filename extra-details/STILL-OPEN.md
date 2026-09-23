@@ -30,32 +30,32 @@ opaque engine error, but it is not fixed. See `v5/docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ## Open, and fixable now
 
-### `publish-update.sh` (repo root) has two real defects
+### ~~`publish-update.sh` (repo root) has two real defects~~ — RESOLVED BY RETIREMENT (2026-09-23)
 
-Not live (nothing is published; `update_config` is at rollout 0 with empty URLs,
-which I verified), but both would break a release done this way:
+The script is now `legacy/publish-update.sh.broken`, with both defects documented
+in its header. It was never live: nothing has been published through it, and
+`update_config` was at rollout 0 with empty URLs.
 
 1. **It writes no `sha256_<platform>` columns.** Verified: zero matches. It emits
-   an `assets: {…}` object, which is not an `update_config` column. Per-platform
-   hashes are required and the client refuses an empty hash, so clients would be
-   unable to verify.
+   an `assets: {…}` object, which is not an `update_config` column.
 2. **Its macOS URLs point at filenames CI does not produce.**
    `locus-macos-amd64` / `locus-macos-arm64` vs CI's `locus-darwin-amd64` /
    `locus-darwin-arm64` → 404.
 
 `publish-release.sh` is the correct path and does verify served bytes.
 
-### Correct the `internal/updatecfg` doc comment
+### ~~Correct the `internal/updatecfg` doc comment~~ — DONE (2026-09-23)
 
-It states that `publish-update.sh` writes `update_linux`/`update_windows` while
+It stated that `publish-update.sh` writes `update_linux`/`update_windows` while
 `publish-release.sh` writes `download_*`, causing every platform to fetch the
-Linux binary. **That is not accurate**: both scripts write `download_*`, and
-`publish-update.sh` contains zero `update_linux`/`update_windows` occurrences. I
-checked specifically because the claim did not match what I had read.
+Linux binary. **That was not accurate**: both scripts write `download_*`, and
+`publish-update.sh` contains zero `update_linux`/`update_windows` occurrences.
 
-The package is still a reasonable shared contract definition — but the stated
-cause of the bug it was written for is wrong, and a wrong fix note is worse than
-none. Fix the comment before someone trusts it.
+Corrected in three places: the `internal/updatecfg` package comment, the
+`updatecfg_test.go` header, and `FIXES.md` #31 (which carried the same claim).
+`publish-update.sh` itself is retired to `legacy/publish-update.sh.broken` with
+the correction in its header. The package remains a valid shared contract
+definition — only the stated cause of the bug was wrong.
 
 ### Delete my backup files once the guard is confirmed good
 

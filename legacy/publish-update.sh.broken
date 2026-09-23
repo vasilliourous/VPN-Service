@@ -1,5 +1,36 @@
 #!/usr/bin/env bash
 #
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  RETIRED — DO NOT RUN. Kept only as a record of a real defect.           ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# Superseded by `server/scripts/publish-release.sh`, which is the correct path
+# (it verifies the served bytes, writes per-platform hashes, and uses the
+# filenames CI actually produces).
+#
+# TWO REAL DEFECTS, both of which would break a release done this way. Neither
+# was ever live: nothing has been published through this script, and
+# `update_config` was at rollout 0 with empty URLs when this was retired.
+#
+#   1. It writes NO `sha256_<platform>` columns. It emits a single legacy
+#      `update_sha256` plus an `assets: {…}` object, which is not an
+#      update_config column. The client refuses an empty per-platform hash, so
+#      no platform could verify a download.
+#
+#   2. Its macOS URLs point at `locus-macos-amd64` / `locus-macos-arm64`, but CI
+#      produces `locus-darwin-amd64` / `locus-darwin-arm64`. Both URLs 404.
+#
+# A NOTE ON THE HISTORICAL CLAIM (do not believe the FIXES.md account):
+# FIXES.md #31 and an earlier version of `internal/updatecfg`'s package comment
+# state that this script wrote `update_linux`/`update_windows`, while
+# publish-release.sh wrote `download_*`, and that the disagreement made every
+# platform fetch the Linux binary. **That is not accurate.** This script contains
+# zero `update_linux`/`update_windows` occurrences — both scripts write
+# `download_*`. The field-name disagreement is not the defect; the two items
+# above are. Verified by grep and by `git log -S'update_linux' --all`.
+#
+# ───────────────────────────────────────────────────────────────────────────
+#
 # publish-update.sh — Publish a Locus client release so devices self-update.
 #
 # The client checks for updates via the hub heartbeat (PocketBase "update_config"

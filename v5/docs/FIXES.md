@@ -1010,6 +1010,23 @@ versioning rather than looking like a generic test failure.
 
 ## TWO PUBLISHERS DESCRIBED update_config DIFFERENTLY (2026-09-19, later pass)
 
+> **CORRECTION (2026-09-23).** The account below is **wrong about the cause** and
+> was corrected after a direct check. `publish-update.sh` does **not** contain
+> `update_linux`/`update_windows` — zero occurrences, confirmed by grep and by
+> `git log -S'update_linux' --all`, which returns nothing for that file. Both
+> scripts write `download_*`.
+>
+> The real defects in `publish-update.sh` are (1) it emits **no
+> `sha256_<platform>` columns at all**, so no platform could verify a download,
+> and (2) its macOS URLs use `locus-macos-*` where CI produces `locus-darwin-*`,
+> so they 404. The script has been retired to
+> `legacy/publish-update.sh.broken` with this correction in its header.
+>
+> The lesson that survives is the real one: there was no single definition of the
+> record, so nothing could notice the two scripts described it differently. That
+> is what `internal/updatecfg` fixes. The entry is kept for that reasoning, not
+> for its stated cause.
+
 ### 31. `publish-update.sh` wrote field names the hub does not read
 
 `update_config` has three layers of field names, and nothing defined them in one
