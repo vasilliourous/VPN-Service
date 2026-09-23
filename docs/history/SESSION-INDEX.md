@@ -1,12 +1,19 @@
 # handoff/
 
 Record of **this conversation's work** on Locus. Four tasks, 2026-09-19.
-Not project documentation — the repo and `v5/docs/` already have that.
+Not project documentation — the repo and `docs/` already have that.
+(The original text below said `v5/docs/`; that path is the pre-2026-09-23
+location, now `docs/`.)
+
+> **Two corrections, applied 2026-09:** the `GOTCHAS-FROM-THIS-WORK.md` this
+> index refers to was renamed during the restructure; read it as
+> `docs/history/SESSION-GOTCHAS.md`. And `stamp-batch.py` moved from
+> `v5/server/scripts/` to `server/scripts/stamp-batch.py`.
 
 | File | Read it when |
 |---|---|
 | `WHAT-WE-DID.md` | You need to know what changed and why |
-| `GOTCHAS-FROM-THIS-WORK.md` | Something is behaving oddly and you want the traps I already hit |
+| `SESSION-GOTCHAS.md` (was `GOTCHAS-FROM-THIS-WORK.md`) | Something is behaving oddly and you want the traps I already hit |
 | `STILL-OPEN.md` | You are picking up where this left off |
 
 ---

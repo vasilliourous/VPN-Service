@@ -1,5 +1,14 @@
 # Locus Client App — Developer Guide
 
+> **⚠️ STATUS: describes the ARCHIVED client — and its build/release tooling is
+> REMOVED.** This guide's instructions to read `VERSION`, run `bump.sh`, build via
+> `.github/workflows/build.yml`, or stamp `.syso` resources **no longer work**:
+> root `VERSION`, `bump.sh`, `server/scripts/bump-version.sh`, `stamp-syso.py`,
+> `smoke-bump.sh`, `scripts/release-cut.sh`, the committed `rsrc_windows_*.syso`,
+> and the workflow are all **deleted**. `legacy/wails-client/` is kept only as a
+> stale reference for logic when rebuilding the fork; its version sites are now
+> frozen at whatever they last said. See `docs/STILL-OPEN.md`.
+>
 > **⚠️ STATUS: describes the ARCHIVED client.**
 > This document describes `legacy/wails-client/` — the retired Go + Wails +
 > sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash

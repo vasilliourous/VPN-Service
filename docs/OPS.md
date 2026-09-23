@@ -377,8 +377,11 @@ tag → wait for CI → run one script.
 
 ### How it works
 
-1. **CI** (`.github/workflows/build.yml`) builds on a `v*` tag and attaches to a
-   GitHub Release:
+1. **CI** — ⚠️ **REMOVED.** `.github/workflows/build.yml` is deleted, so nothing
+   builds on a `v*` tag any more. The asset list below still describes what a
+   release must contain (the hub and updater depend on this shape), but producing
+   it is now a manual step. See `docs/CI-CD.md` and `docs/RELEASING.md`. What the
+   old workflow attached to a GitHub Release:
    - `locus-<OS>-<arch>.zip` + `checksums.sha256` — the **portable** bundle, for
      humans who want to extract and run with no installer.
    - `locus-setup-<version>.exe` (Windows, Inno Setup) and

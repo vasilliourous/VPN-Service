@@ -8,13 +8,16 @@ Utility scripts for Locus code generation, printing, and operations.
 |--------|---------|
 | `generate_codes.sh` | Generate Luhn-mod-N activation codes and import to PocketBase |
 | `print_codes.sh`    | Format codes into printable PDF card sheets |
-| `release-cut.sh`    | Cut a release: bump VERSION, stamp resources, tag, print publish command |
 | `vps-test/`         | Read-only network probes run against the live VPS |
 
-Releasing and publishing live under `server/scripts/`:
-`bump-version.sh` (the single version-writing implementation, driven by the root
-`bump.sh`), `publish-release.sh` (the correct publish path), and
-`fetch-release.py`.
+**Publishing** lives under `server/scripts/`: `publish-release.sh` (the correct
+publish path) and `fetch-release.py` (the GitHub-fetch path).
+
+> **Removed:** `release-cut.sh`, root `bump.sh`, `server/scripts/bump-version.sh`,
+> `stamp-syso.py`, and `smoke-bump.sh`. They versioned the **archived** Wails
+> client and were the source of the repo's tagging confusion. There is no version
+> authority now — the shipping fork's release path is an open decision
+> (`docs/STILL-OPEN.md`).
 
 > **Retired:** `publish-update.sh` was moved to
 > `legacy/publish-update.sh.broken`. It wrote no `sha256_<platform>` columns and

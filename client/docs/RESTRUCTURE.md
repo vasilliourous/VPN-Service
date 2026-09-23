@@ -3,6 +3,13 @@
 > Records the layout change and everything that must be repointed. The old layout
 > tangle (`v4/`, `v5/client/`, `v5/server/`, `v5/console/`, root `scripts/`, root
 > `bump.sh`) is the reason this is written down rather than done ad hoc.
+>
+> **Update (2026-09): the version/CI machinery was DELETED, not repointed.**
+> Root `VERSION`, `bump.sh`, `server/scripts/bump-version.sh`, `stamp-syso.py`,
+> `smoke-bump.sh`, `scripts/release-cut.sh`, the committed `.syso` resources, and
+> `.github/workflows/build.yml` are gone. They versioned and released the retired
+> Wails client, never the fork. Sections marked REMOVED below reflect that; the
+> fork's release path is an open decision (`docs/STILL-OPEN.md`).
 
 ---
 
@@ -10,22 +17,25 @@
 
 ```
 VPN-Service/
-├─ client/                     # the fork (Clash Verge Rev base) — was created this session
-│  ├─ src/  src-tauri/  crates/  packages/  scripts/
+├─ client/                     # the fork (Clash Verge Rev base)
+│  ├─ src/  src-tauri/  crates/  scripts/
 │  ├─ Cargo.toml  Cargo.lock  package.json  pnpm-lock.yaml
 │  └─ docs/                    # ARCHITECTURE, UPDATE-ARCHITECTURE, LOGIC-INVENTORY
 ├─ server/                     # was v5/server/
 │  ├─ pb_hooks/  modules/  scripts/  templates/
 │  └─ console/                 # was v5/console/
 ├─ legacy/
-│  ├─ wails-client/            # was v5/client/ — frozen oracle, reference only
-│  └─ v4/                      # was v4/
+│  ├─ wails-client/            # was v5/client/ — STALE, reference-only (logic oracle)
+│  └─ v4/                      # was v4/ — STALE
 ├─ docs/                       # was v5/docs/ + extra-details/ merged
-├─ shared/contracts/           # tier + update_config schemas read by both sides
-├─ scripts/                    # deploy / publish tooling (repointed)
-├─ .github/workflows/          # single CI location (see §4)
-└─ vendor/                     # gitignored; upstream reference if ever re-cloned
+└─ scripts/                    # code generation + PDF cards + vps-test probes
 ```
+
+> **As-built (2026-09).** The block above is the *actual* current layout. Two
+> entries from the original target were **never created** and must not be looked
+> for: `shared/contracts/` (see §6) and `vendor/`. The `packages/` directory
+> inside `client/` also does not exist. There is **no CI** (`.github/workflows/`
+> was deleted with `build.yml`) and **no root `VERSION` file**.
 
 **Why `legacy/wails-client` rather than deleting it:** its Go tests encode contract
 behaviour (Luhn, version comparison, the `uot_port` rename, artifact names, grace
@@ -47,65 +57,65 @@ Uses `git mv` so history follows.
    `SESSION-UPDATE-ARC.md`, `README.md`)
 6. `v5/CONTEXT.md`, `v5/README.md` → `docs/` (review first; they describe the old
    layout and will be stale)
-7. `v5/VERSION` → decisions below
+7. `v5/VERSION` → **REMOVED** (deleted with the archived-client version tooling —
+   see §3)
 8. Delete the now-empty `v5/`
-9. Create `shared/contracts/` and move the contract definitions there (see §3)
-10. Handle the stray tracked file at repo root literally named
-    `whale resume 01a06fdc-….md` — decide whether to keep, rename, or untrack
+9. ~~Create `shared/contracts/`~~ — **NOT DONE.** No such directory exists; the
+   contract is enforced by the archived `internal/updatecfg` test and the hub
+   hooks, not by a shared schema dir. Do not go looking for `shared/contracts/`.
+10. ~~Handle the stray tracked file at repo root literally named
+    `whale resume 01a06fdc-….md`~~ — **RESOLVED.** The `.gitignore` now ignores
+    `whale.txt`; no such file is tracked.
 
 ---
 
-## 3. Version authority
+## 3. Version authority — REMOVED, unresolved
 
-**Decision: the repo `VERSION` file remains the single authority for the client.**
+**There is no version authority.** The plan in this section originally said the
+repo `VERSION` file would remain the single authority for the client. That plan
+was **not** carried out: root `VERSION`, `bump.sh`, `server/scripts/bump-version.sh`,
+`stamp-syso.py`, `smoke-bump.sh`, `scripts/release-cut.sh`, the committed
+`rsrc_windows_*.syso` resources, and `.github/workflows/build.yml` were all
+**deleted**, because they versioned and released the retired Wails client and
+never the shipping fork.
 
-The fork introduces *more* version sites than the old client had:
+What is left is a set of version sites with no rule tying them together:
 
-| Site | Current value |
+| Site | Value |
 |---|---|
-| repo `VERSION` | (authority) |
-| `legacy/wails-client` `main.go` + `wails.json` + `package.json` | frozen |
+| `legacy/wails-client` `main.go` + `wails.json` + `frontend/package.json` | frozen (stale, no tooling) |
 | `client/package.json` | `2.5.5` |
 | `client/src-tauri/tauri.conf.json` | `2.5.5` |
-| `client/Cargo.toml` (workspace) | — |
 | `client/src-tauri/Cargo.toml` | `2.5.5` |
 
-FIXES #20/#45 were both "the version was maintained by hand across N files and drifted".
-The fork makes it worse, so CI must enforce it: a workflow step that reads `VERSION`,
-compares against the four fork sites, and **fails the build on mismatch** — the same
-pattern as the existing Wails `version_consistency_test.go` and the `.syso` staleness
-gate (FIXES #57–60).
+Reconciling these into a single fork version authority — and deciding whether CI
+enforces it — is an **open decision**, not an oversight. See `docs/STILL-OPEN.md`
+("Fork versioning and release path").
 
 **This is a correctness dependency of the updater**, not just hygiene: the update
-comparison runs against build-embedded version metadata, so a drifted version makes the
-updater mis-decide (see `UPDATE-ARCHITECTURE.md` §4).
-
-Stamped (generated) at build time, not hand-edited:
-- `client/package.json` `version`
-- `client/src-tauri/tauri.conf.json` `version`
-- `client/src-tauri/Cargo.toml` `version`
-- `main.version` / buildinfo equivalent
+comparison runs against build-embedded version metadata, so a drifted version
+makes the updater mis-decide (see `UPDATE-ARCHITECTURE.md` §4). That dependency
+is now unguarded.
 
 ---
 
 ## 4. CI layout constraint (important)
 
 **GitHub only runs workflows from `.github/workflows/` at the repository root.**
-A workflow placed in `client/.github/workflows/` will **never trigger** — which is why
-upstream's 19 workflows were deleted during the fork cleanup (`client/.github/` is gone).
 
-Consequences:
+The fork's planned CI at `.github/workflows/client.yml` was **never created**. The
+only workflow that existed, `.github/workflows/build.yml`, built the archived
+client and has been **deleted**. So today:
 
-- The fork's CI lives at `.github/workflows/client.yml` (repo root).
-- It must set `defaults.run.working-directory: client` (or per-step), and
+- **No workflow exists for any client.** A `git tag`/push triggers nothing.
+- If CI is reintroduced, it must live at the repo root (a workflow in
+  `client/.github/workflows/` will never trigger) and set
+  `defaults.run.working-directory: client` with
   `cache-dependency-path: client/pnpm-lock.yaml`.
-- Use `paths:` filters so server-only changes do not trigger a full Tauri build for
-  three platforms.
-- Keep the existing Wails workflow only while `legacy/wails-client` still needs to
-  build; retire it once the fork ships. Do **not** leave two client workflows both
-  producing "the client" with no way to tell which is current.
+- Use `paths:` filters so server-only changes do not trigger a full Tauri build.
 
-Required CI additions (verified against the fork's manifests):
+Required CI additions *if and when* it is built (verified against the fork's
+manifests):
 
 | Need | Value |
 |---|---|
@@ -126,16 +136,16 @@ This is the step that breaks most quietly. Every known path consumer:
 
 | File | Depends on | Action |
 |---|---|---|
-| `client/Makefile` | `$(realpath ../VERSION)` | repoint to the repo `VERSION` location |
-| `bump.sh` (root) | `v5/VERSION` + Wails sites | retarget to the fork's four sites |
-| `scripts/release-cut.sh` | Wails/tag flow | retarget or retire |
-| `scripts/publish-release.sh` | artifact paths, `manifest.json` | retarget to the fork's artifacts |
-| `scripts/publish-update.sh` | **already broken** (see below) | retire; `publish-release.sh` is correct |
+| `client/Makefile` | `$(realpath ../VERSION)` | REMOVED/void — the root `VERSION` file is deleted; the fork's versioning is an open decision |
+| `bump.sh` (root) | `v5/VERSION` + Wails sites | **DELETED** |
+| `scripts/release-cut.sh` | Wails/tag flow | **DELETED** |
+| `scripts/publish-release.sh` | artifact paths, `manifest.json` | **KEPT, live** — takes the version as an argument, does not read root `VERSION` |
+| `scripts/publish-update.sh` | **already broken** (see below) | retired to `legacy/publish-update.sh.broken`; `publish-release.sh` is correct |
 | `scripts/generate_codes.sh`, `print_codes.sh` | hub only | unaffected |
-| `server/modules/*.sh` | internal paths | verify after the move |
+| `server/modules/*.sh` | internal paths | verified — no dependency on the deleted files |
 | `setup.sh` / `deploy-console.sh` | **deploys from `/root/server/`, not the repo** | documented drift trap — re-verify staging sync |
 | `docs/STILL-OPEN.md` | the `md5sum` drift-check snippet | repoint (`/root/server/pb_hooks` vs repo) |
-| `.github/workflows/build.yml` | `v5/client/wails.json`, `v5/VERSION`, version grep | repoint to legacy or retire |
+| `.github/workflows/build.yml` | `v5/client/wails.json`, `v5/VERSION`, version grep | **DELETED** |
 
 **`publish-update.sh` is already known-broken** and is listed in `STILL-OPEN.md` as such:
 it writes no `sha256_<platform>` columns (clients refuse an empty hash) and its macOS
@@ -145,7 +155,14 @@ of FIXES #31. Retire it.
 
 ---
 
-## 6. `shared/contracts/`
+## 6. `shared/contracts/` — NEVER CREATED
+
+> **This section is a design note, not a description of the repo.** There is no
+> `shared/contracts/` directory. The contract is currently enforced by the
+> archived `legacy/wails-client/internal/updatecfg` test (reads the hook and the
+> publish script as text) and by the hub hooks themselves — not by a shared
+> schema directory. If you go looking for `shared/contracts/`, it does not exist;
+> the text below is what such a directory *would* hold if it were built.
 
 Both sides need the same definitions, and divergence between them is the root cause of
 several recorded bugs. Candidates to move here (source of truth, with copies generated

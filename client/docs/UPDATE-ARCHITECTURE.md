@@ -219,7 +219,7 @@ Three options, in preference order:
 | `pending_update.bin` cache | Not needed if we do not pre-download. If we do, reuse the pattern but put it under the app dir, never CWD. |
 | Crash-on-update sentinel | Replaced by the installer's own atomicity, **but** keep the "did we come back?" check for the *hosted* case: if the new version fails to start, the user needs a way out. |
 | `createUpdaterArtifacts` | Stays `false` unless option 1 is chosen. |
-| Version authority | The updater compares versions against `v5/VERSION`-derived build metadata, so the drift gate in the parent plan is a **correctness dependency of the updater**, not just hygiene. FIXES #20/#45 and #12 converge here. |
+| Version authority | ⚠️ **Now unguarded.** The updater compares versions against build-embedded metadata derived from the (since-deleted) root `VERSION` tooling, so version drift is a **correctness dependency of the updater**, not just hygiene (FIXES #20/#45, #12). With the old `VERSION`/CI machinery **removed**, nothing enforces that the fork's version sites agree. Reconciling them is an open decision — `docs/STILL-OPEN.md`. |
 | nsproxy/language | `nsis_language_id` logic is small and worth keeping for silent installs; it is Windows-only and currently maps 3 languages. |
 
 ---

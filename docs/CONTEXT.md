@@ -87,16 +87,16 @@ VPN-Service/
 │   ├── console/         ← Admin console SPA (Vue 3 + Vite), served at /admin/
 │   ├── modules/         ← Numbered deploy modules (00-env … 08-firewall)
 │   ├── pb_hooks/        ← PocketBase JS hooks (activation, heartbeat, release, …)
-│   └── scripts/         ← bump-version, publish-release, hooks-sync, seed-*, smoke-*
+│   └── scripts/         ← publish-release, fetch-release, hooks-sync, seed-*, smoke-*
 ├── legacy/
 │   ├── wails-client/    ← RETIRED Go + Wails + sing-box client (was v5/client).
-│   │                    Kept for its contract tests. See its ARCHIVED.md.
-│   └── v4/              ← Predecessor Go + Fyne client. Reference only.
+│   │                    STALE. Kept as reference for its logic when rebuilding
+│   │                    the fork. See its ARCHIVED.md.
+│   └── v4/              ← Predecessor Go + Fyne client. Reference only (stale).
 ├── docs/                ← Architecture, deploy, ops, API, fixes, CONTEXT (this file)
 │   └── history/         ← Curated research archive + dated session records
 ├── scripts/             ← Code generator + PDF card printer (canonical location)
-├── VERSION              ← The ARCHIVED client's version. NOT the fork's — see below.
-└── README.md, bump.sh, .github/workflows/build.yml
+└── README.md            ← (root VERSION, bump.sh, .github/workflows/ removed — see below)
 ```
 
 > **Restructured 2026-09-23.** Everything under `v5/` moved: `v5/server/` →
@@ -105,13 +105,13 @@ VPN-Service/
 > `git mv`, so history is intact. Any path in this document still reading `v5/`
 > other than a historical note is stale — fix it.
 >
-> **Version authority.** `VERSION` and `server/scripts/bump-version.sh` still
-> drive the **archived** Wails client (`legacy/wails-client/main.go`,
-> `buildinfo.go`, `wails.json`, `frontend/package.json`) and its committed
-> Windows `.syso` resources. That is deliberate: it keeps the archived tree
-> self-consistent. It is **not** the shipping client's version — the fork
-> versions itself in `client/package.json` and `client/src-tauri/Cargo.toml`.
-> Reconciling them is an open decision, not an oversight.
+> **Version authority — REMOVED.** The old machinery (root `VERSION`,
+> `bump.sh`, `server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
+> `scripts/release-cut.sh`, the committed `.syso` resources, and
+> `.github/workflows/build.yml`) is **deleted**. It versioned only the archived
+> Wails client, never the shipping fork. There is now **no version authority and
+> no CI**; the fork's release path is an open decision (see `docs/STILL-OPEN.md`
+> and `docs/RELEASING.md`).
 
 ### What goes where
 
@@ -339,7 +339,8 @@ legacy/wails-client/
 ├── frontend/                    # Vue 3 + TypeScript + Vite UI
 │   └── src/                    # App.vue, components/, stores/, lib/bridge.ts
 ├── engines/README.md           # Engine binary placeholder
-├── rsrc_windows_*.syso         # requireAdministrator manifest (.syso, go:generate)
+├── (rsrc_windows_*.syso removed — version-stamped resources, deleted with the
+│    archived-client release tooling; see the version-authority note above)
 ├── go.mod
 └── Makefile                    # Wails build targets
 ```
@@ -356,7 +357,7 @@ client in `v4/`; removed files recoverable from git history)
 | Metric | Value |
 |--------|-------|
 | Total lines (Go) | ~7,700 across 38 files (main + 8 internal packages) |
-| Client version | `the root VERSION file` (single source; injected by Makefile/CI) |
+| Client version | REMOVED — the root `VERSION` file and its tooling are deleted; the fork's versioning is an open decision |
 | Engine | sing-box 1.12.1 (client bundle + optional server UoT both pin 1.12.1) |
 | Min Go version | 1.22 |
 | Platforms | Linux, macOS (Intel+ARM, unsigned), Windows |
@@ -434,18 +435,26 @@ client in `v4/`; removed files recoverable from git history)
 
 ### Where to start
 
-1. **Read `docs/README-legacy-v5.md`** for the high-level overview and quick start.
-2. **Read `docs/ARCHITECTURE.md`** for the complete system design.
-3. **Refer to `legacy/wails-client/`** for the client source code.
-4. **Refer to `server/`** for server deployment.
-5. **Use `docs/`** for specific guides (deploy, ops, API, implement).
+1. **Read `docs/README.md`** — the documentation index; it says what each doc is
+   and which are historical.
+2. **Read `docs/STILL-OPEN.md`** for what is unfinished, including the open fork
+   versioning/release-path decision.
+3. **Read `client/docs/ARCHITECTURE.md`** and `client/docs/LOGIC-INVENTORY.md`
+   for the **shipping** client (`client/`, the Tauri fork). `docs/ARCHITECTURE.md`
+   is the *archived* client's design, kept for the contract it encodes.
+4. **Refer to `legacy/wails-client/`** only as a **stale logic oracle** when
+   rebuilding the fork — it is archived, not the product.
+5. **Refer to `server/`** for the live hub and `docs/DEPLOY.md`/`docs/OPS.md` for
+   operations.
 
 ### Rules of thumb
 
-1. **Start here.** V5 is the definitive version. Don't read v4/
-   unless you need historical context.
-2. **The client code is in `legacy/wails-client/`.** The old `v4/` directory exists for
-   reference only — never build from it.
+1. **The shipping client is `client/`.** The archived Wails client
+   (`legacy/wails-client/`) and the predecessor in `legacy/v4/` are stale
+   reference only; do not read them as current. There is **no version file, no
+   bump script, and no CI** — those were removed (see §2).
+2. **`legacy/v4/` is historical.** Never build from it; consult it only for
+   historical context.
 3. **The server modules are idempotent.** You can re-run any module safely.
    Each module checks if its work is already done before proceeding.
 4. **The JS hooks have been rewritten for PocketBase 0.22+.** If activation

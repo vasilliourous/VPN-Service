@@ -30,6 +30,29 @@ opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ## Open, and fixable now
 
+### Fork versioning and release path — an open decision
+
+The old version/release machinery is **deleted** (root `VERSION`, `bump.sh`,
+`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
+`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso`, and
+`.github/workflows/build.yml`). It versioned and released the retired Wails client
+and never the shipping fork.
+
+What is left undecided:
+
+- **What owns the fork's version.** `client/package.json`,
+  `client/src-tauri/tauri.conf.json`, and `client/src-tauri/Cargo.toml` each carry
+  `2.5.5` today, with no rule tying them together.
+- **Whether a root `VERSION` is reintroduced** for the fork, or the fork versions
+  itself in its own manifests.
+- **How a release is built and tagged** now that no CI exists. Publishing to the
+  hub (`server/scripts/publish-release.sh`) still works and takes the version as
+  an argument, but nothing *produces* the artifacts.
+
+This is a **correctness dependency of the updater**, not just hygiene: the update
+comparison runs against build-embedded version metadata, so drift makes the
+updater mis-decide (`client/docs/UPDATE-ARCHITECTURE.md` §4).
+
 ### ~~`publish-update.sh` (repo root) has two real defects~~ — RESOLVED BY RETIREMENT (2026-09-23)
 
 The script is now `legacy/publish-update.sh.broken`, with both defects documented
@@ -79,7 +102,7 @@ Recording these so they are not re-investigated:
   reads `update_config`. Not a fault, but do not use it as a health check.
 - **The truncated fingerprint** in the `live-data-do-not-delete` memory note — I
   flagged it but did not correct the memory. If you rely on that value, use the
-  full 64-char SHA-256 from `GOTCHAS-FROM-THIS-WORK.md` §1.
+  full 64-char SHA-256 from `docs/history/SESSION-GOTCHAS.md` §1.
 - **Making it so a future deploy cannot advertise unresolvable update URLs** — I
   added a guard for the *record* (`releases.set` checks URLs and hashes are
   present and version-matched), but the hook cannot stat the filesystem
@@ -92,7 +115,7 @@ Recording these so they are not re-investigated:
 ## If you are the next agent here
 
 1. Run `git show --stat 4791381` to see exactly what this conversation touched.
-2. Read `GOTCHAS-FROM-THIS-WORK.md` before testing against the live hub — it will
+2. Read `docs/history/SESSION-GOTCHAS.md` before testing against the live hub — it will
    save you the two false diagnoses I made.
 3. Remember `setup.sh` deploys from `/root/server/`, not from the repo. Editing a
    file here changes nothing until the staging copy is updated. Check drift:

@@ -27,15 +27,24 @@ There are **three clients** in this repository and only one of them ships:
 **Everything below was written when the Wails client was current.** Where these
 sections describe client internals, architecture, or the CI pipeline, they
 describe `legacy/wails-client/` — not what ships. The server, hub, and
-operational documentation remains accurate.
+operational documentation remains accurate. The archived-client **CI workflow and
+release-cutting machinery have been removed**; see `docs/RELEASING.md` and
+`docs/CI-CD.md`.
 
-### Version authority
+### Version authority — REMOVED
 
-`VERSION` (repo root) and `server/scripts/bump-version.sh` drive the **archived**
-Wails client's version sites and its committed Windows `.syso` resources. They do
-**not** version the shipping fork, which versions itself in `client/package.json`
-and `client/src-tauri/Cargo.toml`. Reconciling the two is an open decision — see
-`client/docs/RESTRUCTURE.md`. Do not assume `./bump.sh` changes what ships.
+The old version machinery is **deleted**: root `VERSION`, `bump.sh`,
+`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
+`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and the
+archived-client CI workflow (`.github/workflows/build.yml`). It versioned **only**
+the archived Wails client, never the shipping fork — which is why it was removed.
+
+**There is no version authority now, and no CI for any client.** The shipping
+fork carries a version in `client/package.json` and `client/src-tauri/Cargo.toml`
+(currently `2.5.5`); how it is versioned and released is an open decision, not an
+oversight — see `docs/STILL-OPEN.md` and `client/docs/RESTRUCTURE.md`. Publishing
+a build to the hub (`server/scripts/publish-release.sh`) still works; see
+`docs/RELEASING.md`.
 
 ### History
 
@@ -143,22 +152,25 @@ VPN-Service/
 │   ├── modules/              ── Numbered VPS deploy modules (00-env … 08-firewall)
 │   ├── pb_hooks/             ── PocketBase JS hooks (activation, heartbeat, release, console)
 │   ├── console/              ── Admin SPA, served at /admin/
-│   ├── scripts/              ── bump-version, publish-release, hooks-sync, seed-*, smoke-*
+│   ├── scripts/              ── publish-release, fetch-release, hooks-sync, seed-*, smoke-*, deploy-console
 │   └── setup.sh              ── Orchestrator (deploys from /root/server, not this repo — see docs/DEPLOY.md)
 ├── legacy/
-│   ├── wails-client/         ← RETIRED Wails + sing-box client (+ ARCHIVED.md)
-│   └── v4/                   ← Historical Go + Fyne client
+│   ├── wails-client/         ← RETIRED Wails + sing-box client (STALE. Reference-only for its logic; see ARCHIVED.md)
+│   └── v4/                   ← Historical Go + Fyne client (stale)
 ├── docs/                     ← Architecture, deploy, ops, API, FIXES, CONTEXT, STILL-OPEN
 │   └── history/              ── Curated research + dated session records
-├── scripts/                  ← Code generation + release cutting
-│   ├── generate_codes.sh     ── Luhn-mod-N activation codes
-│   ├── print_codes.sh        ── Printable PDF code cards
-│   └── release-cut.sh        ── Bump, commit, tag, push
-├── VERSION                   ← The ARCHIVED client's version (NOT the fork's — see above)
-├── bump.sh                   ← Version bump entry point (archived client)
-└── .github/workflows/
-    └── build.yml             ── Builds the ARCHIVED Wails client. The fork has no workflow yet.
+└── scripts/                  ← Code generation + local probes
+    ├── generate_codes.sh     ── Luhn-mod-N activation codes
+    ├── print_codes.sh        ── Printable PDF code cards
+    └── vps-test/             ── Read-only network probes against the live VPS
 ```
+
+> **No version file, no bump script, no CI.** Root `VERSION`, `bump.sh`,
+> `server/scripts/bump-version.sh`/`stamp-syso.py`/`smoke-bump.sh`,
+> `scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and
+> `.github/workflows/build.yml` were **removed** — they versioned and released the
+> retired client, not the shipping fork. The fork's release path is an open
+> decision (`docs/STILL-OPEN.md`).
 
 ---
 

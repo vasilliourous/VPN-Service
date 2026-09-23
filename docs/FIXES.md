@@ -1,3 +1,26 @@
+## RELEASE MACHINERY REMOVED, NOT REPAIRED (2026-09, current)
+
+The archived Wails client's version/release machinery was **deleted** rather than
+fixed a further time: root `VERSION`, `bump.sh`,
+`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
+`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and
+`.github/workflows/build.yml`.
+
+Rationale: every entry below in this file that ends "…and the gate that knew"
+describes a guard on a pipeline that built a client nobody ships. It versioned only
+`legacy/wails-client/`, never the fork, and its tags were the source of repeated
+confusion. `legacy/wails-client/` is now a stale, reference-only logic oracle; the
+shipping fork's versioning and release path are an **open decision**
+(`docs/STILL-OPEN.md`).
+
+**Entries below this line are historical.** Where they name `bump.sh`, `VERSION`,
+`release-cut.sh`, `stamp-syso.py`, `smoke-bump.sh`, `.syso`, or `build.yml`, those
+files no longer exist. The *lessons* (a committed artifact can be stale while every
+text check passes; `--no-verify` skipped the artifact update; a skipped CI job looks
+green) remain worth knowing if any of this is ever rebuilt.
+
+---
+
 ## RELEASE TAGGING — THE .syso WENT STALE AGAIN, AND THE GATE THAT KNEW (2026-09-20)
 
 CI failed the 2.2.7 release in **Check version consistency**:

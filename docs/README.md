@@ -1,14 +1,15 @@
 # Locus documentation index
 
-Nineteen documents in a flat directory is only navigable if something says what
-each one is. This is that file.
+Documents in a flat directory are only navigable if something says what each one
+is. This is that file.
 
 **Two rules for reading anything here:**
 
 1. **Check the status banner.** Several documents describe the **retired** Wails
-   client and carry a `⚠️ STATUS: describes the ARCHIVED client` banner. The
-   shipping client is `client/`; its docs live in `client/docs/`. A document with
-   no banner describes something still live.
+   client and carry a `⚠️ STATUS: describes the ARCHIVED client` banner; some
+   now carry a `⚠️ STATUS: ... REMOVED` banner for machinery that was deleted.
+   The shipping client is `client/`; its docs live in `client/docs/`. A document
+   with no banner describes something still live.
 2. **The code wins.** Where a document and the code disagree, the code is right
    and the document is a bug. Fix it in the same change.
 
@@ -31,8 +32,8 @@ each one is. This is that file.
 | [`POCKETBASE-SETUP.md`](POCKETBASE-SETUP.md) | PocketBase specifics, including the admin console at `/admin/`. |
 | [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) | age-encrypted secrets, what is plaintext, what must never be committed. |
 | [`API.md`](API.md) | HTTP API reference for the hub (activation, heartbeat, code lookup, releases). |
-| [`RELEASING.md`](RELEASING.md) | Cutting a release: `bump.sh` → tag → CI → publish. **Read the version-authority note below.** |
-| [`CI-CD.md`](CI-CD.md) | ⚠️ Describes the workflow that builds the **archived** client. |
+| [`RELEASING.md`](RELEASING.md) | ⚠️ Publishing a build to the hub (still live). The old release-cutting path is removed. |
+| [`CI-CD.md`](CI-CD.md) | ⚠️ REMOVED — the pipeline that built the archived client is deleted. Kept for the surviving asset/consumer contract. |
 | [`FIXES.md`](FIXES.md) | Append-only dated log of every real defect and its fix. **Treat entries as historical** — later entries sometimes correct earlier ones; the corrections are marked. |
 
 ## Archived client — banners, reference only
@@ -65,17 +66,22 @@ contract the shipping fork must reproduce, not because the code is live.
 
 ---
 
-## Version authority — the thing most likely to mislead you
+## Version authority — REMOVED, and an open decision
 
-`VERSION` (repo root) and `server/scripts/bump-version.sh` drive the **archived**
-Wails client's version sites and its committed Windows `.syso` resources. They do
-**not** version the shipping fork.
+The old version machinery is **deleted**: root `VERSION`, `bump.sh`,
+`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
+`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and the
+archived-client CI workflow. They drove **only** the retired Wails client at
+`legacy/wails-client/`, never the shipping fork — that mismatch, plus the tags
+and releases it produced for a client nobody ships, is why it was removed.
 
-The fork versions itself in `client/package.json` and
-`client/src-tauri/Cargo.toml`. Reconciling the two is an **open decision**, not an
-oversight — see `client/docs/RESTRUCTURE.md`.
+**There is no version authority now.** The shipping fork carries a version in
+`client/package.json` and `client/src-tauri/Cargo.toml` (currently `2.5.5`),
+which do not agree with each other or with anything else by rule — reconciling
+them is an **open decision**, not an oversight. See `docs/STILL-OPEN.md`
+("Fork versioning and release path") and `client/docs/RESTRUCTURE.md`.
 
-**Do not assume `./bump.sh` changes what ships.** It does not.
+**Do not assume any script bumps what ships.** None does; there is no such script.
 
 ## Path history
 
@@ -84,3 +90,17 @@ Restructured 2026-09-23: `v5/server/` → `server/`, `v5/console/` →
 `v5/docs/` + `extra-details/` → `docs/`. All moves used `git mv`, so history is
 intact. Documents dated before that date may name the old paths in historical
 context — that is correct, not stale.
+
+Filenames changed in the merge, so a few old names are **dead** — search for the
+new one instead:
+
+| Old name (dead) | Current file |
+|---|---|
+| `GOTCHAS-FROM-THIS-WORK.md` | `docs/history/SESSION-GOTCHAS.md` |
+| `extra-details/` | `docs/` (contents merged) |
+| `v5/docs/` | `docs/` |
+
+Later, the archived-client **version/release machinery was deleted** (root
+`VERSION`, `bump.sh`, the bump/syso scripts, `release-cut.sh`, the `.syso`
+resources, `.github/workflows/build.yml`). References to those are historical,
+not instructions — see "Version authority" above.

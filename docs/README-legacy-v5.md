@@ -1,5 +1,13 @@
 # Locus V5 — The Definitive Edition
 
+> **⚠️ STATUS: describes the ARCHIVED client — and its version/CI machinery is
+> REMOVED.** Statements below that the root `VERSION` file is "the client version,
+> single source of truth", that `.github/workflows/build.yml` builds it, or that
+> CI is the pipeline are **obsolete**: root `VERSION`, `bump.sh`, the bump/syso
+> tooling, `release-cut.sh`, the `.syso` resources, and the workflow are deleted.
+> `legacy/wails-client/` is retained only as a stale logic reference for the fork
+> rebuild. See `docs/STILL-OPEN.md`.
+>
 > **⚠️ STATUS: describes the ARCHIVED client.**
 > This document describes `legacy/wails-client/` — the retired Go + Wails +
 > sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash

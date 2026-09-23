@@ -37,29 +37,32 @@ text** and asserts the field names agree. That guard spans three languages
 
 ## Version
 
-This tree does **not** carry the shipping version. The root `VERSION` file and the
-tooling in `server/scripts/bump-version.sh` still drive *this* tree's version
-sites (`main.go`, `buildinfo.go`, `wails.json`, `frontend/package.json`) and the
-committed Windows `.syso` resources. That is deliberate: it keeps the archived
-tree internally consistent and its drift guard meaningful.
+This tree is **completely stale** and no longer carries a maintained version. The
+root `VERSION` file and the tooling in `server/scripts/bump-version.sh` that used
+to keep *this* tree's version sites (`main.go`, `buildinfo.go`, `wails.json`,
+`frontend/package.json`) and its committed Windows `.syso` resources consistent
+have been **deleted**, along with the `.syso` files and
+`.github/workflows/build.yml`.
 
-It is **not** the fork's version authority. The fork versions itself in
-`client/package.json` and `client/src-tauri/Cargo.toml`; reconciling the two is an
-open decision, not an oversight. Do not assume `./bump.sh` changes what ships.
+The version strings frozen in this tree are whatever they last said and are
+**not** authoritative for anything. The shipping fork versions itself in
+`client/package.json` and `client/src-tauri/Cargo.toml`; reconciling the fork's
+own sites is an open decision (`docs/STILL-OPEN.md`). Nothing bumps anything.
 
 ## Building it
 
 The Go toolchain is **not** installed on this host and is not on `PATH`. See
 `docs/OPS.md` for the bootstrap procedure. Building requires a Go 1.22+ toolchain
 plus the Wails environment; the frontend must be built before
-`go build -tags frontend` (see the header of `.github/workflows/build.yml`).
+`go build -tags frontend`.
 
-The **non-Go** checks work with no toolchain and are worth running:
+**The checks below no longer work — the scripts they name are deleted:**
 
 ```sh
-./bump.sh --dry-run                                  # version tooling, no writes
-python3 server/scripts/stamp-syso.py "$(cat VERSION)" --check   # .syso freshness
-bash server/scripts/smoke-bump.sh                    # 33 assertions, no Go needed
+# ⚠️ NONE OF THESE EXIST ANY MORE
+./bump.sh --dry-run
+python3 server/scripts/stamp-syso.py "$(cat VERSION)" --check
+bash server/scripts/smoke-bump.sh
 ```
 
 ## What was retired, and what was not

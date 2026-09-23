@@ -1,5 +1,12 @@
 # Locus Backend API Reference
 
+> **⚠️ STATUS: describes the ARCHIVED client — and its version tooling is
+> REMOVED.** The "version-consistency" test and any reference to a root `VERSION`
+> file or `.syso` staleness gate below describe tooling that has been **deleted**
+> (root `VERSION`, `server/scripts/bump-version.sh`, `stamp-syso.py`,
+> `smoke-bump.sh`, `release-cut.sh`, the committed `.syso`, the CI workflow).
+> `legacy/wails-client/` is a stale logic reference only.
+>
 > **⚠️ STATUS: describes the ARCHIVED client.**
 > This document describes `legacy/wails-client/` — the retired Go + Wails +
 > sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash

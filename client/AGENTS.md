@@ -14,8 +14,9 @@ shipping Locus client. The predecessor Wails client is archived at
   Locus logic goes
 - `docs/LOGIC-INVENTORY.md` — module-by-module spec of the Locus code to write
 - `docs/UPDATE-ARCHITECTURE.md` — the update path and why it is hybrid
-- `docs/RESTRUCTURE.md` — repo layout and the version-authority rule
-- `AGENTS.md` in the **repo root** for repo-wide rules
+- `docs/RESTRUCTURE.md` — repo layout and the (now open) version-authority question
+- Repo-wide rules: **there is no root `AGENTS.md`.** The repo-level context lives
+  in the root `README.md` and `docs/CONTEXT.md` (read `docs/README.md` first).
 
 ## Rules
 

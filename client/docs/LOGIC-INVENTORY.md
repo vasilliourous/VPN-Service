@@ -212,7 +212,7 @@ comment why. The old client's `UnmarshalJSON`/`fromWire` pair is the reference.
 | Tier | Transport | Notes |
 |---|---|---|
 | eco | Shadowsocks TCP | fallback when UDP is blocked |
-| stealth | TCP, no TUN | `clash-verge-stealth-notun.yaml` exists in the repo root as a reference profile |
+| stealth | TCP, no TUN | `clash-verge-stealth-notun.yaml` sits in the repo root as a **local, gitignored** reference profile — it is **not tracked**, not a source of truth, and embeds a live tier PSK. Do not commit or cite it; the contract is the tier payload, not this file. |
 | strike | + UDP over TCP (UoT) | gated on `udp_relay` **and** `uot_port > 0` |
 
 The GC rule for `udp_relay`: it is only meaningful when `uot_port > 0`; an operator
