@@ -38,7 +38,7 @@ User context (2026-08-03):
 
 ### 3.1 What the code shows (the gap is real, not hypothetical)
 
-- `v5/client/app.go:157` → `a.mgr.SetHelperMode(false)` — **direct mode forced on all platforms**.
+- `legacy/wails-client/app.go:157` → `a.mgr.SetHelperMode(false)` — **direct mode forced on all platforms**.
 - `startDirect` (process.go) spawns the engine as a plain child of the app process: no pkexec, no sudo, no polkit, no setuid, no CAP_NET_ADMIN delegation.
 - `autoStartHelper` (pkexec/sudo on Unix, UAC `RunAs` on Windows) exists but only drives the **legacy `locus-helper`** binary, which is **not shipped in V5** (moved to `v5/legacy/`) — the function can only fail with "locus-helper binary not found alongside sing-box". Dead code.
 - `process_unix.go` — nothing but process-group detachment and a pgrep guard.
@@ -70,8 +70,8 @@ sing-box's Windows TUN is WFP-heavy; our own FIXES.md trail (Follow-ups 1–10) 
 
 | File | Change |
 |---|---|
-| `v5/client/app.go` | Don't force `SetHelperMode(false)` on Linux (or add a Linux-only elevation path for direct mode) |
-| `v5/client/internal/manager/process.go` | Revive/replace `autoStartHelper` + helper IPC, or add `pkexec` elevation of the engine itself; keep Windows on direct mode |
+| `legacy/wails-client/app.go` | Don't force `SetHelperMode(false)` on Linux (or add a Linux-only elevation path for direct mode) |
+| `legacy/wails-client/internal/manager/process.go` | Revive/replace `autoStartHelper` + helper IPC, or add `pkexec` elevation of the engine itself; keep Windows on direct mode |
 | `v5/legacy/` (helper source) | Rebuild + ship a minimal privileged helper (TUN create/route via IPC), or replace with polkit policy + elevated engine spawn |
 | Packaging (`build.yml`, zip contents) | Ship helper binary (+ `.service`/polkit policy file if used) |
 | `process_unix.go` | Guard logic per-OS (unchanged shape) |
@@ -86,7 +86,7 @@ Options for the elevation mechanism (see §8 for recommendation):
 
 | File | What it does today | Swap impact |
 |---|---|---|
-| `v5/client/internal/manager/process.go` | sing-box JSON config gen, spawn, health, guard | YAML config gen, `mihomo -f -d` spawn, guard patterns (`mihomo`, `clash-meta`, `verge-mihomo`) |
+| `legacy/wails-client/internal/manager/process.go` | sing-box JSON config gen, spawn, health, guard | YAML config gen, `mihomo -f -d` spawn, guard patterns (`mihomo`, `clash-meta`, `verge-mihomo`) |
 | `process_unix.go` / `process_windows.go` | guard per-OS | pattern rename |
 | `process_test.go` | JSON invariant tests | YAML invariant tests |
 | `app.go` | `findSingBox`, config filename | rename only; logic is engine-agnostic (verified) |
@@ -211,9 +211,9 @@ Verified facts: `#PROXY` nameserver suffix exists in mihomo DNS docs (routes DNS
 ## 11. References
 
 - User context (2026-08-03): school is BYOD; test device = user's Linux laptop, Wayland, non-root; Clash Rev Meta's edge = proper TUN escalation; hiddify failed to escalate.
-- Code evidence: `v5/client/app.go:157` (`SetHelperMode(false)`), `process.go` (`startDirect`, `autoStartHelper` dead path), `process_unix.go`, `v5/legacy/`.
+- Code evidence: `legacy/wails-client/app.go:157` (`SetHelperMode(false)`), `process.go` (`startDirect`, `autoStartHelper` dead path), `process_unix.go`, `v5/legacy/`.
 - mihomo TUN docs: https://wiki.metacubex.one/en/config/inbound/tun/
 - mihomo DNS docs: https://wiki.metacubex.one/en/config/dns/
 - mihomo releases: https://github.com/MetaCubeX/mihomo/releases (v1.19.29 latest at analysis time)
 - sing-box TUN docs: https://sing-box.sagernet.org/configuration/inbound/tun/
-- Our evidence trail: `v5/docs/FIXES.md` (Follow-ups 1–10)
+- Our evidence trail: `docs/FIXES.md` (Follow-ups 1–10)

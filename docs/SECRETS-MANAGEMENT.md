@@ -33,7 +33,7 @@ We encrypt a `.env` file with all credentials and commit the encrypted version.
 At deploy time, `setup.sh` automatically decrypts it using a key that is **not** in the repo.
 
 ```
-v5/server/
+server/
 ├── secrets.env.age      ← Encrypted. Committed to git. Safe to share.
 ├── age-key.txt          ← PLAINTEXT KEY. NEVER commit. .gitignored.
 ├── age-key.txt.pub      ← Public key. Can be committed.
@@ -152,11 +152,11 @@ shred -u .secrets.env
 
 ```bash
 # The encrypted file is safe to commit
-git add v5/server/secrets.env.age
+git add server/secrets.env.age
 
 # NEVER commit the private key or plain-text file
-echo "age-key.txt" >> v5/server/.gitignore
-echo ".secrets.env" >> v5/server/.gitignore
+echo "age-key.txt" >> server/.gitignore
+echo ".secrets.env" >> server/.gitignore
 
 git commit -m "Add encrypted production secrets"
 ```
@@ -172,7 +172,7 @@ They try three key sources in order:
 
 ```bash
 # Pass the key content directly (GitHub Actions secret, etc.)
-AGE_KEY="AGE-SECRET-KEY-1..." ssh root@vps 'bash -s' < v5/server/setup.sh
+AGE_KEY="AGE-SECRET-KEY-1..." ssh root@vps 'bash -s' < server/setup.sh
 ```
 
 Best for CI/CD pipelines. The key is stored as a secret in GitHub Actions /
@@ -202,7 +202,7 @@ telling the operator how to provide one.
 
 ```bash
 # Copy server code + key to VPS
-scp -r v5/server age-key.txt root@vps:/root/server/
+scp -r server age-key.txt root@vps:/root/server/
 
 # One-command deploy — no env vars needed
 ssh root@vps "/root/server/setup.sh"
@@ -212,7 +212,7 @@ ssh root@vps "/root/server/setup.sh"
 
 ```bash
 # Pipe the script — AGE_KEY comes from your local file
-AGE_KEY=$(cat age-key.txt) ssh root@vps 'bash -s' < v5/server/setup.sh
+AGE_KEY=$(cat age-key.txt) ssh root@vps 'bash -s' < server/setup.sh
 ```
 
 ### From CI/CD (GitHub Actions)
@@ -222,7 +222,7 @@ AGE_KEY=$(cat age-key.txt) ssh root@vps 'bash -s' < v5/server/setup.sh
   env:
     AGE_KEY: ${{ secrets.MYVPN_AGE_KEY }}
   run: |
-    echo "$AGE_KEY" | ssh root@vps 'bash -s' < v5/server/setup.sh
+    echo "$AGE_KEY" | ssh root@vps 'bash -s' < server/setup.sh
 ```
 
 ### Disaster recovery (restore.sh)
@@ -230,7 +230,7 @@ AGE_KEY=$(cat age-key.txt) ssh root@vps 'bash -s' < v5/server/setup.sh
 ```bash
 # Same three options — decrypts B2 creds automatically
 AGE_KEY=$(cat age-key.txt) \
-  ssh root@new-vps 'bash -s' < v5/server/restore.sh
+  ssh root@new-vps 'bash -s' < server/restore.sh
 
 # Or with key file on VPS:
 scp age-key.txt root@new-vps:/root/server/

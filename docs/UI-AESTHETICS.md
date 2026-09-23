@@ -1,7 +1,17 @@
 # Locus UI / Aesthetics — Visual Design Spec
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > **This spec describes the implemented UI.** The client uses a **Wails v2 +
-> Vue 3** frontend (`v5/client/frontend/`) — the design tokens below are the
+> Vue 3** frontend (`legacy/wails-client/frontend/`) — the design tokens below are the
 > actual values used in the components. The old Fyne-era spec was superseded
 > when the GUI was migrated (see `WAILS-MIGRATION.md`).
 

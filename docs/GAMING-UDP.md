@@ -95,10 +95,10 @@ UoT. sing-box (the engine already on every client) is that server.
 
 | Piece | Where | Detail |
 |-------|-------|--------|
-| Server UoT endpoint | `v5/server/modules/02-shadowsocks.sh` | Default-on section (`ENABLE_UOT=0` to skip): installs sing-box server (v1.12.1), shadowsocks inbound on `UOT_PORT` (default 8446) with Strike creds, systemd unit `sing-box-uot.service`. **Config corrections from live deploy:** sing-box REJECTS `"network": "tcp_and_udp"` and rejects `"udp_over_tcp"` on the INBOUND — both omitted (default = tcp+udp; UoT magic-domain connections handled automatically by the inbound). Verified listening on TCP+UDP 8446 |
-| Idempotent installer | `v5/server/scripts/enable-uot.sh` | Installs/starts the UoT endpoint on an **already-deployed** box without re-running full setup; touches none of the 8443/44/45 services, Caddy, PocketBase, tc or backups |
-| Advertising | `v5/server/scripts/seed-live.py`, `seed-pb.py` | With `ENABLE_UOT=1`, strike's tier_configs config gains `"uot_port"` + `udp_relay=true` |
-| Client UoT outbound | `v5/client/internal/manager/process.go` | When `UDPRelay && ServerPortUOT > 0`: adds a `proxy-uot` shadowsocks outbound (`udp_over_tcp: true`, port = uot_port) + a `network: udp` route rule pinning UDP to it. TCP stays on the standard port/outbound — the working path never changes |
+| Server UoT endpoint | `server/modules/02-shadowsocks.sh` | Default-on section (`ENABLE_UOT=0` to skip): installs sing-box server (v1.12.1), shadowsocks inbound on `UOT_PORT` (default 8446) with Strike creds, systemd unit `sing-box-uot.service`. **Config corrections from live deploy:** sing-box REJECTS `"network": "tcp_and_udp"` and rejects `"udp_over_tcp"` on the INBOUND — both omitted (default = tcp+udp; UoT magic-domain connections handled automatically by the inbound). Verified listening on TCP+UDP 8446 |
+| Idempotent installer | `server/scripts/enable-uot.sh` | Installs/starts the UoT endpoint on an **already-deployed** box without re-running full setup; touches none of the 8443/44/45 services, Caddy, PocketBase, tc or backups |
+| Advertising | `server/scripts/seed-live.py`, `seed-pb.py` | With `ENABLE_UOT=1`, strike's tier_configs config gains `"uot_port"` + `udp_relay=true` |
+| Client UoT outbound | `legacy/wails-client/internal/manager/process.go` | When `UDPRelay && ServerPortUOT > 0`: adds a `proxy-uot` shadowsocks outbound (`udp_over_tcp: true`, port = uot_port) + a `network: udp` route rule pinning UDP to it. TCP stays on the standard port/outbound — the working path never changes |
 | Plumbing | `heartbeat.go`, `activation.go`, `storage.go`, `app.go` | `server_port_uot` parsed from server config in all three paths (activation, heartbeat refresh, persisted state) and applied to the manager Config |
 | Verified live (2026-08-14) | activation + heartbeat | `POST /api/activate` → 200 with `server_config.uot_port:8446, udp_relay:true`; `POST /api/heartbeat` → 200 with the same config refresh |
 
@@ -108,9 +108,9 @@ no `uot_port` and send raw UDP. Nothing is broken — UoT is simply not switched
 
 **Deploy commands (repeatable):**
 1. DNS for the domain must resolve to the VPS FIRST (00-env hard-fails)
-2. `scp -r v5/server age-key.txt root@VPS:/root/server/`
+2. `scp -r server age-key.txt root@VPS:/root/server/`
 3. `ENABLE_UOT=1 DOMAIN=… /root/server/setup.sh` (idempotent) — or, on an
-   already-deployed box, just `UOT_PORT=8446 bash v5/server/scripts/enable-uot.sh`
+   already-deployed box, just `UOT_PORT=8446 bash server/scripts/enable-uot.sh`
 4. `ENABLE_UOT=1 DOMAIN=… python3 /root/server/scripts/seed-pb.py` (re-seed after any setup re-run)
 5. Existing Strike clients pick up `uot_port` on their next heartbeat (no re-activation needed)
 6. Disable: `systemctl disable --now sing-box-uot` + drop `uot_port` from the tier config
@@ -119,8 +119,8 @@ The original design rationale (additive shape, why it works, rollback) follows:
 
 | End | Change |
 |-----|--------|
-| VPS | `v5/server/modules/02-shadowsocks.sh`: add an optional module section that installs sing-box server (version aligned with client 1.12.1) and writes a Strike-only shadowsocks **inbound** (`network: tcp_and_udp`, `"udp_over_tcp": true`) on a NEW port (e.g. 8446); keep existing ssserver units untouched; keep password file, BBR + tc (04-tc.sh untouched) |
-| Client | `v5/client/internal/manager/process.go` (~line 718): set `"udp_over_tcp": true` on the shadowsocks outbound when the tier advertises UDP (Strike) and a UoT-capable server port is configured |
+| VPS | `server/modules/02-shadowsocks.sh`: add an optional module section that installs sing-box server (version aligned with client 1.12.1) and writes a Strike-only shadowsocks **inbound** (`network: tcp_and_udp`, `"udp_over_tcp": true`) on a NEW port (e.g. 8446); keep existing ssserver units untouched; keep password file, BBR + tc (04-tc.sh untouched) |
+| Client | `legacy/wails-client/internal/manager/process.go` (~line 718): set `"udp_over_tcp": true` on the shadowsocks outbound when the tier advertises UDP (Strike) and a UoT-capable server port is configured |
 | Deployment | One new TCP port (e.g. 8446); school firewall sees plain Shadowsocks TCP wire format, identical to existing tiers. Server may also listen UDP 8446 for raw fallback |
 
 **Why this works:** the school firewall only ever sees TCP (identical wire
@@ -184,15 +184,15 @@ These are stopgaps, not the fix.
 
 | File | Change |
 |------|--------|
-| `v5/server/modules/02-shadowsocks.sh` | Install sing-box server; per-tier inbound configs; UoT on Strike; rollback path |
-| `v5/server/setup.sh` | Module chain unchanged; summary line "Strike: TCP+UDP (UoT)" |
-| `v5/server/scripts/smoke-test.sh` | Verify Strike serves tcp+udp; UoT handshake check |
-| `v5/server/scripts/seed-live.py` | Notes/config for sing-box server |
-| `v5/server/templates/` | Optional sing-box server config template |
-| `v5/client/internal/manager/process.go` | `udp_over_tcp: true` on outbound (Strike); MTU change (P2) |
-| `v5/client/internal/heartbeat/heartbeat.go` + `v5/server/pb_hooks/heartbeat.pb.js` | UDPRelay semantics (P3) |
-| `v5/docs/DEPLOY.md`, `OPS.md`, `ARCHITECTURE.md`, `CONTEXT.md`, tier tables | Reflect sing-box server + UoT |
-| `v5/docs/FIXES.md` | Dated entry when implemented |
+| `server/modules/02-shadowsocks.sh` | Install sing-box server; per-tier inbound configs; UoT on Strike; rollback path |
+| `server/setup.sh` | Module chain unchanged; summary line "Strike: TCP+UDP (UoT)" |
+| `server/scripts/smoke-test.sh` | Verify Strike serves tcp+udp; UoT handshake check |
+| `server/scripts/seed-live.py` | Notes/config for sing-box server |
+| `server/templates/` | Optional sing-box server config template |
+| `legacy/wails-client/internal/manager/process.go` | `udp_over_tcp: true` on outbound (Strike); MTU change (P2) |
+| `legacy/wails-client/internal/heartbeat/heartbeat.go` + `server/pb_hooks/heartbeat.pb.js` | UDPRelay semantics (P3) |
+| `docs/DEPLOY.md`, `OPS.md`, `ARCHITECTURE.md`, `CONTEXT.md`, tier tables | Reflect sing-box server + UoT |
+| `docs/FIXES.md` | Dated entry when implemented |
 
 ## 5. Risks / decision points
 

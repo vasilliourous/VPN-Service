@@ -1,5 +1,15 @@
 # Locus Wails Migration Plan
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > **Replacing the Fyne GUI with a Wails (Go + Vue 3) desktop app.**
 > All `internal/` packages remain untouched. The Fyne code is retired.
 > Only the GUI layer changes.
@@ -67,7 +77,7 @@
 ## Project Structure (Target)
 
 ```
-v5/client/
+legacy/wails-client/
 ├── main.go                 ← Wails app entry (replaces old cmd/myvpn/main.go)
 ├── app.go                  ← App struct with @Bind methods
 ├── wails.json              ← Wails project configuration
@@ -237,13 +247,13 @@ go install github.com/wailsapp/wails/v2/cmd/wails@latest
 sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev
 
 # 5. Install frontend dependencies
-cd v5/client/frontend && npm install
+cd legacy/wails-client/frontend && npm install
 ```
 
 ### Development (hot-reload)
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 wails dev
 ```
 
@@ -255,7 +265,7 @@ UI from the Vite dev server — so it works on a fresh checkout.
 ### Production Build
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 wails build -tags frontend
 ```
 
@@ -265,7 +275,7 @@ frontend as embedded assets. Ship with `sing-box` alongside it.
 ### Cross-Compilation
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 GOOS=linux GOARCH=amd64 wails build -tags frontend -o dist/myvpn-linux
 GOOS=windows GOARCH=amd64 wails build -tags frontend -o dist/myvpn.exe
 ```
@@ -276,7 +286,7 @@ available (WebView2 on Windows, WebKit on Linux).
 ### Build Tags (embed vs stub)
 
 The UI is embedded via the `frontend` build tag (see `assets_embed.go` /
-`assets_stub.go` in `v5/client/`):
+`assets_stub.go` in `legacy/wails-client/`):
 
 | Command | What it produces |
 |---------|------------------|
@@ -293,7 +303,7 @@ If you add a new job that compiles Go, build the frontend first and pass
 ## Current Project State (post-migration)
 
 ```
-v5/client/
+legacy/wails-client/
 ├── main.go                 ← Wails entry (replaces old cmd/myvpn/main.go)
 ├── app.go                  ← App struct with bound methods for Vue frontend
 ├── wails.json              ← Wails project configuration

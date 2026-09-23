@@ -2,7 +2,7 @@
 
 > **V4 replaces sslocal + tun2socks with sing-box, adds enterprise-grade update safety, and restores critical reliability features stripped in V3.**
 > 
-> For the full evolution from V1→V4, see the root [`README.md`](../README.md).
+> For the full evolution from V1→V4, see the root [`README.md`](../../README.md).
 
 ---
 

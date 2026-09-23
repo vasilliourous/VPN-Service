@@ -3,25 +3,64 @@
 A commercial VPN service for students at N4L-managed NZ schools (Macleans College).
 Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, no UDP blocks).
 
-> **The authoritative version of everything below is `v5/`** — hardened client
-> (`v5/client/`, Go + Wails + Vue 3), server deployment (`v5/server/`), and docs
-> (`v5/docs/`, `v5/CONTEXT.md`). Older directories (`v4/`) are historical
-> reference only. Directories removed in the 2026-08 cleanup
-> (`v3/`, `simplified/`, `v5/legacy/`, `modular-vps/`, root `CONTEXT.md`,
-> `v5/scripts/`, and the un-curated remainder of `originals/`) are recoverable
-> from git history. The still-relevant originals (business model + N4L threat
-> research) are preserved in `v5/docs/history/`.
+
+## Start here
+
+| If you want to … | Go to |
+|---|---|
+| Work on **the client students run** | `client/` — Tauri 2 fork of Clash Verge Rev, mihomo engine. Docs in `client/docs/` |
+| Work on **the hub / server** | `server/` — deploy modules + PocketBase hooks. Docs in `docs/DEPLOY.md`, `docs/OPS.md` |
+| Operate the **admin console** | `server/console/`, served at `/admin/` (see `docs/POCKETBASE-SETUP.md`) |
+| Understand **the whole project** | `docs/CONTEXT.md` — read this first |
+| See **what is still open** | `docs/STILL-OPEN.md` |
+
+### Client status — read this before assuming
+
+There are **three clients** in this repository and only one of them ships:
+
+| Client | Where | Status |
+|---|---|---|
+| **Fork of Clash Verge Rev v2.5.5** (Tauri 2 + Rust + React, mihomo engine) | `client/` | **SHIPPING** |
+| Wails client (Go + Wails + Vue 3, sing-box engine) | `legacy/wails-client/` | **RETIRED** — kept for its contract tests, see its `ARCHIVED.md` |
+| Fyne client (Go) | `legacy/v4/` | Historical reference only |
+
+**Everything below was written when the Wails client was current.** Where these
+sections describe client internals, architecture, or the CI pipeline, they
+describe `legacy/wails-client/` — not what ships. The server, hub, and
+operational documentation remains accurate.
+
+### Version authority
+
+`VERSION` (repo root) and `server/scripts/bump-version.sh` drive the **archived**
+Wails client's version sites and its committed Windows `.syso` resources. They do
+**not** version the shipping fork, which versions itself in `client/package.json`
+and `client/src-tauri/Cargo.toml`. Reconciling the two is an open decision — see
+`client/docs/RESTRUCTURE.md`. Do not assume `./bump.sh` changes what ships.
+
+### History
+
+The repository was restructured on 2026-09-23: `v5/server/` → `server/`,
+`v5/console/` → `server/console/`, `v5/client/` → `legacy/wails-client/`,
+`v4/` → `legacy/v4/`, and `v5/docs/` + `extra-details/` → `docs/`. Moved with
+`git mv`, so history is intact. Older removals (`v3/`, `simplified/`,
+`modular-vps/`, `originals/`) are recoverable from git history; the still-relevant
+research (business model, N4L threat analysis) is preserved in `docs/history/`.
 
 ---
 
 ## Architecture Overview
+
+> The **client** diagram below describes the **retired Wails client**
+> (`legacy/wails-client/`) and is kept for reference. The shipping client is the
+> Tauri fork in `client/`; its architecture is documented in
+> `client/docs/ARCHITECTURE.md`. The **server** half of the diagram is current.
 
 ```
 ┌─────────────────────────────────────────────────┐
 │              STUDENT'S LAPTOP                     │
 │                                                   │
 │  ┌───────────────────────────────────────────┐   │
-│  │        Locus Desktop App (Go + Wails)      │   │
+│  │    Locus Desktop App — RETIRED (Go + Wails)  │   │
 │  │         (Vue 3 UI embedded in binary)       │   │
 │  │                                             │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │   │
@@ -64,10 +103,10 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 └─────────────────────────────────────────────────┘
 ```
 
-Only two binaries ship on the client: `locus` (desktop app, Wails + Vue 3) and
-`sing-box` (tunnel engine). There is no SOCKS5 proxy layer, no separate TUN
-helper service — sing-box creates the TUN interface directly (BYOD machines
-give users admin rights).
+The **retired** client shipped two binaries: `locus` (desktop app, Wails + Vue 3)
+and `sing-box` (tunnel engine), with no SOCKS5 layer. The **shipping fork** ships
+the `locus` binary plus a bundled **`verge-mihomo`** sidecar as the tunnel engine
+(see `client/docs/ARCHITECTURE.md`). The server side is unchanged.
 
 ---
 
@@ -82,7 +121,7 @@ give users admin rights).
 > All tiers are **BBR + tc**: no kernel modules to maintain, caps enforced with
 > HTB classes plus `fq_codel` leaf qdiscs to keep latency flat under load.
 > Strike carries **raw** UDP today; the UDP-over-TCP endpoint (port 8446) is
-> built but not enabled on the current host — see `v5/docs/GAMING-UDP.md`.
+> built but not enabled on the current host — see `docs/GAMING-UDP.md`.
 
 Activation codes are **`RQ-XXXX-XXXX-XXXX-C`** (15 chars, Luhn-mod-N checksum,
 charset `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). The `MYVPN-` form was retired in the
@@ -94,31 +133,31 @@ charset `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). The `MYVPN-` form was retired in th
 
 ```
 VPN-Service/
-├── v5/                       ← DEFINITIVE VERSION (start here)
-│   ├── client/               ← CLIENT: Go 1.22 + Wails v2 + Vue 3 desktop app
-│   │   ├── main.go           ← Wails entry point (binds App, embeds frontend/dist)
-│   │   ├── app.go            ← App struct — wraps internal/ for the Vue UI
-│   │   ├── internal/         ← 8 packages (activation, heartbeat, manager, pinned,
-│   │   │                        storage, tray, tunnel, updater)
-│   │   ├── frontend/         ← Vue 3 + Vite + TypeScript UI (embedded into binary)
-│   │   ├── engines/          ← sing-box binary placeholder
-│   │   └── Makefile          ← dev / build / build-all targets
-│   ├── server/               ← SERVER: VPS setup modules + PocketBase hooks
-│   │   ├── scripts/          ← seed, smoke-test, publish-release, deploy-console
-│   │   └── pb_hooks/         ← activation, heartbeat, code-lookup, unbind, console
-│   ├── console/              ← ADMIN: Vue 3 SPA served at /admin/
-│   ├── docs/                 ← Architecture, deploy, ops, API, fixes
-│   │   └── history/          ← Curated pre-V5 research (business model, N4L threat analysis)
-│   ├── VERSION               ← THE client version (single source of truth)
-│   ├── README.md             ← V5 overview
-│   └── CONTEXT.md            ← Full agent/developer context
-├── v4/                       ← PREVIOUS client (Go + Fyne, reference only)
-├── scripts/                  ← Operational tooling
-│   ├── generate_codes.sh     ── Generate Luhn-mod-N activation codes
+├── client/                   ← THE SHIPPING CLIENT (Tauri 2 fork, mihomo engine)
+│   ├── src/                  ── React + TypeScript frontend
+│   ├── src-tauri/            ── Rust backend (Tauri), capabilities, bundle config
+│   ├── crates/               ── Inherited workspace crates
+│   ├── docs/                 ── ARCHITECTURE, LOGIC-INVENTORY, UPDATE-ARCHITECTURE, RESTRUCTURE
+│   └── scripts/prebuild.mjs  ── Fetches the mihomo sidecar + geo databases (MANDATORY before a Rust build)
+├── server/                   ← LIVE hub
+│   ├── modules/              ── Numbered VPS deploy modules (00-env … 08-firewall)
+│   ├── pb_hooks/             ── PocketBase JS hooks (activation, heartbeat, release, console)
+│   ├── console/              ── Admin SPA, served at /admin/
+│   ├── scripts/              ── bump-version, publish-release, hooks-sync, seed-*, smoke-*
+│   └── setup.sh              ── Orchestrator (deploys from /root/server, not this repo — see docs/DEPLOY.md)
+├── legacy/
+│   ├── wails-client/         ← RETIRED Wails + sing-box client (+ ARCHIVED.md)
+│   └── v4/                   ← Historical Go + Fyne client
+├── docs/                     ← Architecture, deploy, ops, API, FIXES, CONTEXT, STILL-OPEN
+│   └── history/              ── Curated research + dated session records
+├── scripts/                  ← Code generation + release cutting
+│   ├── generate_codes.sh     ── Luhn-mod-N activation codes
 │   ├── print_codes.sh        ── Printable PDF code cards
-│   └── publish-update.sh     ── Prepare + publish a release payload
-└── .github/workflows/        ← CI/CD
-    └── build.yml             ── Build + release for Linux + macOS + Windows (Wails)
+│   └── release-cut.sh        ── Bump, commit, tag, push
+├── VERSION                   ← The ARCHIVED client's version (NOT the fork's — see above)
+├── bump.sh                   ← Version bump entry point (archived client)
+└── .github/workflows/
+    └── build.yml             ── Builds the ARCHIVED Wails client. The fork has no workflow yet.
 ```
 
 ---
@@ -129,11 +168,15 @@ VPN-Service/
 
 The VPN uses **Shadowsocks TCP** — a simple, fast tunnel protocol that encrypts traffic with AES-256-GCM. Unlike TLS-based proxies (Trojan, Xray VLESS), Shadowsocks has no TLS handshake or certificate exchange, so it bypasses N4L's JA3 fingerprinting.
 
-All traffic goes through a single TCP connection per tier. The client runs **sing-box**, which creates a **TUN interface** (`locus0`, `10.0.0.1/30`) and routes all device traffic through it. sing-box encrypts everything with Shadowsocks and sends it to the VPS. No SOCKS5 proxy layer, no per-app configuration.
+All traffic goes through a single TCP connection per tier. The **retired** client
+ran **sing-box**, creating a **TUN interface** (`locus0`, `10.0.0.1/30`) and routing
+all device traffic through it. The **shipping fork** uses **mihomo** for the same
+role. Either way the tunnel encrypts with Shadowsocks and sends to the VPS — no
+SOCKS5 layer, no per-app configuration.
 
 ### Tiers & Congestion Control
 
-All three tiers use **BBR** (Bottleneck Bandwidth and Round-trip propagation time), Linux's default CC — fair, stable, and bufferbloat-friendly. (An earlier design used the `tcp-brutal` kernel module for Stealth, but its aggressive rate-filling caused bufferbloat and jitter on the school network, so it was removed — see `v5/docs/FIXES.md`.) Bandwidth is capped purely with `tc` HTB classes on the VPS:
+All three tiers use **BBR** (Bottleneck Bandwidth and Round-trip propagation time), Linux's default CC — fair, stable, and bufferbloat-friendly. (An earlier design used the `tcp-brutal` kernel module for Stealth, but its aggressive rate-filling caused bufferbloat and jitter on the school network, so it was removed — see `docs/FIXES.md`.) Bandwidth is capped purely with `tc` HTB classes on the VPS:
 
 - **Eco**: 5 Mbps (class 1:10, port 8443)
 - **Stealth**: 100 Mbps (class 1:20, port 8444)
@@ -198,7 +241,7 @@ This binds an activation code to a specific device. If the device is lost or bro
 
 ```bash
 # Copy the server tree AND the age key to the VPS
-scp -r v5/server age-key.txt root@your-vps:/root/server/
+scp -r server age-key.txt root@your-vps:/root/server/
 
 # Run setup (~10-15 min). Secrets decrypt automatically from secrets.env.age.
 ssh root@your-vps "/root/server/setup.sh"
@@ -213,7 +256,7 @@ backups, UFW + fail2ban.
 **No follow-up steps.** Verify with `smoke-test.sh` (expect 23 passed / 0 failed).
 Note `setup.sh` deploys **from the copy on the VPS**, not from your working tree —
 keep `/root/server/` in sync with the repo. A fresh host also needs the console
-bundle staged (`deploy-console.sh`) or `SKIP_CONSOLE=1`; see `v5/docs/DEPLOY.md`
+bundle staged (`deploy-console.sh`) or `SKIP_CONSOLE=1`; see `docs/DEPLOY.md`
 → "Staging the server tree".
 
 Optional extras:
@@ -235,14 +278,14 @@ the deploy loudly rather than leaving `/admin/` 404ing.
 
 `06-pocketbase.sh` and `seed-pb.py` now create the admin, the collections, the
 schema and the tier configs automatically — a failure here is **fatal**, not a
-warning. To verify or customise by hand, see `v5/docs/POCKETBASE-SETUP.md`
+warning. To verify or customise by hand, see `docs/POCKETBASE-SETUP.md`
 (collections: `codes`, `tier_configs`, `activation_attempts`, `update_config`,
 `code_events`).
 
 ### Step 3: Deploy the Admin Console
 
 ```bash
-v5/server/scripts/deploy-console.sh   # builds, uploads, verifies /admin/
+server/scripts/deploy-console.sh   # builds, uploads, verifies /admin/
 ```
 
 Day-to-day operations (issuing codes, suspend/unbind, tiers, releases) then
@@ -262,7 +305,7 @@ The generator needs the **PocketBase admin JWT** (PB 0.22 rejects
 ### Step 5: Build Client App
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 make build          # current platform only
 make build-all      # Linux + Windows + macOS
 ```
@@ -318,7 +361,7 @@ DOMAIN=networkingguides.duckdns.org \
   B2_APPLICATION_KEY_ID=xxx \
   B2_APPLICATION_KEY=xxx \
   B2_BUCKET=my-vpn-backup-bucket \
-  /root/v5/server/restore.sh
+  /root/server/restore.sh
 ```
 
 ### Monitoring
@@ -328,7 +371,7 @@ This endpoint returns `{"message":"API is healthy.","code":200}` when PocketBase
 
 Day-to-day operations live at `https://networkingguides.duckdns.org/admin/`
 (admin token required) — dashboard, codes, releases and tiers. See
-`v5/docs/OPS.md`.
+`docs/OPS.md`.
 
 ---
 
@@ -360,4 +403,4 @@ idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
 > ⚠️ **Live customer data.** The hub holds real activation codes in daily use.
 > Never bulk-delete `codes` or `code_events` — suspend or unbind instead.
 
-See `v5/README.md` and `v5/CONTEXT.md` for the full current documentation.
+See `docs/CONTEXT.md` for the full project context, `docs/STILL-OPEN.md` for what is unresolved, and `client/docs/` for the shipping client.

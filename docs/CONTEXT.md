@@ -81,49 +81,68 @@ The business and sales docs are kept privately — not in this repo.
 
 ```
 VPN-Service/
-├── v5/                 ← DEFINITIVE VERSION (hardened client + server + console + docs)
-│   ├── client/         ← Hardened Go + Wails/Vue 3 client code (v2.1.0)
-│   ├── server/         ← VPS deployment modules + PocketBase hooks
-│   ├── console/        ← Admin console SPA (Vue 3 + Vite), served at /admin/
-│   ├── docs/           ← Architecture, deploy, ops, API, fixes
-│   │   └── history/    ← Curated pre-V5 research archive (business model, N4L threat analysis)
-│   ├── VERSION         ← THE client version (single source of truth, one line)
-│   ├── README.md       ← V5 overview
-│   └── CONTEXT.md      ← THIS FILE
-├── v4/                 ← PREVIOUS client source (reference only, superseded by v5/client/)
-├── scripts/            ← Code generator + PDF card printer (canonical location)
-└── README.md, .github/...
+├── client/              ← THE SHIPPING CLIENT. Tauri 2 fork of Clash Verge Rev,
+│                        tunnelling via mihomo. Has its own docs in client/docs/.
+├── server/              ← LIVE hub. VPS deployment modules + PocketBase hooks
+│   ├── console/         ← Admin console SPA (Vue 3 + Vite), served at /admin/
+│   ├── modules/         ← Numbered deploy modules (00-env … 08-firewall)
+│   ├── pb_hooks/        ← PocketBase JS hooks (activation, heartbeat, release, …)
+│   └── scripts/         ← bump-version, publish-release, hooks-sync, seed-*, smoke-*
+├── legacy/
+│   ├── wails-client/    ← RETIRED Go + Wails + sing-box client (was v5/client).
+│   │                    Kept for its contract tests. See its ARCHIVED.md.
+│   └── v4/              ← Predecessor Go + Fyne client. Reference only.
+├── docs/                ← Architecture, deploy, ops, API, fixes, CONTEXT (this file)
+│   └── history/         ← Curated research archive + dated session records
+├── scripts/             ← Code generator + PDF card printer (canonical location)
+├── VERSION              ← The ARCHIVED client's version. NOT the fork's — see below.
+└── README.md, bump.sh, .github/workflows/build.yml
 ```
+
+> **Restructured 2026-09-23.** Everything under `v5/` moved: `v5/server/` →
+> `server/`, `v5/console/` → `server/console/`, `v5/client/` →
+> `legacy/wails-client/`, `v5/docs/` + `extra-details/` → `docs/`. Moved with
+> `git mv`, so history is intact. Any path in this document still reading `v5/`
+> other than a historical note is stale — fix it.
+>
+> **Version authority.** `VERSION` and `server/scripts/bump-version.sh` still
+> drive the **archived** Wails client (`legacy/wails-client/main.go`,
+> `buildinfo.go`, `wails.json`, `frontend/package.json`) and its committed
+> Windows `.syso` resources. That is deliberate: it keeps the archived tree
+> self-consistent. It is **not** the shipping client's version — the fork
+> versions itself in `client/package.json` and `client/src-tauri/Cargo.toml`.
+> Reconciling them is an open decision, not an oversight.
 
 ### What goes where
 
 | Directory | Purpose | For whom |
 |-----------|---------|----------|
-| `v5/` | Definitive version — start here | **Everyone** |
-| `v5/client/` | Hardened Go + Wails/Vue 3 client source code | **Client developers** |
-| `v5/console/` | Admin console SPA — day-to-day hub operations in a browser | Operators |
-| `v5/server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
-| `v5/docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
-| `v5/docs/history/` | Curated pre-V5 research archive (business model, N4L threat analysis) | Reference only — read CONTEXT/ARCHITECTURE first |
-| `v4/` | Predecessor client code | Reference only — use v5/client/ |
+| `client/` | **THE SHIPPING CLIENT** — Tauri 2 fork of Clash Verge Rev, mihomo engine | **Everyone — start here** |
+| `legacy/wails-client/` | RETIRED Go + Wails + sing-box client (see its `ARCHIVED.md`) | Contract/spec reference only |
+| `server/console/` | Admin console SPA — day-to-day hub operations in a browser | Operators |
+| `server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
+| `docs/` | Architecture, client guide, deploy, ops, API, fixes | Client developers, operators |
+| `docs/history/` | Curated pre-V5 research archive (business model, N4L threat analysis) | Reference only — read CONTEXT/ARCHITECTURE first |
+| `legacy/v4/` | Predecessor Go + Fyne client code | Reference only |
 | `scripts/` (root) | Luhn-mod-N code generator + PDF card printer | Middleman managers |
 
 > **2026-08 culling (round 2):** `modular-vps/`, root `CONTEXT.md`, and
-> `v5/scripts/` were deleted as stale duplicates — `v5/server/` is the one and
+> `v5/scripts/` were deleted as stale duplicates — `server/` is the one and
 > only server deployment directory (it absorbed `hiddify.pb.js`), root
-> `scripts/` is the one and only code-generator location, and `v5/CONTEXT.md`
-> is the one and only context document. All deleted files remain recoverable
+> `scripts/` is the one and only code-generator location, and `docs/CONTEXT.md`
+> is the one and only context document. (Their paths were later flattened again
+> in the 2026-09-23 restructure above.) All deleted files remain recoverable
 > from git history.
 >
 > **2026-08-14 follow-up:** macOS support was RE-ENABLED (unsigned local build
-> — see `v5/docs/CLIENT-GUIDE.md` for the Gatekeeper workaround). The darwin
+> — see `docs/CLIENT-GUIDE.md` for the Gatekeeper workaround). The darwin
 > code paths (`darwinTUN`, `pfctl` kill-switch, `networksetup` DNS, `ioreg`
 > fingerprint), `darwin_link.go`, macOS CI targets, updater URLs, and Makefile
 > targets were restored. macOS installs are unsigned: the user must
 > right-click → Open (or `xattr -cr`) on first launch.
 >
 > **2026-08 history archive:** the still-relevant `originals/` docs (business
-> model + N4L attacker/defender research) were restored to `v5/docs/history/`
+> model + N4L attacker/defender research) were restored to `docs/history/`
 > after review; the rest of `originals/` (superseded action plans) stays in
 > git history only.
 
@@ -166,9 +185,9 @@ from real-world testing, with comprehensive documentation.
    warning, so a factory build still works until an operator sets
    `LOCUS_HUB_PINS`.
 
-### Client Hardening (v5/client/ vs v4/)
+### Client Hardening (legacy/wails-client/ vs v4/)
 
-The v5/client/ codebase is a hardened evolution of the v4 source:
+The legacy/wails-client/ codebase is a hardened evolution of the v4 source:
 
 - **Context propagation** for all network operations
 - **Panic recovery** with stack traces at global and goroutine level
@@ -235,7 +254,7 @@ outs: `ENABLE_UOT=0`, `SKIP_CONSOLE=1`, `SKIP_DNS_CHECK=1`.
 
 ### 9 Issues Found & Fixed (first VPS round)
 
-All documented in `v5/docs/FIXES.md`:
+All documented in `docs/FIXES.md`:
 
 | # | Severity | Issue | Fix |
 |:-:|:--------:|-------|-----|
@@ -279,7 +298,7 @@ chain into `/etc/ufw/before.rules` — the latter locked SSH out completely (por
 
 ---
 
-## 5. Client Code Structure (v5/client/)
+## 5. Client Code Structure (legacy/wails-client/)
 
 > **⚠️ Updated for the Wails migration (2026).** The GUI moved from Fyne to
 > **Wails v2 + Vue 3** (`frontend/`). The old Fyne GUI, helper binary, and old
@@ -289,7 +308,7 @@ chain into `/etc/ufw/before.rules` — the latter locked SSH out completely (por
 > unchanged. See `docs/WAILS-MIGRATION.md` and `docs/BACKEND-API.md`.
 
 ```
-v5/client/
+legacy/wails-client/
 ├── main.go                      # Wails app entry (embedds frontend/dist, binds App)
 ├── app.go                       # App struct — wraps internal/ for the Vue UI
 ├── wails.json                   # Wails project configuration
@@ -337,7 +356,7 @@ client in `v4/`; removed files recoverable from git history)
 | Metric | Value |
 |--------|-------|
 | Total lines (Go) | ~7,700 across 38 files (main + 8 internal packages) |
-| Client version | `v5/VERSION` (single source; injected by Makefile/CI) |
+| Client version | `the root VERSION file` (single source; injected by Makefile/CI) |
 | Engine | sing-box 1.12.1 (client bundle + optional server UoT both pin 1.12.1) |
 | Min Go version | 1.22 |
 | Platforms | Linux, macOS (Intel+ARM, unsigned), Windows |
@@ -415,17 +434,17 @@ client in `v4/`; removed files recoverable from git history)
 
 ### Where to start
 
-1. **Read `v5/README.md`** for the high-level overview and quick start.
-2. **Read `v5/docs/ARCHITECTURE.md`** for the complete system design.
-3. **Refer to `v5/client/`** for the client source code.
-4. **Refer to `v5/server/`** for server deployment.
-5. **Use `v5/docs/`** for specific guides (deploy, ops, API, implement).
+1. **Read `docs/README-legacy-v5.md`** for the high-level overview and quick start.
+2. **Read `docs/ARCHITECTURE.md`** for the complete system design.
+3. **Refer to `legacy/wails-client/`** for the client source code.
+4. **Refer to `server/`** for server deployment.
+5. **Use `docs/`** for specific guides (deploy, ops, API, implement).
 
 ### Rules of thumb
 
 1. **Start here.** V5 is the definitive version. Don't read v4/
    unless you need historical context.
-2. **The client code is in `v5/client/`.** The old `v4/` directory exists for
+2. **The client code is in `legacy/wails-client/`.** The old `v4/` directory exists for
    reference only — never build from it.
 3. **The server modules are idempotent.** You can re-run any module safely.
    Each module checks if its work is already done before proceeding.
@@ -473,14 +492,14 @@ B2 bucket:          vpsvpnbackup
 
 All credentials are stored on the VPS at `/root/` — see `docs/POCKETBASE-SETUP.md` for
 the full list of credential files and locations. Secrets never go in the repo in
-plaintext; they live age-encrypted in `v5/server/secrets.env.age`
+plaintext; they live age-encrypted in `server/secrets.env.age`
 (see `docs/SECRETS-MANAGEMENT.md`).
 
 ### Common pitfalls
 
 - **Don't use `v4/` as the source of truth** — it's
   historical reference only. V5 is the authoritative version.
-- **The client code now lives in `v5/client/`** — not v4/. Always build from v5/client/.
+- **The client code now lives in `legacy/wails-client/`** — not v4/. Always build from legacy/wails-client/.
 - **The JS hooks have been rewritten for PocketBase 0.22+** — if activation still returns a generic
   400 error after a fresh deploy, check `journalctl -u pocketbase` for hook load errors.
 - **A new hook file needs a PocketBase restart.** Editing an existing `*.pb.js`

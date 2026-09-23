@@ -1,7 +1,17 @@
 # Locus Client App — Developer Guide
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > This document tells a Go developer exactly how to build, run, and understand
-> the current Locus client (Wails v2 + Vue 3, `v5/client/`).
+> the current Locus client (Wails v2 + Vue 3, `legacy/wails-client/`).
 > The old Fyne-based guide was superseded by the Wails migration — see
 > [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the migration history and
 > rollback plan, and [`BACKEND-API.md`](BACKEND-API.md) for the exact
@@ -19,7 +29,7 @@
     or `libwebkit2gtk-4.1-dev` (Ubuntu 24.04+)
   - Windows: WebView2 (included in Windows 10+); CI builds Windows with
     `CGO_ENABLED=0` (pure Go, WebView2 COM)
-- **sing-box binary** in `v5/client/engines/` or alongside the built app
+- **sing-box binary** in `legacy/wails-client/engines/` or alongside the built app
   (version 1.12.1, Shadowsocks AEAD-256-GCM over TCP)
 - **VPS already deployed** (see `DEPLOY.md`) with:
   - `ssserver` × 3 instances running
@@ -33,7 +43,7 @@
 ### Quick Build (Current Platform)
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 go mod tidy          # First time only — generates go.sum
 make build           # wails build -tags frontend → dist/locus
 ```
@@ -55,21 +65,21 @@ tags" error dialog at runtime.
 
 ### Versioning (single source of truth)
 
-The runtime client version comes from **`v5/VERSION`** (one line, e.g. `2.0.1`).
+The runtime client version comes from **`the root VERSION file`** (one line, e.g. `2.0.1`).
 
-- `make build` reads `v5/VERSION` and injects it via
+- `make build` reads `the root VERSION file` and injects it via
   `-ldflags "-X main.version=$(VERSION)"`.
 - CI (`.github/workflows/build.yml`) injects the same file's value, or — on a
   `v*` tag push — the tag with its leading `v` stripped (so `git tag v2.0.1`
   produces a binary reporting `2.0.1`).
-- To release: **bump `v5/VERSION`**, commit, then `git tag v<same>` + push.
+- To release: **bump `the root VERSION file`**, commit, then `git tag v<same>` + push.
   `wails.json` and `package.json` "version" fields are build metadata and are
   not the runtime source.
 
 ### Development (Hot-Reload)
 
 ```bash
-cd v5/client
+cd legacy/wails-client
 make dev             # Builds frontend, then wails dev (Vite dev server)
 ```
 
@@ -113,7 +123,7 @@ The `.github/workflows/build.yml` workflow (repo root):
 ## 3. Package Structure
 
 ```
-v5/client/
+legacy/wails-client/
 ├── main.go               # Wails entry point: NewApp() → wails.Run() (binds App)
 ├── app.go                # App struct — wraps internal/ for the Vue UI, events
 ├── wails.json            # Wails project config (name, frontend build; version = build metadata only)

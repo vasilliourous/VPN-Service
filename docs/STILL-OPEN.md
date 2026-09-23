@@ -24,7 +24,7 @@ single highest-value thing left.
 Unchanged by this work. There is no elevation path on Linux — direct mode is
 forced and the helper binary is not shipped, so TUN cannot be created in a
 non-root session. The gap is now declared honestly instead of surfacing as an
-opaque engine error, but it is not fixed. See `v5/docs/ENGINE-SWAP-ANALYSIS.md`.
+opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ---
 

@@ -1,5 +1,15 @@
 # Locus V5 — CI/CD Pipeline Reference
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > The Locus client is built and released via GitHub Actions.
 > This document describes the pipeline, how to trigger releases,
 > and how to interpret build artifacts.
@@ -27,16 +37,16 @@ Push to main / PR → Lint & Vet (ubuntu-latest)
      publish-release.sh → hub /updates/<version>/ → update_config
 ```
 
-**File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; the old `v5/.github/` copy was deleted in the 2026-08 cleanup)
+**File:** `.github/workflows/build.yml` (repository ROOT — GitHub Actions only executes workflows from the root `.github/workflows/`; the old `a non-root .github/` copy was deleted in the 2026-08 cleanup)
 
 > **⚠️ IMPORTANT — Frontend build ordering & Wails tags.** The client embeds the
-> Vue frontend via `//go:embed all:frontend/dist` in `v5/client/assets_embed.go`
+> Vue frontend via `//go:embed all:frontend/dist` in `legacy/wails-client/assets_embed.go`
 > (build tag `frontend`). Every CI job builds the frontend first and compiles
 > with the full Wails tag set:
 >
 > ```bash
-> cd v5/client/frontend && npm install && npm run build
-> cd v5/client && go build -tags "frontend desktop production" .
+> cd legacy/wails-client/frontend && npm install && npm run build
+> cd legacy/wails-client && go build -tags "frontend desktop production" .
 > ```
 > `desktop` and `production` are **required Wails build tags** — they select the
 > real desktop implementation. Without them the binary compiles but is the stub
@@ -116,16 +126,16 @@ below — so a build cannot put a binary on students' machines by itself.
 # Downloads this version's artifacts from its GitHub Release, uploads them to
 # /var/www/updates/<version>/, verifies the served bytes, writes update_config
 # at ROLLOUT_PERCENT (default 5).
-v5/server/scripts/publish-release.sh 2.2.1 --from-github
+server/scripts/publish-release.sh 2.2.1 --from-github
 
 # Inspect first — uploads nothing, touches nothing:
-DRY_RUN=1 v5/server/scripts/publish-release.sh 2.2.1 --from-github
+DRY_RUN=1 server/scripts/publish-release.sh 2.2.1 --from-github
 
 # Offer the release to nobody yet (the safe default for a first publish):
-ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 2.2.1 --from-github
+ROLLOUT_PERCENT=0 server/scripts/publish-release.sh 2.2.1 --from-github
 
 # Then confirm it is actually shippable:
-v5/server/scripts/verify-release.sh 2.2.1
+server/scripts/verify-release.sh 2.2.1
 ```
 
 `publish-release.sh` is the **only** thing that writes `update_config`. It
@@ -143,9 +153,9 @@ PocketBase hooks are **not** deployed by CI and are **not** applied by rebuildin
 the client. They are separate:
 
 ```bash
-v5/server/scripts/hooks-sync.sh --dry-run   # show what differs from the host
-v5/server/scripts/hooks-sync.sh             # upload, restart, verify
-v5/server/scripts/hooks-sync.sh --check     # verify only
+server/scripts/hooks-sync.sh --dry-run   # show what differs from the host
+server/scripts/hooks-sync.sh             # upload, restart, verify
+server/scripts/hooks-sync.sh --check     # verify only
 ```
 
 This exists because `release.pb.js` was committed and never deployed, leaving
@@ -188,7 +198,7 @@ those clients unable to update.
 This distinction is load-bearing: the in-app updater **replaces the app binary
 in place and cannot unpack a zip**. Feeding it a zip would fail checksum
 verification. Publishing to the hub is done with
-`v5/server/scripts/publish-release.sh`, which uploads to a temp name, moves it
+`server/scripts/publish-release.sh`, which uploads to a temp name, moves it
 atomically on the server, then re-downloads each artifact to confirm the served
 bytes hash correctly before writing `update_config`.
 
@@ -200,13 +210,13 @@ For development builds without the full CI pipeline:
 
 ```bash
 # Build for current platform
-cd v5/client && make build
+cd legacy/wails-client && make build
 
 # Build everything locally
-cd v5/client && make build-all
+cd legacy/wails-client && make build-all
 
 # Run quality checks
-cd v5/client && make vet && make test
+cd legacy/wails-client && make vet && make test
 ```
 
 ---
@@ -227,7 +237,7 @@ cd v5/client && make vet && make test
 
 > CI **builds** the admin console but does not publish it. The console is an
 > operator-only tool, not a client artifact — deploy it with
-> `v5/server/scripts/deploy-console.sh`. CI builds it purely so a change that
+> `server/scripts/deploy-console.sh`. CI builds it purely so a change that
 > breaks the build (or the `/admin/` base path) is caught before deploy rather
 > than when an operator opens the page.
 
@@ -260,7 +270,7 @@ set inline per job:
 | `VERSION` | Derived from the tag (`github.ref_name`, leading `v` stripped), falling back to `"dev"`; passed via `-X main.version` |
 | `SING_BOX_VERSION` | Hardcoded as `1.12.1` in the "Download sing-box engine" step |
 | `CGO_ENABLED` | `1` for Linux and macOS (Wails WebView), `0` for Windows (WebView2 COM, pure Go) |
-| `CLIENT_DIR` / `FRONTEND_DIR` | `v5/client` / `v5/client/frontend` |
+| `CLIENT_DIR` / `FRONTEND_DIR` | `legacy/wails-client` / `legacy/wails-client/frontend` |
 
 ---
 

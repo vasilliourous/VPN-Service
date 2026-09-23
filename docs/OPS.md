@@ -168,7 +168,7 @@ Ubuntu 22.04, 1 vCPU / 512MB droplet). Work through these steps in order.
 ```bash
 # 1. Copy server code (secrets.env.age + age-key.txt are required —
 #    setup.sh auto-decrypts them; without the key it hard-fails).
-scp -r v5/server root@new-vps:/root/
+scp -r server root@new-vps:/root/
 
 # 2. Run setup. DNS must already point at this host or Caddy cannot get a
 #    certificate; SKIP_DNS_CHECK=1 only skips the pre-flight, it does NOT
@@ -193,7 +193,7 @@ ssh root@new-vps "DOMAIN=networkingguides.duckdns.org bash /root/server/scripts/
   must update **both** the staging dir and the live dir, then restart
   PocketBase:
   ```bash
-  scp v5/server/pb_hooks/code_lookup.pb.js root@$VPS:/root/server/pb_hooks/
+  scp server/pb_hooks/code_lookup.pb.js root@$VPS:/root/server/pb_hooks/
   ssh $VPS "cp /root/server/pb_hooks/code_lookup.pb.js /opt/pocketbase/pb_hooks/ \
             && chown pocketbase:pocketbase /opt/pocketbase/pb_hooks/code_lookup.pb.js \
             && systemctl restart pocketbase"
@@ -235,7 +235,7 @@ B2_APPLICATION_KEY_ID=xxx \
 B2_APPLICATION_KEY=xxx \
 B2_BUCKET=my-vpn-backup-bucket \
 DOMAIN=networkingguides.duckdns.org \
-ssh root@new-vps 'bash -s' < v5/server/restore.sh
+ssh root@new-vps 'bash -s' < server/restore.sh
 ```
 
 ### Reload After Config Change
@@ -355,7 +355,7 @@ deliberate, documented operation.
 ssh $VPS "ls /var/www/admin/index.html && curl -s -o /dev/null -w '%{http_code}\n' https://networkingguides.duckdns.org/admin/"
 
 # Redeploy it (builds locally, uploads, verifies)
-v5/server/scripts/deploy-console.sh
+server/scripts/deploy-console.sh
 
 # Is the fetch service up? (only needed for releases)
 ssh $VPS "systemctl status locus-fetch --no-pager && curl -s http://127.0.0.1:8091/health"
@@ -402,7 +402,7 @@ tag → wait for CI → run one script.
      artifacts for a version **straight from its GitHub Release**, verifies each
      one, and the `releases.publish` hook action writes `update_config`. The hub
      is the client of GitHub; nothing is uploaded from an operator's machine.
-   - **CLI** — `v5/server/scripts/publish-release.sh <version> --from-github`
+   - **CLI** — `server/scripts/publish-release.sh <version> --from-github`
      does the same job from a machine with repo access, and remains the only way
      to publish a **hand-built or hotfixed binary** that is not on a GitHub
      Release.
@@ -431,11 +431,11 @@ verified and in what order.
 git tag v1.1.0 && git push origin v1.1.0
 
 # 2. Check it before you ship it: fetch from GitHub and validate, touching nothing
-DRY_RUN=1 v5/server/scripts/publish-release.sh 1.1.0 --from-github
+DRY_RUN=1 server/scripts/publish-release.sh 1.1.0 --from-github
 
 # 3. Publish, starting at a small rollout
 PB_ADMIN_EMAIL=admin@networkingguides.duckdns.org PB_ADMIN_PASS=... \
-  v5/server/scripts/publish-release.sh 1.1.0 --from-github   # ROLLOUT_PERCENT defaults to 5
+  server/scripts/publish-release.sh 1.1.0 --from-github   # ROLLOUT_PERCENT defaults to 5
 ```
 
 Omitting `--from-github` uses files from `RELEASE_DIR` (default
@@ -596,7 +596,7 @@ On an older box (or after `ENABLE_UOT=0`), enable it:
 
 ```bash
 # On the VPS, from the repo copy:
-UOT_PORT="${UOT_PORT:-8446}" bash v5/server/scripts/enable-uot.sh
+UOT_PORT="${UOT_PORT:-8446}" bash server/scripts/enable-uot.sh
 systemctl is-active sing-box-uot   # -> active
 
 # The enable script does NOT open the firewall. Confirm 8446 is allowed:
@@ -612,7 +612,7 @@ needed when enabling an older box.
 # On the VPS, from the repo copy (reads passwords, patches tier_configs).
 # No ENABLE_UOT flag needed — advertising is on by default now; pass
 # ENABLE_UOT=0 only to STOP advertising it.
-cd v5/server && python3 scripts/seed-live.py
+cd server && python3 scripts/seed-live.py
 # Tactically: PocketBase admin -> tier_configs -> Strike ->
 #   config JSON add "uot_port": 8446    and    udp_relay=true
 ```
@@ -636,7 +636,7 @@ Rollback (seconds):
 systemctl disable --now sing-box-uot
 rm -f /etc/sing-box/config.json
 # Stop advertising the port, or clients keep trying a dead endpoint:
-cd v5/server && ENABLE_UOT=0 python3 scripts/seed-live.py
+cd server && ENABLE_UOT=0 python3 scripts/seed-live.py
 ```
 
 TCP tiers (8443/44/45) are never touched by the enable script.
@@ -667,7 +667,7 @@ b2 ls --recursive "b2://my-vpn-backup-bucket/backups/" | grep '\.db\.gz$'
 
 ### Restore from Specific Backup
 
-> **Prefer the one-command restore** (`v5/server/restore.sh`) — it provisions a
+> **Prefer the one-command restore** (`server/restore.sh`) — it provisions a
 > blank VPS, downloads the latest backup, verifies the SHA256, restores the DB,
 > aligns the admin password with the secrets file, re-enables the backup timer
 > and smoke-tests everything. The manual steps below are the equivalent for a
@@ -731,7 +731,7 @@ PB_API=https://networkingguides.duckdns.org   # adjust to the hub base URL
 ssh $VPS "cp -a /opt/pocketbase/pb_hooks /root/pb_hooks.bak.$(date +%s)"
 
 # 2. Deploy just the new hook file (does not touch the existing hooks).
-scp v5/server/pb_hooks/code_lookup.pb.js $VPS:/opt/pocketbase/pb_hooks/
+scp server/pb_hooks/code_lookup.pb.js $VPS:/opt/pocketbase/pb_hooks/
 ssh $VPS "chown pocketbase:pocketbase /opt/pocketbase/pb_hooks/code_lookup.pb.js"
 
 # 3. A NEW hook file only registers on restart (edits to existing files hot-reload).

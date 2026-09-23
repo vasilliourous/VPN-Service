@@ -1,7 +1,17 @@
 # Locus Client — Implementation Plan
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > **⚠️ HISTORICAL PLAN (Fyne era).** This is the original phased implementation
-> plan that produced the pre-Wails client. The current client (`v5/client/`) is
+> plan that produced the pre-Wails client. The current client (`legacy/wails-client/`) is
 > a **Wails v2 + Vue 3** app built from the same `internal/` backend packages —
 > see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the GUI migration and
 > [`CLIENT-GUIDE.md`](CLIENT-GUIDE.md) for the current build instructions.

@@ -98,12 +98,12 @@ patch` would treat `--no-tag` as the version word.
 
 1. **`./bump.sh <arg> --no-verify`** — rewrites the six version-bearing files
    and stamps `rsrc_windows_{amd64,arm64}.syso` via
-   `v5/server/scripts/stamp-syso.py` (no Go toolchain needed).
+   `server/scripts/stamp-syso.py` (no Go toolchain needed).
 2. **A stale-artifact gate.** `stamp-syso.py --check` reads the version back
    **out of the committed `.syso` bytes** and refuses to continue if they do not
-   match `v5/VERSION`. This is what makes it impossible to tag the 2.2.7 bug
+   match `the root VERSION file`. This is what makes it impossible to tag the 2.2.7 bug
    again: that tag pointed at a tree whose resources still said 2.2.6.
-3. **`git checkout -- v5/client/go.mod v5/client/go.sum`** — `bump.sh`'s
+3. **`git checkout -- legacy/wails-client/go.mod legacy/wails-client/go.sum`** — `bump.sh`'s
    `go:generate` fallback drags winres dependencies into the module files. This
    drops that noise so the release commit contains only version changes.
 4. **`git add -A && git commit -m "chore(release): <version>"`**
@@ -136,8 +136,8 @@ output is byte-for-byte identical to `go-winres`' own — verified in both
 directions against the real historical artifacts.
 
 ```bash
-python3 v5/server/scripts/stamp-syso.py 2.2.8            # stamp
-python3 v5/server/scripts/stamp-syso.py 2.2.8 --check    # CI / pre-tag gate
+python3 server/scripts/stamp-syso.py 2.2.8            # stamp
+python3 server/scripts/stamp-syso.py 2.2.8 --check    # CI / pre-tag gate
 ```
 
 It refuses (exit 3) rather than guessing when the version *width* changes
@@ -145,7 +145,7 @@ It refuses (exit 3) rather than guessing when the version *width* changes
 recognises. In those cases use `go generate`:
 
 ```bash
-cd v5/client && go generate -tags windows
+cd legacy/wails-client && go generate -tags windows
 ```
 
 ---
@@ -189,10 +189,10 @@ Release. Watch it with `gh run watch` or the Actions tab.
 
 ```bash
 # Hold the rollout at 0 — upload only, offer it to nobody
-ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 2.2.7 --from-github
+ROLLOUT_PERCENT=0 server/scripts/publish-release.sh 2.2.7 --from-github
 
 # Or start the rollout (default 5%)
-v5/server/scripts/publish-release.sh 2.2.7 --from-github
+server/scripts/publish-release.sh 2.2.7 --from-github
 ```
 
 **Confirm the hub is serving it:**
@@ -250,8 +250,8 @@ git ls-remote --tags origin | grep v2.2.7
 | `set GH_TOKEN first` | `GH_TOKEN` not exported in this shell |
 | `working tree is dirty` | `bump.sh` refuses a dirty tree. Commit or stash first. |
 | `bump.sh` consistency gate fails | `pkg-config` missing. Expected here — see above. |
-| `committed rsrc_windows_*.syso do not match vX.Y.Z` | The resources went stale. `release-cut.sh` refuses to tag. Fix with `python3 v5/server/scripts/stamp-syso.py <version>`. |
-| `version width changed (5 -> 6)` | A `2.9.9` → `2.10.0`-style bump cannot be byte-patched. Run `cd v5/client && go generate -tags windows`. |
+| `committed rsrc_windows_*.syso do not match vX.Y.Z` | The resources went stale. `release-cut.sh` refuses to tag. Fix with `python3 server/scripts/stamp-syso.py <version>`. |
+| `version width changed (5 -> 6)` | A `2.9.9` → `2.10.0`-style bump cannot be byte-patched. Run `cd legacy/wails-client && go generate -tags windows`. |
 | CI fails `Check version consistency` with a `.syso` mismatch | Same cause. Stamp, commit, and re-push the tag. |
 | Push hangs, then times out | `GH_TOKEN` unset, or the token lacks `repo` scope |
 | CI green but no release | The tag never reached origin. See above. |
@@ -262,14 +262,14 @@ git ls-remote --tags origin | grep v2.2.7
 
 ## Related
 
-- `v5/docs/CI-CD.md` — the full pipeline: what CI does with the tag, the
+- `docs/CI-CD.md` — the full pipeline: what CI does with the tag, the
   release asset list, and which consumer needs which artefact
-- `v5/docs/SECRETS-MANAGEMENT.md` — how server credentials are stored and
+- `docs/SECRETS-MANAGEMENT.md` — how server credentials are stored and
   rotated
-- `bump.sh` / `v5/server/scripts/bump-version.sh` — the version rewrite itself
+- `bump.sh` / `server/scripts/bump-version.sh` — the version rewrite itself
   and the consistency checks it runs
-- `v5/server/scripts/stamp-syso.py` — stamps the version into the committed
+- `server/scripts/stamp-syso.py` — stamps the version into the committed
   Windows resources with no toolchain; also the `--check` gate
-- `v5/server/scripts/smoke-bump.sh` — offline regression suite for all of the
+- `server/scripts/smoke-bump.sh` — offline regression suite for all of the
   above, including the "stamped under `--no-verify`" case
-- `v5/server/scripts/publish-release.sh` — pushing a built release to the hub
+- `server/scripts/publish-release.sh` — pushing a built release to the hub

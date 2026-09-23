@@ -1,5 +1,15 @@
 # Locus Backend API Reference
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > **Complete public API surface of all `internal/` packages.**
 > If the GUI layer is rewritten or replaced, this document tells you exactly how to
 > interface with each backend package. The packages themselves should NOT be modified
@@ -697,7 +707,7 @@ type Info struct {
 func Detect(version string) Info
 
 // FallbackVersion exposes the compile-time fallback literal so the repo's
-// version-consistency test can assert it matches v5/VERSION.
+// version-consistency test can assert it matches the root VERSION file.
 func FallbackVersion() string
 
 // Describe returns a one-line summary for logs and support reports, e.g.
@@ -717,7 +727,7 @@ func (i Info) Warning() string
   version can be trusted, and distinguishes `uninstrumented_build` from
   `up_to_date` in the update check result.
 - `version_consistency_test.go` (package `main`) and the CI "Check version
-  consistency" step — fail the build when `v5/VERSION`, `main.go`,
+  consistency" step — fail the build when `the root VERSION file`, `main.go`,
   `internal/buildinfo`, `wails.json` and `frontend/package.json` disagree.
 
 ---

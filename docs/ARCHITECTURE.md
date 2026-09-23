@@ -1,10 +1,20 @@
 # Locus Architecture Guide
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > This document describes the current client architecture. The GUI layer is
 > **Wails + Vue 3** (see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the
 > migration history and rollback plan). The backend components (activation,
 > heartbeat, manager, storage, updater) and the TUN-based design described here
-> are accurate against the code in `v5/client/`; see [`BACKEND-API.md`](BACKEND-API.md)
+> are accurate against the code in `legacy/wails-client/`; see [`BACKEND-API.md`](BACKEND-API.md)
 > for their exact API surface.
 
 > **How to architect a compatible Locus client.** This document describes the
@@ -85,7 +95,7 @@
 
 ### 2.1 Main Entry Point (`main.go`)
 
-Wails entry point (`v5/client/main.go`). Responsibilities:
+Wails entry point (`legacy/wails-client/main.go`). Responsibilities:
 1. Create the `App` struct (wraps all `internal/` packages)
 2. Run `wails.Run()` — 480×700 window, shown at launch, binds `App` to the
    Vue 3 frontend

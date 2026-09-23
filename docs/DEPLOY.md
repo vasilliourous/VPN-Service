@@ -3,7 +3,7 @@
 > Deploy the complete Locus server infrastructure on a blank Ubuntu 22.04 VPS.
 
 > **Rebrand note:** The product is now **Locus**, but the live VPS and every
-> deployment script under `v5/server/` still name their installed artifacts
+> deployment script under `server/` still name their installed artifacts
 > **`myvpn-*`** (`/etc/myvpn`, `/usr/local/bin/myvpn-*.sh`, `/var/log/myvpn-*.log`,
 > `/root/…`, systemd units). Those literal `myvpn` paths remain **correct as
 > written** until the server is redeployed/renamed — do not "fix" them to `locus`.
@@ -70,11 +70,11 @@ age-keygen -o age-key.txt
 #    (See SECRETS-MANAGEMENT.md for the full template)
 
 # 4. Encrypt it
-age -r "$(age-keygen -y age-key.txt)" -o v5/server/secrets.env.age .secrets.env
+age -r "$(age-keygen -y age-key.txt)" -o server/secrets.env.age .secrets.env
 shred -u .secrets.env
 
 # 5. Commit the encrypted file
-git add v5/server/secrets.env.age
+git add server/secrets.env.age
 ```
 
 Once this is done, **all credentials are auto-injected at deploy time** from
@@ -86,25 +86,25 @@ Once this is done, **all credentials are auto-injected at deploy time** from
 
 ### Staging the server tree (read this before Option A or B)
 
-`setup.sh` reads **two things that a bare `scp -r v5/server` does not put
+`setup.sh` reads **two things that a bare `scp -r server` does not put
 there for you**. The first is a hard failure; the second already ships in the
 repo, but is worth knowing about because module 05 refuses to deploy without
 it:
 
 | Path on the VPS | Required by | Produce it with |
 |---|---|---|
-| `/root/server/console-dist.tar.gz` | `05-caddy.sh` → `deploy_console()` | `v5/server/scripts/deploy-console.sh` (builds the SPA with npm, uploads the tarball) |
-| `/root/server/scripts/fetch-release.py` | `05-caddy.sh` → `install_fetch_service()` | already in the repo — it arrives with `scp -r v5/server` |
+| `/root/server/console-dist.tar.gz` | `05-caddy.sh` → `deploy_console()` | `server/scripts/deploy-console.sh` (builds the SPA with npm, uploads the tarball) |
+| `/root/server/scripts/fetch-release.py` | `05-caddy.sh` → `install_fetch_service()` | already in the repo — it arrives with `scp -r server` |
 
 So on a **fresh** host the order is:
 
 ```bash
 # 1. Stage the server tree (fetch-release.py comes along; the console bundle does not)
-scp -r v5/server age-key.txt root@your-vps:/root/server/
+scp -r server age-key.txt root@your-vps:/root/server/
 
 # 2. Build + upload the console bundle to /root/server/console-dist.tar.gz
 VPS=root@your-vps DOMAIN=hub.example.com \
-  v5/server/scripts/deploy-console.sh
+  server/scripts/deploy-console.sh
 
 # 3. Deploy
 ssh root@your-vps "/root/server/setup.sh"
@@ -123,7 +123,7 @@ bundle if it is present).
 
 ```bash
 # Copy server code AND age key to the VPS
-scp -r v5/server age-key.txt root@your-vps:/root/server/
+scp -r server age-key.txt root@your-vps:/root/server/
 
 # One-command deploy — secrets auto-decrypt from age-key.txt
 ssh root@your-vps "/root/server/setup.sh"
@@ -136,7 +136,7 @@ tier passwords, and PB admin credentials are all decrypted from
 ### Option B: Pipe with AGE_KEY (CI/CD or no key file on disk)
 
 ```bash
-AGE_KEY=$(cat age-key.txt) ssh root@your-vps 'bash -s' < v5/server/setup.sh
+AGE_KEY=$(cat age-key.txt) ssh root@your-vps 'bash -s' < server/setup.sh
 ```
 
 ### Option C: Manual Env Vars (No Secrets File)
@@ -149,7 +149,7 @@ ADMIN_API_TOKEN=your-token \
 B2_APPLICATION_KEY_ID=xxx \
 B2_APPLICATION_KEY=xxx \
 B2_BUCKET=my-vpn-backup-bucket \
-ssh root@your-vps 'bash -s' < v5/server/setup.sh
+ssh root@your-vps 'bash -s' < server/setup.sh
 ```
 
 The setup script does **everything** automatically:
@@ -242,7 +242,7 @@ After deployment, verify:
 > `systemctl restart pocketbase-backup.timer` (or `enable --now` on a fresh
 > install). `restore.sh` does this automatically.
 
-> **Smoke test:** `setup.sh` runs `v5/server/scripts/smoke-test.sh` automatically
+> **Smoke test:** `setup.sh` runs `server/scripts/smoke-test.sh` automatically
 > at the end (log: `/var/log/myvpn-smoke-test.log`). A fresh deploy should end
 > with **23 passed / 0 failed / 0 warnings**.
 
@@ -267,7 +267,7 @@ After deployment, verify:
 
 ```bash
 # Builds locally, uploads, extracts to /var/www/admin, reloads Caddy, verifies
-v5/server/scripts/deploy-console.sh
+server/scripts/deploy-console.sh
 ```
 
 Day-to-day operations then happen at `https://<domain>/admin/` with the admin
@@ -302,11 +302,11 @@ When credentials change (e.g., B2 application key rotated):
 
 ```bash
 # Decrypt, edit, re-encrypt
-age -d -i age-key.txt v5/server/secrets.env.age > .secrets.env
+age -d -i age-key.txt server/secrets.env.age > .secrets.env
 vim .secrets.env
-age -r "$(age-keygen -y age-key.txt)" -o v5/server/secrets.env.age .secrets.env
+age -r "$(age-keygen -y age-key.txt)" -o server/secrets.env.age .secrets.env
 shred -u .secrets.env
-git add v5/server/secrets.env.age
+git add server/secrets.env.age
 git commit -m "Update credentials"
 ```
 
@@ -321,11 +321,11 @@ rotation, CI/CD integration, and troubleshooting.
 
 ```bash
 # With key file on VPS:
-scp -r v5/server age-key.txt root@new-vps:/root/server/
+scp -r server age-key.txt root@new-vps:/root/server/
 ssh root@new-vps "/root/server/restore.sh"
 
 # Or with AGE_KEY via pipe:
-AGE_KEY=$(cat age-key.txt) ssh root@new-vps 'bash -s' < v5/server/restore.sh
+AGE_KEY=$(cat age-key.txt) ssh root@new-vps 'bash -s' < server/restore.sh
 ```
 
 ### Manual Override
@@ -335,7 +335,7 @@ B2_APPLICATION_KEY_ID=xxx \
 B2_APPLICATION_KEY=xxx \
 B2_BUCKET=my-vpn-backup-bucket \
 DOMAIN=networkingguides.duckdns.org \
-ssh root@new-vps 'bash -s' < v5/server/restore.sh
+ssh root@new-vps 'bash -s' < server/restore.sh
 ```
 
 This will:
@@ -351,4 +351,4 @@ This will:
 > **One-command recovery = plug-n-play.** A blank Ubuntu 22.04 VPS + this repo
 > + `age-key.txt` is all you need: `setup.sh` for a fresh deploy, `restore.sh`
 > for a full migration/disaster recovery. Both were validated live on
-> 2026-08-01 (see `v5/docs/FIXES.md`).
+> 2026-08-01 (see `docs/FIXES.md`).

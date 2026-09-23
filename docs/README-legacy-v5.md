@@ -1,5 +1,15 @@
 # Locus V5 — The Definitive Edition
 
+> **⚠️ STATUS: describes the ARCHIVED client.**
+> This document describes `legacy/wails-client/` — the retired Go + Wails +
+> sing-box client. **The shipping client is `client/`** (the Tauri fork of Clash
+> Verge Rev, tunnelling through mihomo), which has its own docs in
+> `client/docs/`. Paths below that read `legacy/wails-client/` were rewritten
+> from `legacy/wails-client/` in the 2026-09-23 restructure; the content was not otherwise
+> reviewed. Kept because it documents the contract the fork must reproduce —
+> see `legacy/wails-client/ARCHIVED.md`.
+
+
 > **V5 is the consolidated, production-hardened version of Locus.**  
 > It folds everything learned from V1–V4 and real-world VPS testing into one
 > directory: hardened client code, clean server modules, comprehensive documentation,
@@ -10,11 +20,10 @@
 ## What's Inside
 
 ```
-v5/
-├── README.md              # This file — V5 overview
-├── CONTEXT.md             # Agent/developer context — network analysis, protocol tests, reasoning
+legacy/wails-client/       # RETIRED desktop client (Go + Wails + Vue 3)
+docs/CONTEXT.md            # Agent/developer context — network analysis, protocol tests, reasoning
 │
-├── client/                # Desktop client source code (Go + Wails + Vue 3)
+├── (client internals — now under legacy/wails-client/)
 │   ├── main.go            # Wails app entry point (embedds frontend, binds App)
 │   ├── app.go             # App struct — wraps internal/ packages for the UI
 │   ├── wails.json         # Wails project configuration
@@ -86,20 +95,20 @@ v5/
 | **V1** | *(historical)* | ❌ Lost | Two-phase update safety invented here |
 | **V2** | *(removed 2026-08)* | 📚 Git history | Business plans, threat models, competitive intel |
 | **V3** | *(removed 2026-08)* | 📚 Git history | sslocal + tun2socks architecture (tun2socks abandonware) |
-| **V4** | `v4/` | 📚 Reference | Go + Fyne client source code (predecessor to v5/client/) |
-| **V5** | `v5/` | 🏆 **Definitive** | Hardened client + hardened server + comprehensive docs |
-| **modular-vps/** | *(removed 2026-08)* | 📚 Git history | VPS modules tested on Voyager VPS (source for v5/server/) |
+| **V4** | `legacy/v4/` | 📚 Reference | Go + Fyne client source code (predecessor to legacy/wails-client/) |
+| **V5** | restructured 2026-09-23 into `server/`, `legacy/wails-client/`, `docs/` | ⚠️ Archived | The V5 *server* is live; the V5 *client* is retired |
+| **modular-vps/** | *(removed 2026-08)* | 📚 Git history | VPS modules tested on Voyager VPS (source for server/) |
 | **simplified/** | *(removed 2026-08)* | 📚 Git history | Hysteria 2 / QUIC-based alternative (blocked by N4L UDP block) |
 
-The **client source code** now lives in `v5/client/` — ported from v4 with
+The **client source code** now lives in `legacy/wails-client/` — ported from v4 with
 significant hardening improvements (see below). The older `v4/` directory
-remains as reference but all active development is on `v5/client/`.
+remains as reference but all active development is on `legacy/wails-client/`.
 
 ---
 
 ## What Makes V5 Different
 
-### Client Hardening (v5/client/ vs v4/)
+### Client Hardening (legacy/wails-client/ vs v4/)
 
 1. **Context propagation** — All network operations accept `context.Context` for cancellation and timeout
 2. **Panic recovery** — Global recovery in `main()`, per-goroutine recovery in GUI
@@ -138,7 +147,7 @@ remains as reference but all active development is on `v5/client/`.
 # 1. Copy the server tree AND the age key to a fresh VPS, then run the orchestrator.
 #    Secrets (domain, tokens, tier passwords, B2 keys, PB admin) decrypt from
 #    secrets.env.age — see docs/SECRETS-MANAGEMENT.md
-scp -r v5/server age-key.txt root@YOUR_VPS:/root/server/
+scp -r server age-key.txt root@YOUR_VPS:/root/server/
 ssh root@YOUR_VPS "/root/server/setup.sh"
 
 # 2. Verify the deployment (expect 23 passed / 0 failed)
@@ -151,10 +160,10 @@ ssh root@YOUR_VPS "DOMAIN=networkingguides.duckdns.org /root/server/scripts/smok
 ./scripts/generate_codes.sh https://networkingguides.duckdns.org YOUR_PB_ADMIN_JWT eco 50
 
 # 4. Build client
-cd v5/client && make build
+cd legacy/wails-client && make build
 
 # 5. Build for all platforms
-cd v5/client && make build-all
+cd legacy/wails-client && make build-all
 ```
 
 > The code generator takes the **PocketBase admin JWT**, not the `ADMIN_API_TOKEN`
@@ -194,7 +203,7 @@ The client is built and released via **GitHub Actions**.
 | Pull request | Lint + vet + test build |
 
 **File:** `.github/workflows/build.yml` (repo root — GitHub Actions only runs root workflows)
-**Docs:** `v5/docs/CI-CD.md`
+**Docs:** `docs/CI-CD.md`
 **Trigger:** `git tag v2.0.0 && git push origin v2.0.0`
 
 ### Build Artifacts
@@ -222,7 +231,7 @@ locus-windows-amd64.exe  locus-darwin-arm64
 
 The updater replaces the app binary in place and cannot unpack a zip, so these
 raw artifacts are what get published to the hub via
-`v5/server/scripts/publish-release.sh`. The build **fails** if any platform
+`server/scripts/publish-release.sh`. The build **fails** if any platform
 artifact is missing from `manifest.json`.
 
 ### Local Development (no CI)
@@ -232,10 +241,10 @@ There is no `make ci` target — the pipeline runs on GitHub Actions only
 
 ```bash
 # Hot-reload development (Vite dev server + Wails)
-cd v5/client && make dev
+cd legacy/wails-client && make dev
 
 # Local production build
-cd v5/client && make build
+cd legacy/wails-client && make build
 ```
 
 > **Note:** the frontend must be built before Go compiles — `//go:embed`
@@ -255,23 +264,23 @@ cd v5/client && make build
 
 | Resource | Location |
 |----------|----------|
-| Architecture | `v5/docs/ARCHITECTURE.md` |
-| Client build guide | `v5/docs/CLIENT-GUIDE.md` |
-| CI/CD pipeline | `v5/docs/CI-CD.md` |
-| Server deployment | `v5/docs/DEPLOY.md` |
-| Operations manual | `v5/docs/OPS.md` |
-| API reference | `v5/docs/API.md` |
-| Implementation plan | `v5/docs/IMPLEMENT.md` |
-| UI design spec | `v5/docs/UI-AESTHETICS.md` |
-| Known issues & fixes | `v5/docs/FIXES.md` |
-| Project context | `v5/CONTEXT.md` |
+| Architecture | `docs/ARCHITECTURE.md` |
+| Client build guide | `docs/CLIENT-GUIDE.md` |
+| CI/CD pipeline | `docs/CI-CD.md` |
+| Server deployment | `docs/DEPLOY.md` |
+| Operations manual | `docs/OPS.md` |
+| API reference | `docs/API.md` |
+| Implementation plan | `docs/IMPLEMENT.md` |
+| UI design spec | `docs/UI-AESTHETICS.md` |
+| Known issues & fixes | `docs/FIXES.md` |
+| Project context | `docs/CONTEXT.md` |
 
 ## Version
 
 **Current:** Locus Client v2.0.0 / Server v1.0.0
 
-The **client version (single source of truth)** is the one-line `v5/VERSION`
+The **client version (single source of truth)** is the one-line `the root VERSION file`
 file — bump that one file; the Makefile and CI (`v*` git tag) read and inject it.
-Server/engine versions are pinned at build/deploy time in `v5/server/`
+Server/engine versions are pinned at build/deploy time in `server/`
 modules (e.g. `02-shadowsocks.sh`: `SING_BOX_VERSION`, `SS_VERSION`;
 `05-caddy.sh`: `CADDY_VERSION`; `06-pocketbase.sh`: `PB_VERSION`).

@@ -262,7 +262,7 @@ The API endpoints are PocketBase JS hooks, not collections. Copy them to
 `/opt/pocketbase/pb_hooks/`:
 
 ```bash
-scp v5/server/pb_hooks/*.pb.js root@your-vps:/opt/pocketbase/pb_hooks/
+scp server/pb_hooks/*.pb.js root@your-vps:/opt/pocketbase/pb_hooks/
 systemctl restart pocketbase
 ```
 
@@ -391,7 +391,7 @@ curl -s -X POST https://networkingguides.duckdns.org/api/activate \
 |------|-----------------|
 | Admin UI | `https://networkingguides.duckdns.org/_/` |
 | API base | `https://networkingguides.duckdns.org` |
-| All credentials | Encrypted in `v5/server/secrets.env.age` — see [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) |
+| All credentials | Encrypted in `server/secrets.env.age` — see [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) |
 | Tier passwords | `/root/.tier_passwords` on VPS (auto-deployed from secrets) |
 | Admin API token | `/root/.admin_api_token` on VPS (auto-deployed from secrets) |
 | B2 creds file | `/root/.b2-creds` on VPS (auto-deployed from secrets) |
