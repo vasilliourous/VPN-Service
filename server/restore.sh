@@ -2,7 +2,7 @@
 # Locus VPS Restore — Provision + restore from B2 backup
 # Usage:
 #   From-scratch restore (age key file on VPS):
-#     scp -r v5/server age-key.txt root@new-vps:/root/server/
+#     scp -r server age-key.txt root@new-vps:/root/server/
 #     ssh root@new-vps "/root/server/restore.sh"
 #
 #   From-scratch restore (pipe with AGE_KEY):
@@ -40,7 +40,7 @@ fail() { echo -e "${RED}[FAIL]${NC} $*" | tee -a "$LOGFILE"; exit 1; }
 # FIX: Uses temp file instead of process substitution (source <(cmd)).
 # Process substitution is unreliable in non-interactive SSH sessions —
 # variables may appear sourced (exit 0) without actually loading.
-# See v5/docs/FIXES.md entry S9 for details.
+# See docs/FIXES.md entry S9 for details.
 SECRETS_FILE="${SCRIPT_DIR}/secrets.env.age"
 
 # Ensure age is installed before attempting decryption

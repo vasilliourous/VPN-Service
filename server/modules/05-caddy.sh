@@ -376,7 +376,7 @@ install_fetch_service() {
     # The fetch service itself must exist where the unit expects it.
     if [ ! -f /root/server/scripts/fetch-release.py ]; then
         fail "scripts/fetch-release.py not found at /root/server/scripts — the release
-     fetcher cannot be installed. Re-upload the server tree (scp -r v5/server)."
+     fetcher cannot be installed. Re-upload the server tree (scp -r server)."
     fi
 
     # ── Retire the old uploader ──
@@ -426,7 +426,7 @@ deploy_console() {
             return 0
         fi
         fail "Admin console bundle missing at ${bundle} and no console deployed.
-     Fix: run  v5/server/scripts/deploy-console.sh  from your workstation
+     Fix: run  server/scripts/deploy-console.sh  from your workstation
      (it builds the SPA locally and uploads the tarball), then re-run setup.sh.
      To deploy without the console, set SKIP_CONSOLE=1 (not recommended)."
     fi
@@ -441,7 +441,7 @@ deploy_console() {
         find "$staging" -type f -delete 2>/dev/null
         find "$staging" -depth -type d -empty -delete 2>/dev/null
         fail "Could not extract ${bundle} — the console bundle is corrupt.
-     Re-run v5/server/scripts/deploy-console.sh to rebuild and re-upload it."
+     Re-run server/scripts/deploy-console.sh to rebuild and re-upload it."
     fi
     # A bundle that extracts but has no entrypoint is still a broken console —
     # e.g. a tarball made from the wrong directory level (dist/ vs dist/*).
@@ -450,14 +450,14 @@ deploy_console() {
         find "$staging" -depth -type d -empty -delete 2>/dev/null
         fail "Console bundle has no index.html.
      The tarball was probably built from the wrong level — it must contain the
-     CONTENTS of v5/console/dist/, not the dist/ directory itself."
+     CONTENTS of server/console/dist/, not the dist/ directory itself."
     fi
     # The Vite base must be /admin/ or every asset 404s behind the subpath.
     if ! grep -q '/admin/assets/' "$staging/index.html"; then
         find "$staging" -type f -delete 2>/dev/null
         find "$staging" -depth -type d -empty -delete 2>/dev/null
         fail "Console bundle index.html does not reference /admin/assets/.
-     Check 'base' in v5/console/vite.config.ts — it must be '/admin/'."
+     Check 'base' in server/console/vite.config.ts — it must be '/admin/'."
     fi
     # Verified — replace the live console.
     find "$target" -mindepth 1 -delete 2>/dev/null

@@ -2,7 +2,7 @@
 # deploy-console.sh — build the admin console and push it to the live hub.
 #
 # Usage:
-#   VPS=root@host DOMAIN=host v5/server/scripts/deploy-console.sh
+#   VPS=root@host DOMAIN=host server/scripts/deploy-console.sh
 #
 # Both VPS and DOMAIN are required and have NO default. VPS is the host to
 # upload to; DOMAIN is the hostname the script verifies against afterwards.
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-CONSOLE_DIR="${REPO_ROOT}/v5/console"
+CONSOLE_DIR="${REPO_ROOT}/server/console"
 REMOTE_BUNDLE="/root/server/console-dist.tar.gz"
 REMOTE_DIR="/var/www/admin"
 

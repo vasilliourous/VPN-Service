@@ -6,7 +6,7 @@
 # game/voice UDP over TCP.
 #
 # This is the "enact #7 / gaming UDP" step for an existing box. It shares the
-# exact logic of v5/server/modules/02-shadowsocks.sh (the optional ENABLE_UOT
+# exact logic of server/modules/02-shadowsocks.sh (the optional ENABLE_UOT
 # block) but is safe to run again on a live box without re-running the full
 # setup (it will not touch the 8443/44/45 shadowsocks-* services, Caddy,
 # PocketBase, tc, or backups).
@@ -15,7 +15,7 @@
 #   # one-time, on the VPS from the repo copy:
 #   UOT_PORT="${UOT_PORT:-8446}" \
 #   SING_BOX_VERSION="${SING_BOX_VERSION:-v1.12.1}" \
-#     bash v5/server/scripts/enable-uot.sh
+#     bash server/scripts/enable-uot.sh
 #
 # Rollback:  systemctl disable --now sing-box-uot && rm -f /etc/sing-box/config.json
 #
@@ -104,7 +104,7 @@ ss -ltnp 2>/dev/null | grep -q ":$UOT_PORT " && log "✓ listening on :${UOT_POR
 
 log "Done. sing-box UoT endpoint active on :${UOT_PORT}."
 imply "Make Strike advertise it to clients (udp_relay=true + uot_port=${UOT_PORT}) by re-running the seed:"
-imply "  cd v5/server && DOMAIN=\$DOMAIN python3 scripts/seed-pb.py   (or set via PocketBase tier_configs->Strike)"
+imply "  cd server && DOMAIN=\$DOMAIN python3 scripts/seed-pb.py   (or set via PocketBase tier_configs->Strike)"
 imply "  Add VERIFY=1 to also run a throwaway end-to-end activation check."
 imply "Then run a 5-minute UDP gaming/voice check and the client DNS-over-UoT probe (see docs/OPS.md #7 runbook)."
 imply "Rollback:  systemctl disable --now sing-box-uot && rm -f $CONFIG_FILE"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Locus Modular VPS Setup — Orchestrator
 # Usage:
-#   1. scp -r v5/server age-key.txt root@your-vps:/root/server/
+#   1. scp -r server age-key.txt root@your-vps:/root/server/
 #   2. ssh root@your-vps "/root/server/setup.sh"
 #
 # Secrets are auto-decrypted from secrets.env.age using age.
@@ -30,7 +30,7 @@ fail() { echo -e "${RED}[FAIL]${NC} $*" | tee -a "$LOGFILE"; exit 1; }
 # FIX: Uses temp file instead of process substitution (source <(cmd)).
 # Process substitution is unreliable in non-interactive SSH sessions —
 # variables may appear sourced (exit 0) without actually loading.
-# See v5/docs/FIXES.md entry S9 for details.
+# See docs/FIXES.md entry S9 for details.
 SECRETS_FILE="${SCRIPT_DIR}/secrets.env.age"
 
 # Ensure age is installed before attempting decryption
@@ -465,7 +465,7 @@ log "       (PB_ADMIN_JWT is the PB_TOKEN line in /root/.pb_admin_creds —"
 log "        the ADMIN_API_TOKEN is rejected for record access by PB 0.22)"
 fi
 log ""
-log "   Publish a client release: tag v* -> CI -> v5/server/scripts/publish-release.sh"
+log "   Publish a client release: tag v* -> CI -> server/scripts/publish-release.sh"
 log ""
 log "═══════════════════════════════════════════"
 log "══════════════════════════════════════════"

@@ -13,13 +13,13 @@
 # Everything runs with DRY_RUN=1, so the script never SSHes, never uploads and
 # never touches PocketBase. Only the decision logic is exercised.
 #
-# Usage: v5/server/scripts/smoke-publish.sh [path-to-publish-release.sh]
+# Usage: server/scripts/smoke-publish.sh [path-to-publish-release.sh]
 #
 # Exit codes: 0 all assertions held, 1 an assertion failed.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PUBLISH="${1:-${REPO_ROOT}/v5/server/scripts/publish-release.sh}"
+PUBLISH="${1:-${REPO_ROOT}/server/scripts/publish-release.sh}"
 [ -f "$PUBLISH" ] || { echo "smoke: no such script: $PUBLISH" >&2; exit 1; }
 PUBLISH="$(cd "$(dirname "$PUBLISH")" && pwd)/$(basename "$PUBLISH")"
 

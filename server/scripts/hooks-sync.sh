@@ -17,7 +17,7 @@
 # succeeded.
 #
 # WHAT IT DOES
-#   1. Compares each v5/server/pb_hooks/*.pb.js against the live
+#   1. Compares each server/pb_hooks/*.pb.js against the live
 #      /opt/pocketbase/pb_hooks/ copy (sha256), and reports the diff.
 #   2. Uploads only what changed, to a temp name, then moves it into place
 #      atomically — so a half-written hook is never loaded.
@@ -29,10 +29,10 @@
 # indistinguishable from a successful deploy until a student complains.
 #
 # Usage:
-#   v5/server/scripts/hooks-sync.sh                # sync + restart + verify
-#   v5/server/scripts/hooks-sync.sh --dry-run      # show the diff, change nothing
-#   v5/server/scripts/hooks-sync.sh --no-restart   # upload only
-#   v5/server/scripts/hooks-sync.sh --check        # verify only, upload nothing
+#   server/scripts/hooks-sync.sh                # sync + restart + verify
+#   server/scripts/hooks-sync.sh --dry-run      # show the diff, change nothing
+#   server/scripts/hooks-sync.sh --no-restart   # upload only
+#   server/scripts/hooks-sync.sh --check        # verify only, upload nothing
 #
 # Environment:
 #   VPS      ssh target (default root@networkingguides.duckdns.org)
@@ -46,7 +46,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-HOOKS_SRC="${REPO_ROOT}/v5/server/pb_hooks"
+HOOKS_SRC="${REPO_ROOT}/server/pb_hooks"
 
 VPS="${VPS:-root@networkingguides.duckdns.org}"
 PB_API="${PB_API:-https://networkingguides.duckdns.org}"

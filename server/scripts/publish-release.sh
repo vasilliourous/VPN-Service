@@ -7,17 +7,17 @@
 # points `update_config` at them, starting at a small rollout.
 #
 # Usage:
-#   v5/server/scripts/publish-release.sh 2.2.1
+#   server/scripts/publish-release.sh 2.2.1
 #
 #   # Fetch the artifacts from the GitHub Release instead of from disk
 #   # (this is the normal path — CI already built and attached them):
-#   v5/server/scripts/publish-release.sh 2.2.1 --from-github
+#   server/scripts/publish-release.sh 2.2.1 --from-github
 #
 #   # Dry run — does everything except upload and touch the hub:
-#   DRY_RUN=1 v5/server/scripts/publish-release.sh 2.2.1 --from-github
+#   DRY_RUN=1 server/scripts/publish-release.sh 2.2.1 --from-github
 #
 #   # Publish but keep the rollout at 0 (upload only, offer to nobody):
-#   ROLLOUT_PERCENT=0 v5/server/scripts/publish-release.sh 2.2.1
+#   ROLLOUT_PERCENT=0 server/scripts/publish-release.sh 2.2.1
 #
 # WHY --from-github EXISTS
 #   The first live publish of a release was done with an empty RELEASE_DIR. The

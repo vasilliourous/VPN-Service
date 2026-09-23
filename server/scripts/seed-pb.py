@@ -152,7 +152,7 @@ if not token_valid:
             "  secrets.env.age. It is deliberately NOT generated here: it is\n"
             "  stored inside the database that restore.sh restores, so a\n"
             "  generated value makes disaster recovery impossible.\n"
-            "  Fix: deploy via v5/server/setup.sh (which decrypts the secrets),\n"
+            "  Fix: deploy via server/setup.sh (which decrypts the secrets),\n"
             "  or pass PB_ADMIN_PASS=... explicitly."
         )
 

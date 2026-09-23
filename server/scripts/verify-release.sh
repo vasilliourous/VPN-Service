@@ -21,8 +21,8 @@
 # anything. Safe to run at any time, including on a release you are unsure about.
 #
 # Usage:
-#   v5/server/scripts/verify-release.sh 2.2.1
-#   v5/server/scripts/verify-release.sh 2.2.1 --local /path/to/artifacts
+#   server/scripts/verify-release.sh 2.2.1
+#   server/scripts/verify-release.sh 2.2.1 --local /path/to/artifacts
 #
 # Environment:
 #   VPS      ssh target (default root@networkingguides.duckdns.org)
@@ -156,7 +156,7 @@ if [ "$code" = "200" ]; then
     fi
 else
     bad "GET /api/release -> HTTP ${code}"
-    note "the release.pb.js hook may not be deployed: v5/server/scripts/hooks-sync.sh --check"
+    note "the release.pb.js hook may not be deployed: server/scripts/hooks-sync.sh --check"
 fi
 
 # ── 4. Every advertised URL serves bytes matching its recorded hash ────────

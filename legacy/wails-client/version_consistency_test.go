@@ -15,12 +15,12 @@ import (
 //
 // The client version is duplicated across six files, and they can silently drift:
 //
-//	v5/VERSION               — the canonical runtime source (Makefile + CI read it)
+//	<root>/VERSION           — the canonical runtime source (Makefile + CI read it)
 //	main.go `version`        — the fallback literal, compiled in when ldflags is absent
 //	wails.json "version"     — Wails build metadata
 //	frontend/package.json    — npm build metadata
 //
-// Only v5/VERSION is authoritative for releases. The copies exist because the
+// Only the root VERSION file is authoritative for releases. The copies exist because the
 // tooling reads them independently, but when they disagree the result is a
 // binary whose diagnostics, installer metadata and update comparisons tell
 // three different stories. This test makes the drift a build failure instead of
@@ -28,20 +28,21 @@ import (
 //
 // NOTE: the test is intentionally NOT run against main.go's fallback alone —
 // the official build overrides it via -ldflags. It checks that the *fallback*
-// matches v5/VERSION, because a stale fallback is what an uninstrumented build
+// matches the root VERSION file, because a stale fallback is what an uninstrumented build
 // reports, and buildinfo.Detect flags that case as untrustworthy.
 
-// repoVersion reads the canonical version from v5/VERSION.
+// repoVersion reads the canonical version from the root VERSION file.
 func repoVersion(t *testing.T) string {
 	t.Helper()
-	// This package lives at v5/client, so v5/VERSION is one level up.
-	data, err := os.ReadFile(filepath.Join("..", "VERSION"))
+	// This package lives at legacy/wails-client, so the root VERSION file is
+	// two levels up (wails-client -> legacy -> root).
+	data, err := os.ReadFile(filepath.Join("..", "..", "VERSION"))
 	if err != nil {
-		t.Fatalf("cannot read v5/VERSION: %v", err)
+		t.Fatalf("cannot read the root VERSION file: %v", err)
 	}
 	v := strings.TrimSpace(string(data))
 	if v == "" {
-		t.Fatal("v5/VERSION is empty")
+		t.Fatal("the root VERSION file is empty")
 	}
 	return v
 }
@@ -49,9 +50,9 @@ func repoVersion(t *testing.T) string {
 func TestFallbackVersionMatchesRepoVersion(t *testing.T) {
 	want := repoVersion(t)
 	if version != want {
-		t.Errorf("main.go fallback version = %q, but v5/VERSION = %q.\n"+
+		t.Errorf("main.go fallback version = %q, but root VERSION = %q.\n"+
 			"An uninstrumented build would report a version that does not exist in "+
-			"the source tree. Update the fallback in main.go to match v5/VERSION.",
+			"the source tree. Update the fallback in main.go to match the root VERSION file.",
 			version, want)
 	}
 }
@@ -63,7 +64,7 @@ func TestBuildinfoFallbackMatchesRepoVersion(t *testing.T) {
 	fb := buildinfo.FallbackVersion()
 	want := repoVersion(t)
 	if fb != want {
-		t.Errorf("internal/buildinfo fallbackVersion = %q, but v5/VERSION = %q", fb, want)
+		t.Errorf("internal/buildinfo fallbackVersion = %q, but root VERSION = %q", fb, want)
 	}
 }
 
@@ -80,7 +81,7 @@ func TestWailsJSONVersionMatchesRepoVersion(t *testing.T) {
 		t.Fatalf("wails.json is not valid JSON: %v", err)
 	}
 	if cfg.Version != want {
-		t.Errorf("wails.json version = %q, but v5/VERSION = %q", cfg.Version, want)
+		t.Errorf("wails.json version = %q, but root VERSION = %q", cfg.Version, want)
 	}
 }
 
@@ -97,7 +98,7 @@ func TestFrontendPackageVersionMatchesRepoVersion(t *testing.T) {
 		t.Fatalf("frontend/package.json is not valid JSON: %v", err)
 	}
 	if pkg.Version != want {
-		t.Errorf("frontend/package.json version = %q, but v5/VERSION = %q", pkg.Version, want)
+		t.Errorf("frontend/package.json version = %q, but root VERSION = %q", pkg.Version, want)
 	}
 }
 
@@ -112,7 +113,7 @@ func TestFrontendPackageVersionMatchesRepoVersion(t *testing.T) {
 // before someone tightens the CI install step.
 //
 // The lockfile carries the version twice: once at the document root and once in
-// packages[""]. Both must agree with v5/VERSION, or `npm ci` becomes a
+// packages[""]. Both must agree with the root VERSION file, or `npm ci` becomes a
 // release-blocking failure.
 func TestFrontendLockfileVersionMatchesRepoVersion(t *testing.T) {
 	want := repoVersion(t)
@@ -130,8 +131,8 @@ func TestFrontendLockfileVersionMatchesRepoVersion(t *testing.T) {
 		t.Fatalf("frontend/package-lock.json is not valid JSON: %v", err)
 	}
 	if lock.Version != want {
-		t.Errorf("frontend/package-lock.json root version = %q, but v5/VERSION = %q.\n"+
-			"Bump it with: v5/server/scripts/bump-version.sh <version>",
+		t.Errorf("frontend/package-lock.json root version = %q, but root VERSION = %q.\n"+
+			"Bump it with: server/scripts/bump-version.sh <version>",
 			lock.Version, want)
 	}
 	// packages[""] is the entry describing this package itself. It is a
@@ -139,7 +140,7 @@ func TestFrontendLockfileVersionMatchesRepoVersion(t *testing.T) {
 	if root, ok := lock.Packages[""]; ok {
 		if root.Version != want {
 			t.Errorf("frontend/package-lock.json packages[\"\"] version = %q, but "+
-				"v5/VERSION = %q — `npm ci` would fail on this mismatch",
+				"root VERSION = %q — `npm ci` would fail on this mismatch",
 				root.Version, want)
 		}
 	} else {
@@ -169,7 +170,7 @@ func TestGeneratedWindowsResourceVersionMatchesRepoVersion(t *testing.T) {
 	if !strings.Contains(src, needle) {
 		t.Errorf("main.go go:generate directive does not contain %q; "+
 			"a stale value here ships a Windows binary whose file version "+
-			"disagrees with v5/VERSION (%s)", needle, want)
+			"disagrees with the root VERSION file (%s)", needle, want)
 	}
 }
 
@@ -254,7 +255,7 @@ func readWindowsResource(t *testing.T, path string) windowsResource {
 
 // TestCommittedWindowsResourceBinariesMatchRepoVersion is the check that would
 // have caught the shipped defect: the committed rsrc_windows_*.syso files
-// stamped version 2.0.0 (and product name "MyVPN") while v5/VERSION said 2.1.0
+// stamped version 2.0.0 (and product name "MyVPN") while the root VERSION said 2.1.0
 // and the app called itself Locus. Nothing detected it, because the previous
 // guard only grepped the go:generate directive for the right number — and the
 // directive WAS right. The stale artifacts are what shipped.
@@ -279,13 +280,13 @@ func TestCommittedWindowsResourceBinariesMatchRepoVersion(t *testing.T) {
 					"updated rather than deleted", path)
 			}
 			if res.FileVersion != want {
-				t.Errorf("%s FileVersion = %q, but v5/VERSION = %q.\n"+
+				t.Errorf("%s FileVersion = %q, but root VERSION = %q.\n"+
 					"The Windows Properties tab would show a version that no longer "+
-					"exists. Regenerate: cd v5/client && go generate -tags windows",
+					"exists. Regenerate: cd legacy/wails-client && go generate -tags windows",
 					path, res.FileVersion, want)
 			}
 			if res.ProductVersion != want {
-				t.Errorf("%s ProductVersion = %q, but v5/VERSION = %q",
+				t.Errorf("%s ProductVersion = %q, but root VERSION = %q",
 					path, res.ProductVersion, want)
 			}
 			// Brand check: the old resources said "MyVPN" long after the product
@@ -321,9 +322,9 @@ func TestNoUnaccountedCopyOfVersion(t *testing.T) {
 	want := repoVersion(t)
 
 	// Files whose copy of the version is intentional and maintained. Keep in
-	// sync with KNOWN_VERSION_FILES in v5/server/scripts/bump-version.sh.
+	// sync with KNOWN_VERSION_FILES in server/scripts/bump-version.sh.
 	accounted := map[string]string{
-		filepath.FromSlash("../VERSION"):                      "canonical source of truth",
+		filepath.FromSlash("../../VERSION"):                   "canonical source of truth",
 		filepath.FromSlash("main.go"):                         "runtime fallback + go:generate directive",
 		filepath.FromSlash("internal/buildinfo/buildinfo.go"): "uninstrumented-build fallback",
 		filepath.FromSlash("wails.json"):                      "Wails build metadata",
@@ -378,7 +379,7 @@ func TestNoUnaccountedCopyOfVersion(t *testing.T) {
 		sort.Strings(offenders)
 		t.Errorf("version %s appears in %d file(s) not maintained by the release tooling:\n%s\n\n"+
 			"Either add each file to KNOWN_VERSION_FILES in "+
-			"v5/server/scripts/bump-version.sh (and to the accounting map in this "+
+			"server/scripts/bump-version.sh (and to the accounting map in this "+
 			"test), or read the version from a maintained source instead of "+
 			"hardcoding it. An unaccounted copy is what makes a release ship a "+
 			"binary that reports a version the source tree disagrees with.",

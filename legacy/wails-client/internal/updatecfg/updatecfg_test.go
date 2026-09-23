@@ -21,7 +21,8 @@ import (
 	"locus/internal/updatecfg"
 )
 
-// repoRoot walks up from v5/client/internal/updatecfg to the repository root.
+// repoRoot walks up from legacy/wails-client/internal/updatecfg to the repo root.
+// Depth is 4: internal/updatecfg -> internal -> wails-client -> legacy -> root.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
@@ -45,7 +46,7 @@ func readRepoFile(t *testing.T, rel string) string {
 // platform, that platform silently stops receiving updates — with no error,
 // because a missing field just leaves the client on the legacy linux URL.
 func TestHookEmitsTheResponseFieldsTheClientReads(t *testing.T) {
-	hook := readRepoFile(t, "v5/server/pb_hooks/heartbeat.pb.js")
+	hook := readRepoFile(t, "server/pb_hooks/heartbeat.pb.js")
 
 	for _, platform := range updatecfg.Platforms {
 		t.Run("url/"+platform, func(t *testing.T) {
@@ -80,7 +81,7 @@ func TestHookEmitsTheResponseFieldsTheClientReads(t *testing.T) {
 // invisible — encoding/json ignores unknown keys — which is precisely the bug
 // class that disabled UoT fleet-wide (FIXES.md 29).
 func TestGoClientParsesTheResponseFieldsTheHookEmits(t *testing.T) {
-	src := readRepoFile(t, "v5/client/internal/heartbeat/heartbeat.go")
+	src := readRepoFile(t, "legacy/wails-client/internal/heartbeat/heartbeat.go")
 
 	// Every field the hook emits must have a matching struct tag. Checked by
 	// substring against the raw source rather than by reflection, because the
@@ -117,8 +118,8 @@ func TestPublishScriptsWriteTheRecordFieldsTheHookReads(t *testing.T) {
 		t.Fatalf("DownloadField no longer starts with %q — this guard assumes it", prefix)
 	}
 
-	t.Run("v5/server/scripts/publish-release.sh", func(t *testing.T) {
-		body := readRepoFile(t, "v5/server/scripts/publish-release.sh")
+	t.Run("server/scripts/publish-release.sh", func(t *testing.T) {
+		body := readRepoFile(t, "server/scripts/publish-release.sh")
 		// Builds `body["download_" + key]` where key is the platform.
 		if !strings.Contains(body, `body["`+prefix+`" + key]`) {
 			t.Errorf("publish-release.sh no longer writes body[%q + key]; the hub "+
@@ -160,7 +161,7 @@ func TestPublishScriptsWriteTheRecordFieldsTheHookReads(t *testing.T) {
 // the others yields a published release whose URLs 404.
 func TestArtifactFilenamesMatchCI(t *testing.T) {
 	workflow := readRepoFile(t, ".github/workflows/build.yml")
-	publish := readRepoFile(t, "v5/server/scripts/publish-release.sh")
+	publish := readRepoFile(t, "server/scripts/publish-release.sh")
 
 	for _, a := range updatecfg.Artifacts {
 		t.Run(a.Platform, func(t *testing.T) {

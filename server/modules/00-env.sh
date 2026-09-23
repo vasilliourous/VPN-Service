@@ -92,7 +92,7 @@ SOFT_FAIL
 
   Fix one of:
     1. Deploy from the operator workstation (recommended):
-         scp -r v5/server root@host:/root/server/     # includes decrypted secrets
+         scp -r server root@host:/root/server/     # includes decrypted secrets
          ssh root@host "/root/server/setup.sh"
        (setup.sh decrypts secrets.env.age and exports these.)
 

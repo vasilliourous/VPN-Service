@@ -6,13 +6,13 @@
 # The client version is duplicated across six files, and the release pipeline
 # reads them independently:
 #
-#   v5/VERSION                                    canonical, read by CI + Makefile
-#   v5/client/main.go                             var version (fallback literal)
-#   v5/client/main.go                             go:generate --product-version/--file-version
-#   v5/client/internal/buildinfo/buildinfo.go      fallbackVersion
-#   v5/client/wails.json                          Wails build metadata
-#   v5/client/frontend/package.json               npm build metadata
-#   v5/client/frontend/package-lock.json          npm lockfile root (see DRIFT below)
+#   VERSION                                       canonical, read by CI + Makefile
+#   legacy/wails-client/main.go                   var version (fallback literal)
+#   legacy/wails-client/main.go                   go:generate --product-version/--file-version
+#   legacy/wails-client/internal/buildinfo/buildinfo.go   fallbackVersion
+#   legacy/wails-client/wails.json                Wails build metadata
+#   legacy/wails-client/frontend/package.json     npm build metadata
+#   legacy/wails-client/frontend/package-lock.json   npm lockfile root (see DRIFT below)
 #
 # Editing them by hand is how drift happens. In 2.1.0 the go:generate DIRECTIVE
 # was bumped but the committed rsrc_windows_*.syso were not regenerated, so the
@@ -37,12 +37,12 @@
 # the only thing in `git diff`.
 #
 # Usage:
-#   v5/server/scripts/bump-version.sh patch          # 2.2.0 -> 2.2.1
-#   v5/server/scripts/bump-version.sh minor          # 2.2.0 -> 2.3.0
-#   v5/server/scripts/bump-version.sh major          # 2.2.0 -> 3.0.0
-#   v5/server/scripts/bump-version.sh 2.5.3          # explicit
-#   v5/server/scripts/bump-version.sh patch --dry-run
-#   v5/server/scripts/bump-version.sh patch --no-verify   # skip the test gate
+#   server/scripts/bump-version.sh patch          # 2.2.0 -> 2.2.1
+#   server/scripts/bump-version.sh minor          # 2.2.0 -> 2.3.0
+#   server/scripts/bump-version.sh major          # 2.2.0 -> 3.0.0
+#   server/scripts/bump-version.sh 2.5.3          # explicit
+#   server/scripts/bump-version.sh patch --dry-run
+#   server/scripts/bump-version.sh patch --no-verify   # skip the test gate
 #
 # Environment:
 #   GO_BIN   path to the go binary if it is not on PATH (see local-toolchain note
@@ -52,15 +52,15 @@
 #             3 self-check (regeneration/consistency) failure.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-VERSION_FILE="v5/VERSION"
-MAIN_GO="v5/client/main.go"
-BUILDINFO_GO="v5/client/internal/buildinfo/buildinfo.go"
-WAILS_JSON="v5/client/wails.json"
-PKG_JSON="v5/client/frontend/package.json"
-PKG_LOCK="v5/client/frontend/package-lock.json"
+VERSION_FILE="VERSION"
+MAIN_GO="legacy/wails-client/main.go"
+BUILDINFO_GO="legacy/wails-client/internal/buildinfo/buildinfo.go"
+WAILS_JSON="legacy/wails-client/wails.json"
+PKG_JSON="legacy/wails-client/frontend/package.json"
+PKG_LOCK="legacy/wails-client/frontend/package-lock.json"
 
 # ── The accounting list ────────────────────────────────────────────────────
 # Every file whose copy of the version this script knows how to update. The
@@ -270,7 +270,7 @@ if [ "$DRY_RUN" != "1" ]; then
         # docs record historical versions, and version_test.go uses literals on
         # purpose. These are not copies that a build reads.
         case "$hit" in
-            v5/docs/*|*/version_test.go|*/version_consistency_test.go|*/winres_test.go) accounted=1 ;;
+            docs/*|*/version_test.go|*/version_consistency_test.go|*/winres_test.go) accounted=1 ;;
         esac
         if [ "$accounted" = "0" ]; then
             warn "unaccounted copy of ${CURRENT} in: ${hit}"
@@ -279,7 +279,7 @@ if [ "$DRY_RUN" != "1" ]; then
     done <<EOF
 $(grep -rl --include='*.go' --include='*.json' --include='*.ts' --include='*.js' \
         --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git \
-        -e "${CURRENT}" v5/client 2>/dev/null || true)
+        -e "${CURRENT}" legacy/wails-client 2>/dev/null || true)
 EOF
     if [ "$STRAY" = "1" ]; then
         fail "the old version ${CURRENT} survives in files this script does not manage.\n"\
@@ -315,7 +315,7 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 GO="${GO_BIN:-go}"
-STAMP="${REPO_ROOT}/v5/server/scripts/stamp-syso.py"
+STAMP="${REPO_ROOT}/server/scripts/stamp-syso.py"
 stamped=0
 
 if [ -f "$STAMP" ] && command -v python3 >/dev/null 2>&1; then
@@ -327,7 +327,7 @@ if [ -f "$STAMP" ] && command -v python3 >/dev/null 2>&1; then
     # because `$?` after an `if`/`elif` belongs to the last command the shell
     # ran, not to the one you meant.
     rc=0
-    python3 "$STAMP" "$NEXT" --client-dir "v5/client" || rc=$?
+    python3 "$STAMP" "$NEXT" --client-dir "legacy/wails-client" || rc=$?
     case "$rc" in
         0) stamped=1 ;;
         # 3 = "this is not a file I know how to byte-patch" (a width change, or
@@ -348,7 +348,7 @@ if [ "$stamped" != "1" ]; then
         # `go generate -tags windows` fetches winres via the directive, so this
         # needs network on a first run.
         log "regenerating rsrc_windows_{amd64,arm64}.syso with go-winres…"
-        ( cd v5/client && "$GO" generate -tags windows ) || fail "go generate -tags windows failed" 3
+        ( cd legacy/wails-client && "$GO" generate -tags windows ) || fail "go generate -tags windows failed" 3
         stamped=1
     else
         warn "no Go toolchain on PATH and stamp-syso.py did not run."
@@ -360,19 +360,19 @@ if [ "$stamped" != "1" ]; then
 fi
 
 for arch in amd64 arm64; do
-    syso="v5/client/rsrc_windows_${arch}.syso"
+    syso="legacy/wails-client/rsrc_windows_${arch}.syso"
     [ -f "$syso" ] || fail "expected ${syso}" 3
 done
 
 # A byte-identical .syso after a real bump means the stamp silently did nothing.
-if [ "$stamped" = "1" ] && [ "$VERIFY" = "1" ] && git diff --quiet -- v5/client/rsrc_windows_amd64.syso; then
+if [ "$stamped" = "1" ] && [ "$VERIFY" = "1" ] && git diff --quiet -- legacy/wails-client/rsrc_windows_amd64.syso; then
     warn "rsrc_windows_amd64.syso is byte-identical after stamping — expected a version change."
 fi
 
 if [ "$VERIFY" != "1" ]; then
     if [ "$stamped" = "1" ]; then
         warn "--no-verify: the .syso artifacts ARE stamped for ${NEXT}; the test gate is skipped."
-        warn "Run before tagging: cd v5/client && go test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1"
+        warn "Run before tagging: cd legacy/wails-client && go test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1"
     fi
     printf '\nNext:\n  git add -A && git commit -m "chore(release): %s"\n  git tag -a v%s -m "Locus %s"\n  git push origin main\n  git push origin v%s\n' "$NEXT" "$NEXT" "$NEXT" "$NEXT"
     exit 0
@@ -380,14 +380,14 @@ fi
 
 command -v "$GO" >/dev/null 2>&1 || fail "no Go toolchain on PATH (set GO_BIN=/path/to/go).\n"\
 "The artifacts were stamped, but the consistency gate needs Go.\n"\
-"Local toolchain bootstrap is documented in v5/docs/OPS.md." 3
+"Local toolchain bootstrap is documented in docs/OPS.md." 3
 
 log "running the version-consistency gate…"
 # Run the two guards that matter here and nothing else: the full suite is the
 # release gate, not the bump gate. TestCommittedSysoMatchesRepoVersion reads the
 # version OUT of the compiled resource, which is the only check that can catch a
 # stale artifact.
-( cd v5/client && "$GO" test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1 ) \
+( cd legacy/wails-client && "$GO" test . ./internal/winres/ -run 'Version|Syso|Consistency' -count=1 ) \
     || fail "version consistency tests FAILED — the tree is inconsistent. Fix before committing." 3
 
 log "✓ ${CURRENT} -> ${NEXT} — all copies updated, resources stamped, consistency gate passed"
@@ -403,6 +403,6 @@ Nothing has been committed. Next:
 
 Then publish (CI must have finished first):
 
-  v5/server/scripts/publish-release.sh ${NEXT}      # or: --from-github
-  v5/server/scripts/verify-release.sh ${NEXT}
+  server/scripts/publish-release.sh ${NEXT}      # or: --from-github
+  server/scripts/verify-release.sh ${NEXT}
 EOF

@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# bump.sh — the repo-root entry point for cutting a new Locus version.
+# bump.sh — the repo-root entry point for advancing the ARCHIVED client version.
+#
+# ⚠️  THIS DOES NOT VERSION THE SHIPPING CLIENT.
+#     This tool drives the version of the archived Wails client at
+#     legacy/wails-client/ (plus the root `VERSION` file and the legacy Windows
+#     `.syso` resources). The shipping client is `client/` — the Tauri fork — and
+#     it carries its own version in client/package.json and
+#     client/src-tauri/Cargo.toml. Nothing here updates those.
+#
+#     The fork's version authority is an OPEN DECISION, not an oversight: see
+#     docs/ and client/docs/RESTRUCTURE.md. Until it is implemented, do not
+#     assume a `./bump.sh` run changes what ships.
 #
 # Usage:
 #   ./bump.sh            # patch (2.2.0 -> 2.2.1) — the common case
@@ -9,13 +20,13 @@
 #   ./bump.sh --dry-run  # show what would change, write nothing
 #
 # WHY THIS IS AT THE ROOT
-#   The version-bearing files are spread across v5/server/scripts (the tooling),
-#   v5/client (the Go + Wails metadata) and v5/VERSION (the canonical value).
+#   The version-bearing files are spread across server/scripts (the tooling),
+#   legacy/wails-client (the Go + Wails metadata) and the root VERSION file.
 #   Running the real work from the repo root means the paths are obvious and the
 #   script cannot be run from a directory where it would half-apply.
 #
 #   The actual rewriting, resource regeneration and verification live in
-#   v5/server/scripts/bump-version.sh, which is the single implementation. This
+#   server/scripts/bump-version.sh, which is the single implementation. This
 #   wrapper only computes the NEXT version from the current one, so you do not
 #   have to remember it, and forwards everything else.
 #
@@ -24,7 +35,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMPL="${REPO_ROOT}/v5/server/scripts/bump-version.sh"
+IMPL="${REPO_ROOT}/server/scripts/bump-version.sh"
 [ -x "$IMPL" ] || { echo "bump: missing or not executable: ${IMPL}" >&2; exit 1; }
 
 # Pass everything through; bump-version.sh already understands

@@ -6,17 +6,17 @@ import (
 	"testing"
 )
 
-// repoVersion reads the canonical version from v5/VERSION.
-// Path: v5/client/internal/winres -> ../../../VERSION
+// repoVersion reads the canonical version from the root VERSION file.
+// Path: legacy/wails-client/internal/winres -> ../../../../VERSION
 func repoVersion(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "VERSION"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "VERSION"))
 	if err != nil {
-		t.Fatalf("cannot read v5/VERSION: %v", err)
+		t.Fatalf("cannot read the root VERSION file: %v", err)
 	}
 	v := string(trimSpace(data))
 	if v == "" {
-		t.Fatal("v5/VERSION is empty")
+		t.Fatal("the root VERSION file is empty")
 	}
 	return v
 }
@@ -34,7 +34,7 @@ func trimSpace(b []byte) []byte {
 
 // TestCommittedSysoMatchesRepoVersion is the guard that would have caught the
 // shipped defect. The committed rsrc_windows_*.syso files stamped version 2.0.0
-// and product name "MyVPN" while v5/VERSION said 2.1.0 and the app had been
+// and product name "MyVPN" while the root VERSION file said 2.1.0 and the app had been
 // renamed to Locus. The previous guard only grepped main.go's go:generate
 // DIRECTIVE for the right number — and the directive was right. The artifacts
 // are what shipped, and nothing looked at them.
@@ -48,7 +48,7 @@ func TestCommittedSysoMatchesRepoVersion(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			path := filepath.Join("..", "..", "rsrc_windows_"+arch+".syso")
 			if _, err := os.Stat(path); err != nil {
-				t.Skipf("%s not present — regenerate with: cd v5/client && go generate -tags windows", path)
+				t.Skipf("%s not present — regenerate with: cd legacy/wails-client && go generate -tags windows", path)
 			}
 
 			v, ok, err := ReadFile(path)
@@ -64,8 +64,8 @@ func TestCommittedSysoMatchesRepoVersion(t *testing.T) {
 			}
 
 			if v.FileVersion != want {
-				t.Errorf("%s FileVersion = %q, want %q (v5/VERSION).\n"+
-					"Regenerate: cd v5/client && go generate -tags windows\n"+
+				t.Errorf("%s FileVersion = %q, want %q (root VERSION).\n"+
+					"Regenerate: cd legacy/wails-client && go generate -tags windows\n"+
 					"A student right-clicking locus.exe would otherwise see a version "+
 					"that does not exist.", path, v.FileVersion, want)
 			}

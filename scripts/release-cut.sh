@@ -27,24 +27,24 @@ TAG_IT=1
 # the one tool that needs no toolchain.
 GO_BIN="${GO_BIN:-go}" ./bump.sh "$BUMP" --no-verify
 
-NEXT="$(tr -d '[:space:]' < v5/VERSION)"
+NEXT="$(tr -d '[:space:]' < VERSION)"
 
 # ── Refuse to tag a tree with stale Windows resources ──────────────────────
 # This is the guard whose absence let 2.2.7 ship a broken tag. It reads the
 # version OUT of the committed .syso bytes, using only the standard library, so
 # it costs nothing and cannot be skipped for lack of a toolchain.
 if command -v python3 >/dev/null 2>&1; then
-    if ! python3 v5/server/scripts/stamp-syso.py "$NEXT" --check --quiet; then
+    if ! python3 server/scripts/stamp-syso.py "$NEXT" --check --quiet; then
         echo "ERROR: committed rsrc_windows_*.syso do not match v${NEXT}." >&2
         echo "       CI would fail the release at 'Check version consistency'." >&2
-        echo "       Fix:  python3 v5/server/scripts/stamp-syso.py ${NEXT}" >&2
+        echo "       Fix:  python3 server/scripts/stamp-syso.py ${NEXT}" >&2
         echo "       Refusing to commit or tag. Nothing was pushed." >&2
         exit 3
     fi
 fi
 
 # bump.sh's go:generate drags winres deps into go.mod/go.sum. Drop that noise.
-git checkout -- v5/client/go.mod v5/client/go.sum 2>/dev/null || true
+git checkout -- legacy/wails-client/go.mod legacy/wails-client/go.sum 2>/dev/null || true
 
 git add -A
 git commit -m "chore(release): ${NEXT}"
@@ -60,4 +60,4 @@ git push "$PUSH" main
 echo
 echo "${NEXT} pushed$( [ "$TAG_IT" = 1 ] && echo ", tag v${NEXT} pushed" || echo " (no tag — test build)" )"
 [ "$TAG_IT" = 1 ] && echo "watch:   gh run watch"
-echo "publish: v5/server/scripts/publish-release.sh ${NEXT} --from-github"
+echo "publish: server/scripts/publish-release.sh ${NEXT} --from-github"

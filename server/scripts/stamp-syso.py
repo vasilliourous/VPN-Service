@@ -9,7 +9,7 @@ regenerates them automatically: `go generate` is manual, and the release path
 never ran it.
 
 The result is a defect that hides from every text-based check. In 2.1.0 the
-committed .syso files were stamped `2.0.0` / product `MyVPN` while `v5/VERSION`
+committed .syso files were stamped `2.0.0` / product `MyVPN` while the root `VERSION` file
 said `2.1.0` — the shipped Windows exe reported a version that did not exist,
 under the product's former name. The same thing happened again at 2.2.7: the
 version files were bumped, the .syso files were not, and CI failed the release
@@ -49,7 +49,7 @@ result no longer parses. `--verify` re-reads its own output through the same
 decoder the Go guard uses.
 
 Usage:
-  stamp-syso.py <new-version> [--client-dir v5/client] [--check] [--quiet]
+  stamp-syso.py <new-version> [--client-dir legacy/wails-client] [--check] [--quiet]
 
   --check   report whether the artifacts already carry <new-version>; write
             nothing, exit 0 if current, 2 if stale. Used as a pre-commit gate.
@@ -141,7 +141,7 @@ def patch(raw, old_version, new_version):
         raise ValueError(
             f"version width changed ({len(old_version)} -> {len(new_version)}); "
             "this is not a byte patch — regenerate with: "
-            "cd v5/client && go generate -tags windows"
+            "cd legacy/wails-client && go generate -tags windows"
         )
 
     omaj, omin, obld, orev = quad(old_version)
@@ -247,7 +247,7 @@ def process(path, new_version, check_only, quiet):
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("version", help="version to stamp, e.g. 2.2.7")
-    ap.add_argument("--client-dir", default="v5/client")
+    ap.add_argument("--client-dir", default="legacy/wails-client")
     ap.add_argument("--check", action="store_true",
                     help="report only; write nothing (exit 2 if stale)")
     ap.add_argument("--quiet", action="store_true")
