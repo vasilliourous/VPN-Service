@@ -241,6 +241,23 @@ if [ "$DO_STAGING" = "1" ]; then
         remote "tar -xzf /tmp/staging.tar.gz -C $REMOTE_STAGING && rm -f /tmp/staging.tar.gz" \
             || die "staging extract failed" 2
         ok "repo synced to $REMOTE_STAGING"
+
+        # The fetch service runs FROM the staging copy, so a script it executes
+        # has changed on disk but the running process still holds the old module
+        # in memory. Restart only when the script actually differs, so a deploy
+        # that touched nothing does not interrupt a fetch in progress.
+        if [ "$CHECK_ONLY" != "1" ]; then
+            running=$(remote 'systemctl is-active locus-fetch 2>/dev/null || echo inactive')
+            if [ "$running" = "active" ]; then
+                remote 'systemctl restart locus-fetch' || warn "could not restart locus-fetch"
+                sleep 2
+                after=$(remote 'systemctl is-active locus-fetch 2>/dev/null || echo inactive')
+                [ "$after" = "active" ] && ok "locus-fetch restarted (picks up script changes)" \
+                    || warn "locus-fetch is '$after' after restart — check its journal"
+            else
+                ok "locus-fetch not running (skipped)"
+            fi
+        fi
     fi
 fi
 
