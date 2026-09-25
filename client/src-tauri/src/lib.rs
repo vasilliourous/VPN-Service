@@ -156,6 +156,8 @@ mod app_init {
             cmd::locus_validate_code,
             cmd::locus_check_code,
             cmd::locus_activate,
+            cmd::locus_connect,
+            cmd::locus_disconnect,
             cmd::locus_update_staging_dir,
             cmd::locus_hub_url,
             cmd::get_verge_config,

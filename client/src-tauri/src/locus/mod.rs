@@ -13,6 +13,7 @@
 //! them are frozen by clients already in the field.
 
 pub mod activation;
+pub mod apply;
 pub mod contract;
 pub mod device;
 pub mod heartbeat;

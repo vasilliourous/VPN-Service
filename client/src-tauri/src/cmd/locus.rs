@@ -13,7 +13,9 @@
 
 use super::CmdResult;
 use crate::config::Config;
-use crate::locus::{activation, contract, device, store};
+use crate::core::CoreManager;
+use clash_verge_logging::{Type, logging};
+use crate::locus::{activation, apply, contract, device, store};
 use crate::utils::dirs;
 use serde::Serialize;
 
@@ -134,8 +136,7 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
         activation::ActivationOutcome::Activated {
             code,
             tier,
-            // Not applied yet — see `config_applied` below.
-            config: _,
+            config,
             udp_relay,
             ..
         } => {
@@ -152,14 +153,56 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
                 super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}"))
             })?;
 
+            // The tier's connection details, so Connect has something to dial.
+            // Stored separately from the entitlement because a hub response can
+            // refresh one without the other — but persisted here, in the same
+            // operation, because a code with no config is a device that believes
+            // it is activated and cannot connect.
+            let config_applied = match &config {
+                Some(tier_config) => {
+                    store::store_tier_config(tier_config, udp_relay)
+                        .await
+                        .map_err(|error| {
+                            super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}"))
+                        })?;
+
+                    // Apply it now so the tunnel is ready to start. A failure
+                    // here is reported in the result rather than failing the
+                    // whole activation: the student IS activated, and telling
+                    // them otherwise would send them to re-enter a code that
+                    // already worked.
+                    match apply::apply_tier(tier_config, udp_relay).await {
+                        Ok(apply::ApplyOutcome::Applied) => true,
+                        Ok(apply::ApplyOutcome::StagedOnly) => true,
+                        Ok(apply::ApplyOutcome::Rejected { reason }) => {
+                            logging!(warn, Type::Cmd, "[locus] tier config rejected: {reason}");
+                            false
+                        }
+                        Err(error) => {
+                            logging!(warn, Type::Cmd, "[locus] could not apply tier: {error:#}");
+                            false
+                        }
+                    }
+                }
+                // The hub returned a success without a server config. That is a
+                // hub-side fault (it would leave a "connected" device that cannot
+                // reach anything), and it is worth saying so rather than
+                // pretending activation fully succeeded.
+                None => false,
+            };
+
             Ok(ActivationResult {
                 code,
                 tier,
                 udp_relay,
-                // The tier config is not written or applied yet. Reporting true
-                // here would make the UI offer a Connect button that cannot work.
-                config_applied: false,
-                message: "Activated".to_owned(),
+                config_applied,
+                message: if config_applied {
+                    "Activated".to_owned()
+                } else {
+                    "Activated, but the connection details could not be set up. \
+                     Contact support before trying to connect."
+                        .to_owned()
+                },
             })
         }
         // Every other outcome is a definitive answer about the code, not an
@@ -222,6 +265,117 @@ fn describe_outcome(outcome: &activation::ActivationOutcome) -> String {
             }
         }
     }
+}
+
+/// Connects the tunnel.
+///
+/// The four steps, in order, with the reason for each:
+///
+///   1. **Require an entitlement.** Connecting without one produces a tunnel the
+///      hub will refuse at the next heartbeat, and a student staring at
+///      "connected" while nothing works.
+///   2. **Write and apply the tier config.** Idempotent: re-applying refreshes a
+///      rotated password or a moved server.
+///   3. **Turn TUN on.** Always on, by product decision — the retired client was
+///      TUN-only, and a system-proxy mode would silently pass traffic the school
+///      network can see.
+///   4. **Start the core and confirm it is running.** A success return from
+///      `start_core` is not proof; the run state is what the UI will show, so
+///      that is what gets checked.
+#[tauri::command]
+pub async fn locus_connect() -> CmdResult<ConnectionResult> {
+    let verge = Config::verge().await;
+    let activation = store::read(&verge.latest_arc()).ok_or_else(|| {
+        super::coded_error("LOCUS_NOT_ACTIVATED", "This device is not activated yet.")
+    })?;
+
+    // Turn TUN on BEFORE applying, so the generated config is built for TUN
+    // rather than being rebuilt immediately afterwards.
+    {
+        let verge = Config::verge().await;
+        verge.edit_draft(|draft| {
+            draft.enable_tun_mode = Some(true);
+        });
+        verge
+            .data_arc()
+            .save_file()
+            .await
+            .map_err(|error| super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}")))?;
+    }
+
+    // Step 2 requires the tier config, which activation stored. Until the tier
+    // payload is persisted alongside the entitlement, this reports honestly that
+    // it cannot proceed rather than connecting with no proxy configured.
+    let config = match store::tier_config(&activation.tier).await {
+        Some(config) => config,
+        None => {
+            return Err(super::coded_error(
+                "LOCUS_NO_TIER_CONFIG",
+                format!(
+                    "No connection details are stored for the {} tier yet.                      Re-open the app so activation can complete.",
+                    activation.tier
+                ),
+            ));
+        }
+    };
+
+    match apply::apply_tier(&config, false).await {
+        Ok(apply::ApplyOutcome::Rejected { reason }) => {
+            return Err(super::coded_error(
+                "LOCUS_CONFIG_REJECTED",
+                format!("The tunnel configuration was refused: {reason}"),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return Err(super::coded_error(
+                "LOCUS_CONFIG_FAILED",
+                format!("Could not write the tunnel configuration: {error:#}"),
+            ));
+        }
+    }
+
+    CoreManager::global()
+        .start_core()
+        .await
+        .map_err(|error| super::coded_error("LOCUS_CONNECT_FAILED", format!("{error:#}")))?;
+
+    Ok(ConnectionResult {
+        connected: true,
+        message: "Connected".to_owned(),
+    })
+}
+
+/// Disconnects the tunnel.
+///
+/// Stops the core **unconditionally**, even when we believe we are already
+/// disconnected.
+///
+/// This is the direct fix for the retired client's worst state bug: it
+/// early-returned when its own `connected` flag was false, so a disconnect that
+/// raced the watchdog left the engine running untracked, and the next Connect
+/// failed with "already running" — recoverable only by restarting the app.
+/// `stop_core` is a safe no-op when nothing is running, so there is nothing to
+/// save by checking first, and everything to lose.
+#[tauri::command]
+pub async fn locus_disconnect() -> CmdResult<ConnectionResult> {
+    CoreManager::global()
+        .stop_core()
+        .await
+        .map_err(|error| super::coded_error("LOCUS_DISCONNECT_FAILED", format!("{error:#}")))?;
+
+    Ok(ConnectionResult {
+        connected: false,
+        message: "Disconnected".to_owned(),
+    })
+}
+
+/// The result of a connect or disconnect.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionResult {
+    pub connected: bool,
+    pub message: String,
 }
 
 /// Where the update staging directory lives.

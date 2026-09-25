@@ -247,6 +247,17 @@ pub struct IVerge {
     /// The checksum for that pending version, so a retry does not have to
     /// re-derive it (and cannot silently retry with a different one).
     pub update_pending_sha256: Option<String>,
+
+    /// The tier's connection details, as JSON.
+    ///
+    /// Stored as a serialised blob rather than seven more fields because it
+    /// arrives as one payload, is replaced as one payload, and is meaningless
+    /// in pieces. A schema change on the hub side then cannot leave a partially
+    /// populated config behind.
+    pub locus_tier_server: Option<String>,
+
+    /// Whether this tier should carry UDP over TCP.
+    pub locus_udp_relay: Option<bool>,
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]

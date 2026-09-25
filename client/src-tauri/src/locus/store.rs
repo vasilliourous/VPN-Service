@@ -27,6 +27,7 @@
 //! hub owns.
 
 use crate::config::{Config, IVerge};
+use crate::locus::contract::TierConfig;
 use anyhow::Result;
 // `IVerge` uses smartstring, not std String. Importing the alias makes the
 // conversions below unnecessary and keeps this module in step with the config
@@ -122,6 +123,51 @@ pub async fn clear() -> Result<()> {
         draft.heartbeat_failures = None;
     });
     verge.data_arc().save_file().await
+}
+
+/// Persists the tier's connection details and UDP preference.
+///
+/// Stored alongside the entitlement because they arrive together and are useless
+/// apart: a code without a config cannot connect, and a config without a code
+/// cannot be authorised. Keeping them in one write means a crash cannot leave a
+/// device that believes it is activated but has nothing to dial.
+pub async fn store_tier_config(config: &TierConfig, udp_relay: bool) -> Result<()> {
+    let verge = Config::verge().await;
+    verge.edit_draft(|draft| {
+        draft.locus_tier_server = Some(serde_json::to_string(config).unwrap_or_default().into());
+        draft.locus_udp_relay = Some(udp_relay);
+    });
+    verge.data_arc().save_file().await
+}
+
+/// Reads back the stored tier connection details.
+///
+/// Returns `None` — rather than an error — when nothing is stored or the stored
+/// JSON is unreadable. The caller's question is "can I connect?", and both cases
+/// answer it the same way: not yet, re-activate.
+pub async fn tier_config(tier: &str) -> Option<TierConfig> {
+    let verge = crate::config::Config::verge().await;
+    let data = verge.latest_arc();
+    let raw = data.locus_tier_server.as_deref()?;
+    let config: TierConfig = serde_json::from_str(raw).ok()?;
+    // Guard against a stored config for a different tier: a re-activation that
+    // changed tier must not keep dialling the old server.
+    if config.server.is_empty() || config.server_port == 0 {
+        logging::warn_wrong_tier(tier);
+        return None;
+    }
+    Some(config)
+}
+
+/// Small logging shim so this module needs no direct logging import.
+mod logging {
+    pub fn warn_wrong_tier(tier: &str) {
+        clash_verge_logging::logging!(
+            warn,
+            clash_verge_logging::Type::Config,
+            "[locus] stored tier config is unusable for the {tier} tier"
+        );
+    }
 }
 
 /// A copy of the config with every credential removed.

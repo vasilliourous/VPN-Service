@@ -59,3 +59,20 @@ export const locusHubUrl = () => invoke<string>('locus_hub_url')
 
 export const locusUpdateStagingDir = () =>
   invoke<string>('locus_update_staging_dir')
+
+export interface ConnectionResult {
+  connected: boolean
+  message: string
+}
+
+/** Brings the tunnel up: applies the tier config, enables TUN, starts the core. */
+export const locusConnect = () => invoke<ConnectionResult>('locus_connect')
+
+/**
+ * Brings the tunnel down.
+ *
+ * Safe to call when already disconnected — the backend stops the core
+ * unconditionally, which is what prevents the "engine still running but the app
+ * thinks it is not" state the retired client could not escape from.
+ */
+export const locusDisconnect = () => invoke<ConnectionResult>('locus_disconnect')
