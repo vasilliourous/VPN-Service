@@ -9,8 +9,8 @@ so what remains at this level is current. This file says what each one is.
 1. **Check the status banner.** Documents about the **retired** Wails client carry
    a `⚠️ STATUS: describes the ARCHIVED client` banner; documents about deleted
    machinery carry a `⚠️ STATUS: ... REMOVED` banner. The client that will ship is
-   `client/` — but note it is currently a **branding-only copy of Clash Verge Rev
-   with no Locus logic yet** (see `STILL-OPEN.md`), and its *spec* docs live in
+   `client/` — which now has its own Locus logic (activation, tiers, heartbeat,
+   updater) and is verified against the live hub; its docs live in
    `client/docs/`. A document with no banner describes something still live.
 2. **Nothing current lives in `archive/` or `history/`.** Those are reference
    material. If you are orienting yourself, you do not need them.

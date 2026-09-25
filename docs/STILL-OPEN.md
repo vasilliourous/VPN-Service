@@ -30,33 +30,34 @@ opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ## Open, and fixable now
 
-### The client port has not started — `client/` is an untailored upstream copy
+### The client is built; what remains is proving it on Windows and macOS
 
-**This is the largest open item in the project.** `client/` is a **branding-only
-copy of Clash Verge Rev v2.5.5** — the name, icon, and app id say Locus; the code
-is upstream. Verified: the string `locus` appears nowhere in
-`client/src-tauri/src/`, and the `src-tauri/src/locus/` module tree specified in
-`client/docs/LOGIC-INVENTORY.md` does not exist.
+**This section used to say the client port had not started. It has.** `client/`
+is no longer a branding-only copy: it has `src-tauri/src/locus/` with activation,
+device fingerprinting, a heartbeat, tier→config translation and a hub-mediated
+updater, plus a first-run activation gate and a single Connect/Disconnect.
 
-None of the following Locus behaviour exists in the client yet:
+Verified against the **live hub**, not only by unit tests:
 
-- activation (`/api/activate`, Luhn code validation, code lookup pre-check)
-- heartbeat loop, backoff, grace
-- tier payload → mihomo config
-- device fingerprint
-- the Locus update path (hybrid: hub `update_config` + public `/api/release`)
-- product state storage on top of Verge's app dir
+- the Luhn checksum agrees with the deployed server (a valid code reaches its
+  database lookup; a checksum-broken one is refused as invalid);
+- `/api/code-lookup`'s real response deserialises into the client's types, and
+  `bound_other` is classified as "not ready";
+- a generated tier config is accepted by the real `mihomo` binary;
+- **traffic egresses from the VPS** (`170.64.196.179`) rather than the local
+  address, and a 5 MB download moved the server's `rx_bytes` by 5,135,262;
+- a real heartbeat returns the strike tier's `uot_port` and `udp_relay`.
 
-The plan for all of it is written (`client/docs/LOGIC-INVENTORY.md`,
-`ARCHITECTURE.md`, `UPDATE-ARCHITECTURE.md`), including what to debloat from
-upstream and which contracts to port verbatim from `legacy/wails-client/`. What is
-missing is the implementation.
+**What is genuinely still open:**
 
-**Why it matters beyond "unfinished":** every doc that calls `client/` "the
-shipping client" means "the directory that *will* ship." Nothing in the repo
-executes Locus logic on a client today. Until this port is done, the Locus client
-does not exist as software — do not test against it, and do not "fix" upstream
-behaviour as though it were ours.
+1. **No release has been published yet.** CI builds and signs Linux and
+   macOS-arm; Windows and macOS-intel are unproven, and publishing requires all
+   four. Until then the update path has nothing to fetch.
+2. **The client has only been run on Linux here.** Windows and macOS are built by
+   CI but have not been exercised on real hardware.
+3. **The tier config is refreshed but a tier CHANGE mid-session is untested** —
+   the code path exists (`store::tier_changed`), but no heartbeats have carried a
+   changed tier in practice.
 
 ### Fork versioning and release path — an open decision
 

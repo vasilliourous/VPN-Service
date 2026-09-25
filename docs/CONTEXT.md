@@ -117,7 +117,7 @@ VPN-Service/
 
 | Directory | Purpose | For whom |
 |-----------|---------|----------|
-| `client/` | The client **that will ship** — a **branding-only copy of Clash Verge Rev**, not yet tailored (no Locus logic yet; see `docs/STILL-OPEN.md`) | Builders of the client |
+| `client/` | The Locus client — Tauri 2 on Clash Verge Rev, with Locus activation, tiers, heartbeat and updater. Functional and verified against the live hub; see `docs/STILL-OPEN.md` for what remains | Builders of the client |
 | `legacy/wails-client/` | RETIRED Go + Wails + sing-box client (see its `ARCHIVED.md`) | Contract/spec reference only |
 | `server/console/` | Admin console SPA — day-to-day hub operations in a browser | Operators |
 | `server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |

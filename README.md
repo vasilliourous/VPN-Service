@@ -8,57 +8,47 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 
 | If you want to … | Go to |
 |---|---|
-| Work on **the client that will ship** | `client/` — Tauri 2 copy of Clash Verge Rev, mihomo engine. **Not tailored yet** — read "Client status" below first. Docs in `client/docs/` |
+| Work on **the client** | `client/` — Tauri 2 client built on Clash Verge Rev, mihomo engine. See "Client status" below. Docs in `client/docs/` |
 | Work on **the hub / server** | `server/` — deploy modules + PocketBase hooks. Docs in `docs/DEPLOY.md`, `docs/OPS.md` |
 | Operate the **admin console** | `server/console/`, served at `/admin/` (see `docs/POCKETBASE-SETUP.md`) |
 | Find **any document** | `docs/README.md` — the documentation index (what each doc is, and what is archived) |
 | Understand **the whole project** | `docs/CONTEXT.md` — read this first |
 | See **what is still open** | `docs/STILL-OPEN.md` |
 
-### Client status — read this before assuming
+### Client status
 
-> **⚠️ `client/` does not work as the Locus client yet.** It is a **branding-only
-> copy of Clash Verge Rev v2.5.5** — the product name, icon and app id are Locus's,
-> but **no Locus logic has been written**. There is no activation, no heartbeat, no
-> tier handling, no Locus update path, and no `locus/` Rust module (verified: the
-> `src-tauri/src/locus/` tree specified in `client/docs/LOGIC-INVENTORY.md` does not
-> exist, and the string `locus` appears nowhere in `client/src-tauri/src/`).
-> What it *is* scheduled to become is specified — not implemented — in
-> `client/docs/LOGIC-INVENTORY.md`, `ARCHITECTURE.md`, and `UPDATE-ARCHITECTURE.md`.
-> Treat "the shipping client" in any doc as "the client that **will** ship", not as a
-> working product. The full port is the single largest open item — see
-> `docs/STILL-OPEN.md`.
+The client is **tailored and functional**. It is no longer a branding-only copy
+of Clash Verge Rev: it has Locus logic — activation, tiers, a heartbeat, a
+hub-mediated updater — and the connect path has been verified end to end against
+the live hub:
 
-There are **three clients** in this repository. Only one will ship, and it is **not
-finished**:
+- activation validated against the deployed `/api/activate` and `/api/code-lookup`
+- a generated tier config accepted by the real `mihomo` binary
+- traffic egressing from the VPS (`170.64.196.179`) rather than the local address
+- a real heartbeat returning the strike tier's config
 
-| Client | Where | Status |
-|---|---|---|
-| **Fork of Clash Verge Rev v2.5.5** (Tauri 2 + Rust + React, mihomo engine) | `client/` | **TO BE TAILORED** — branding-only upstream copy; **no Locus logic yet.** The directory that will ship. |
-| Wails client (Go + Wails + Vue 3, sing-box engine) | `legacy/wails-client/` | **RETIRED & STALE** — reference-only for its logic; see its `ARCHIVED.md` |
-| Fyne client (Go) | `legacy/v4/` | Historical reference only |
+The product surface is a first-run **activation gate** and a single
+**Connect / Disconnect**; a student never sees a profile, a node or a proxy mode.
 
-**Everything below was written when the Wails client was current.** Where these
-sections describe client internals, architecture, or the CI pipeline, they
-describe `legacy/wails-client/` — not what ships. The server, hub, and
-operational documentation remains accurate. The archived-client **CI workflow and
-release-cutting machinery have been removed**; see `docs/RELEASING.md` and
-`docs/CI-CD.md`.
+**What is still open** is listed in `docs/STILL-OPEN.md` — chiefly whether a
+release has been published yet, and Windows/macOS platform verification. Read
+that before assuming a given platform is proven.
 
-### Version authority — REMOVED
+### Version authority and CI
 
-The old version machinery is **deleted**: root `VERSION`, `bump.sh`,
-`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
-`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and the
-archived-client CI workflow (`.github/workflows/build.yml`). It versioned **only**
-the archived Wails client, never the shipping fork — which is why it was removed.
+The old machinery (`bump.sh`, root `VERSION`, `stamp-syso.py`,
+`release-cut.sh`, the committed `.syso` resources, `.github/workflows/build.yml`)
+versioned **only** the archived Wails client and is **deleted**.
 
-**There is no version authority now, and no CI for any client.** The shipping
-fork carries a version in `client/package.json` and `client/src-tauri/Cargo.toml`
-(currently `2.5.5`); how it is versioned and released is an open decision, not an
-oversight — see `docs/STILL-OPEN.md` and `client/docs/RESTRUCTURE.md`. Publishing
-a build to the hub (`server/scripts/publish-release.sh`) still works; see
-`docs/RELEASING.md`.
+`client/src-tauri/Cargo.toml` is the version the client reports. CI lives at
+**`.github/workflows/client.yml`** — it must be at the repo root, because GitHub
+ignores a workflow under `client/.github/` — and on a `v*` tag it builds, **signs**
+and releases the four platform artifacts plus `manifest.json`. Signing is
+mandatory: the updater verifies a minisign signature over every download and has
+no bypass. See `client/docs/SIGNING.md`.
+
+Reconciling the version across `client/package.json`, `tauri.conf.json` and the
+two `Cargo.toml`s is still an open decision — see `docs/STILL-OPEN.md`.
 
 ### History
 

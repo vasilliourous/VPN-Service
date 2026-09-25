@@ -1,10 +1,13 @@
 # Locus logic inventory — the exact modules to write
 
-> **⚠️ STATUS: specification only — NONE of this is written.** `client/` is still a
-> branding-only copy of Clash Verge Rev. Every `locus/…` module below is a plan, not
-> existing code: `client/src-tauri/src/locus/` does not exist, and the string
-> `locus` appears nowhere in `client/src-tauri/src/`. Read this as the build spec
-> for the port, not as a map of the code.
+> **⚠️ STATUS: largely IMPLEMENTED — treat this as a design record, not a to-do.**
+> `client/src-tauri/src/locus/` exists and carries this behaviour: `contract`,
+> `activation`, `device`, `heartbeat`, `tier`, `store`, `apply`, `runtime`, and
+> `update/`. Where this document and the code disagree, **the code is right** and
+> this file is a bug — fix it in the same change.
+>
+> The module-by-module descriptions below still describe the intended contracts
+> and are useful for that, but they are no longer a plan of work to be done.
 >
 > Companion to `ARCHITECTURE.md` (what to cut) and `UPDATE-ARCHITECTURE.md` (updater).
 > This file is the specification for what must be **written**, module by module, with
