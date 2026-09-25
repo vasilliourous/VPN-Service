@@ -49,6 +49,13 @@ whale.txt
 .vscode/
 *.iml
 
+# Scratch npm packages. These were pulled into the repo root while building a
+# one-off tool and got committed by `git add -A` — the same way node_modules
+# would. Anything installed outside client/ or server/console/ is here by
+# accident.
+/tweetnacl/
+/tweetnacl-util/
+
 # Deploy key for pushing to the VPS from this machine. Not a signing key and
 # not a secret anyone else needs — but it is still a credential, and one that
 # would grant root shell on the hub if it leaked.
