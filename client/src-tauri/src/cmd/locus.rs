@@ -12,7 +12,8 @@
 //! the pure logic stays testable without an app handle.
 
 use super::CmdResult;
-use crate::locus::{activation, contract, device};
+use crate::config::Config;
+use crate::locus::{activation, contract, device, store};
 use crate::utils::dirs;
 use serde::Serialize;
 
@@ -43,13 +44,20 @@ pub struct LocusStatus {
 /// and the honest answer when we cannot read storage is "not activated".
 #[tauri::command]
 pub async fn locus_status() -> LocusStatus {
+    let verge = Config::verge().await;
+    let verge_data = verge.latest_arc();
+
+    // The fingerprint is reported from the DEVICE, not from storage: it is
+    // derived, stable, and available before activation. Reporting the stored one
+    // would blank it on a fresh install, which is exactly when support asks for
+    // it.
+    let fingerprint = device::fingerprint();
+    let activation = store::read(&verge_data);
+
     LocusStatus {
-        // Until the store lands, this reports the truth: nothing is activated.
-        // Wiring it to storage is the next step, and reporting `true` here
-        // before that would make the gate invisible and the UI lie.
-        activated: false,
-        tier: None,
-        device_id: device::redact(&device::fingerprint()),
+        activated: activation.is_some(),
+        tier: activation.as_ref().map(|a| a.tier.clone()),
+        device_id: store::redact(&fingerprint),
         platform: contract::current_platform().map(str::to_owned),
         version: env!("CARGO_PKG_VERSION").to_owned(),
     }
@@ -131,13 +139,25 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
             udp_relay,
             ..
         } => {
-            // Report success with what the UI needs to render the next screen.
-            // Persistence and config application are wired in the next step;
-            // claiming them here would be a lie the UI then acts on.
+            // Persist BEFORE reporting success. A UI that shows "activated" on a
+            // device the hub has never heard of is worse than a failure: the
+            // student stops trying to fix it.
+            store::store(&store::Activation {
+                code: code.clone(),
+                tier: tier.clone(),
+                fingerprint,
+            })
+            .await
+            .map_err(|error| {
+                super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}"))
+            })?;
+
             Ok(ActivationResult {
                 code,
                 tier,
                 udp_relay,
+                // The tier config is not written or applied yet. Reporting true
+                // here would make the UI offer a Connect button that cannot work.
                 config_applied: false,
                 message: "Activated".to_owned(),
             })

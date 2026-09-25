@@ -256,9 +256,20 @@ jobs:
           fi
 
           echo "$DEST" >> "$GITHUB_PATH"
+
           # Print the version so a wrong/old binary is visible in the log rather
           # than surfacing later as a confusing key error.
-          if [ -x "$DEST/minisign.exe" ]; then "$DEST/minisign.exe" -v; else "$DEST/minisign" -v; fi
+          #
+          # On Windows this runs through cmd, NOT bash: Git Bash refuses to
+          # exec a native .exe addressed by a bash-style path, failing with
+          #   D:\a\_temp/minisign/minisign.exe: cannot execute binary file:
+          #   Exec format error
+          # even though the file is a perfectly good Windows binary.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmd //c ""$DEST\minisign.exe" -v"
+          else
+            "$DEST/minisign" -v
+          fi
 
       - name: Sign the artifact
         shell: bash
@@ -275,10 +286,24 @@ jobs:
           fi
           printf '%s' "$LOCUS_UPDATE_KEY" > "$RUNNER_TEMP/locus.key"
           chmod 600 "$RUNNER_TEMP/locus.key"
-          minisign -S -s "$RUNNER_TEMP/locus.key" \
-            -m "artifacts/${{ matrix.artifact }}" \
-            -x "artifacts/${{ matrix.artifact }}.sig" \
-            -t "Locus ${{ matrix.label }}"
+
+          # Git Bash cannot exec a native .exe by bash-style path on Windows
+          # (it reports "Exec format error" on a valid binary), so Windows goes
+          # through cmd. Paths are converted with cygpath, and the artifact name
+          # contains no spaces, so no quoting gymnastics are needed.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            KEY=$(cygpath -w "$RUNNER_TEMP/locus.key")
+            MS=$(cygpath -w "$RUNNER_TEMP/minisign/minisign.exe")
+            ART=$(cygpath -w "artifacts/${{ matrix.artifact }}")
+            SIG=$(cygpath -w "artifacts/${{ matrix.artifact }}.sig")
+            cmd //c "\"$MS\" -S -s \"$KEY\" -m \"$ART\" -x \"$SIG\" -t \"Locus ${{ matrix.label }}\""
+          else
+            "$RUNNER_TEMP/minisign/minisign" -S -s "$RUNNER_TEMP/locus.key" \
+              -m "artifacts/${{ matrix.artifact }}" \
+              -x "artifacts/${{ matrix.artifact }}.sig" \
+              -t "Locus ${{ matrix.label }}"
+          fi
+
           rm -f "$RUNNER_TEMP/locus.key"
           echo "Signed ${{ matrix.artifact }}:"
           cat "artifacts/${{ matrix.artifact }}.sig"

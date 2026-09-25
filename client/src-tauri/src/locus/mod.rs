@@ -16,6 +16,7 @@ pub mod activation;
 pub mod contract;
 pub mod device;
 pub mod heartbeat;
+pub mod store;
 pub mod tier;
 pub mod update;
 

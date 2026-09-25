@@ -207,6 +207,46 @@ pub struct IVerge {
     pub hover_jump_navigator_delay: Option<u64>,
 
     pub enable_external_controller: Option<bool>,
+
+    // ── Locus product state ──────────────────────────────────────────────────
+    //
+    // Additive on purpose: every field here is `Option<T>` with a serde default,
+    // which is exactly the shape this struct already uses, so adding them needs
+    // no migration and inherits Verge's existing draft/transaction/save
+    // machinery — one store, one backup mechanism, one thing that can corrupt.
+
+    /// The activation code this device was activated with.
+    ///
+    /// This is a BEARER CREDENTIAL for the student's tier, and it is stored in
+    /// plaintext in a user-writable config. That is deliberate (the retired
+    /// client did the same, and the code must survive restarts), but it has
+    /// consequences: never log it, never include it in a diagnostics export, and
+    /// never send the full value to the frontend — see `cmd::locus`.
+    pub activation_code: Option<String>,
+
+    /// The tier the hub granted (`eco`, `stealth`, `strike`).
+    pub locus_tier: Option<String>,
+
+    /// The device fingerprint this code is bound to.
+    pub device_fingerprint: Option<String>,
+
+    /// Unix seconds of the last successful heartbeat. `None` (or 0) means the
+    /// device has never had one, which the grace period treats as "full window
+    /// from first launch" rather than "expired".
+    pub last_heartbeat_ok: Option<i64>,
+
+    /// Consecutive heartbeat failures, used to compute the backoff. Persisted so
+    /// a device that restarts repeatedly during an outage does not reset to
+    /// beating every 5 minutes and hammer the hub.
+    pub heartbeat_failures: Option<u32>,
+
+    /// A version the hub has offered, remembered so the UI can still show it
+    /// after the heartbeat that carried it has been forgotten.
+    pub update_pending_version: Option<String>,
+
+    /// The checksum for that pending version, so a retry does not have to
+    /// re-derive it (and cannot silently retry with a different one).
+    pub update_pending_sha256: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
