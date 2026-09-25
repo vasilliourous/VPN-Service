@@ -269,13 +269,20 @@ jobs:
           # Print the version so a wrong/old binary is visible in the log rather
           # than surfacing later as a confusing key error.
           #
-          # On Windows this runs through cmd, NOT bash: Git Bash refuses to
-          # exec a native .exe addressed by a bash-style path, failing with
-          #   D:\a\_temp/minisign/minisign.exe: cannot execute binary file:
-          #   Exec format error
-          # even though the file is a perfectly good Windows binary.
+          # On Windows this runs through cmd, NOT bash, for two reasons:
+          #
+          #   1. Git Bash refuses to exec a native .exe addressed by a bash-style
+          #      path — "cannot execute binary file: Exec format error" — on a
+          #      perfectly good Windows binary.
+          #   2. Backslashes cannot be written literally in this script. Bash
+          #      consumes them, so `"$DEST\minisign.exe"` reached cmd as
+          #      `D:\a\_temp/minisignminisign.exe` and produced
+          #      "is not recognized as an internal or external command".
+          #
+          # cygpath converts to a real Windows path, so nothing has to be escaped.
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cmd //c ""$DEST\minisign.exe" -v"
+            MS=$(cygpath -w "$DEST/minisign.exe")
+            cmd //c "$MS" -v
           else
             "$DEST/minisign" -v
           fi
@@ -305,7 +312,10 @@ jobs:
             MS=$(cygpath -w "$RUNNER_TEMP/minisign/minisign.exe")
             ART=$(cygpath -w "artifacts/${{ matrix.artifact }}")
             SIG=$(cygpath -w "artifacts/${{ matrix.artifact }}.sig")
-            cmd //c "\"$MS\" -S -s \"$KEY\" -m \"$ART\" -x \"$SIG\" -t \"Locus ${{ matrix.label }}\""
+            # No quoting: cygpath output and the artifact filenames contain no
+            # spaces, and backslash-escaped quotes are consumed by bash before
+            # cmd sees them (the bug that broke this step's version check).
+            cmd //c "$MS -S -s $KEY -m $ART -x $SIG -t Locus_${{ matrix.label }}"
           else
             "$RUNNER_TEMP/minisign/minisign" -S -s "$RUNNER_TEMP/locus.key" \
               -m "artifacts/${{ matrix.artifact }}" \
