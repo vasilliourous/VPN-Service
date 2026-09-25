@@ -1,8 +1,9 @@
 import './assets/styles/index.scss'
 
 import { ResizeObserver } from '@juggle/resize-observer'
+import { Box, CircularProgress, createTheme, CssBaseline, ThemeProvider } from '@mui/material'
 import { ComposeContextProvider } from 'foxact/compose-context-provider'
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
 import { SWRConfig } from 'swr'
@@ -10,10 +11,12 @@ import { MihomoWebSocket } from 'tauri-plugin-mihomo-api'
 
 import { BaseErrorBoundary } from './components/base'
 import { router } from './pages/_routers'
+import ActivationScreen from './pages/activation'
 import { preloadHomePageCards } from './pages/home'
 import { AppDataProvider } from './providers/app-data-provider'
 import { WindowProvider } from './providers/window'
 import { FALLBACK_LANGUAGE, initializeLanguage } from './services/i18n'
+import { locusStatus } from './services/locus'
 import {
   preloadAppData,
   resolveThemeMode,
@@ -41,15 +44,51 @@ if (!container) {
 disableWebViewShortcuts()
 
 const initializeApp = (initialThemeMode: 'light' | 'dark') => {
-  const contexts = [
-    <ThemeModeProvider key="theme" initialState={initialThemeMode} />,
-    <LoadingCacheProvider key="loading" />,
-    <UpdateStateProvider key="update" />,
-  ]
-
   const root = createRoot(container)
-  root.render(
-    <React.StrictMode>
+
+  // The gate wraps everything, so an unactivated device cannot reach the
+  // router, the profile machinery or the connect controls by any route — not
+  // just by the navigation being hidden. "Render nothing else until activated"
+  // is a much easier property to hold than "every page remembers to check".
+  const Shell = () => {
+    const [activated, setActivated] = useState<boolean | null>(null)
+
+    useEffect(() => {
+      locusStatus()
+        .then((status) => setActivated(status.activated))
+        // If we cannot read the state, assume NOT activated. The alternative
+        // shows a VPN UI that cannot work, which is worse than asking for a code
+        // the student already has on their card.
+        .catch(() => setActivated(false))
+    }, [])
+
+    if (activated === null) {
+      return (
+        <Box
+          sx={{
+            width: '100vw',
+            height: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )
+    }
+
+    if (!activated) {
+      return <ActivationScreen onActivated={() => setActivated(true)} />
+    }
+
+    const contexts = [
+      <ThemeModeProvider key="theme" initialState={initialThemeMode} />,
+      <LoadingCacheProvider key="loading" />,
+      <UpdateStateProvider key="update" />,
+    ]
+
+    return (
       <ComposeContextProvider contexts={contexts}>
         <BaseErrorBoundary>
           <SWRConfig value={swrConfig}>
@@ -61,6 +100,17 @@ const initializeApp = (initialThemeMode: 'light' | 'dark') => {
           </SWRConfig>
         </BaseErrorBoundary>
       </ComposeContextProvider>
+    )
+  }
+
+  root.render(
+    <React.StrictMode>
+      <ThemeProvider theme={createTheme()}>
+        <CssBaseline />
+        <BaseErrorBoundary>
+          <Shell />
+        </BaseErrorBoundary>
+      </ThemeProvider>
     </React.StrictMode>,
   )
 }
