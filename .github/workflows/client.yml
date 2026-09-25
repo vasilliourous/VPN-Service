@@ -130,7 +130,15 @@ jobs:
             label: windows
             triple: x86_64-pc-windows-msvc
             artifact: locus-windows-amd64.exe
-          - os: macos-13
+          # BOTH macOS architectures build on macos-14 (Apple Silicon).
+          #
+          # `macos-13` was used for the Intel slice and never once started: every
+          # run sat at "Waiting for a runner to pick up this job" while the other
+          # three platforms finished, because GitHub is retiring the Intel macOS
+          # images. Both slices now build on the ARM image, with x86_64 added as
+          # a cross-compile target — the supported way to produce an Intel binary
+          # without an Intel machine.
+          - os: macos-14
             label: macos-intel
             triple: x86_64-apple-darwin
             artifact: locus-darwin-amd64
@@ -157,6 +165,10 @@ jobs:
         with:
           # Matches client/rust-toolchain.toml. `edition = "2024"` needs >= 1.85.
           toolchain: "1.98.1"
+          # Required for the Intel macOS slice, which now cross-compiles
+          # on the ARM runner. On other platforms this names the host
+          # target, so it is harmless there.
+          targets: ${{ matrix.triple }}
 
       - uses: Swatinem/rust-cache@v2
         with:
