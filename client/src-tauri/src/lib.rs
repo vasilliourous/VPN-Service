@@ -22,13 +22,16 @@ use anyhow::Result;
 use clash_verge_logging::{Type, logging};
 use once_cell::sync::OnceCell;
 use tauri::{AppHandle, Manager as _};
-#[cfg(target_os = "macos")]
-use tauri_plugin_autostart::MacosLauncher;
 
 pub static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
 /// Application initialization helper functions
 mod app_init {
     use super::{AsyncHandler, Result, Type, cmd, files, logging, server};
+    // Imported here, not at the outer scope: a `use` in the parent module is not
+    // in scope inside a nested one, and this reference is cfg-gated to macOS, so
+    // a Linux or Windows build never notices the mistake.
+    #[cfg(target_os = "macos")]
+    use tauri_plugin_autostart::MacosLauncher;
 
     /// Initialize singleton monitoring for other instances
     pub fn init_singleton_check() -> Result<server::SingletonDisposition> {

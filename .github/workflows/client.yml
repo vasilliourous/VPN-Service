@@ -176,8 +176,16 @@ jobs:
       - name: Fetch sidecars and geo data
         run: node scripts/prebuild.mjs "${{ matrix.triple }}"
 
+      # `tauri build` has its OWN --target flag. Using `pnpm run build --
+      # --target X` sends it to Cargo instead (the extra `--` makes everything
+      # after it a cargo argument), so Tauri compiles WITHOUT the triple while
+      # its bundler then looks for a triple-qualified path — producing
+      #   "Built application at: target/release/locus"
+      #   "failed to bundle project: can't open main binary .../target/release/locus"
+      # Passing it through `pnpm exec` gives the flag to Tauri, which is what
+      # actually needs it.
       - name: Build
-        run: pnpm run build -- --target ${{ matrix.triple }}
+        run: pnpm exec tauri build --target ${{ matrix.triple }}
 
       # ── Stage the raw executable under the name the hub expects ──
       #
