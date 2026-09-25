@@ -1,244 +1,158 @@
-import {
-  ComputerRounded,
-  TroubleshootRounded,
-  HelpOutlineRounded,
-  SvgIconComponent,
-} from '@mui/icons-material'
-import {
-  Box,
-  Typography,
-  Stack,
-  Paper,
-  Tooltip,
-  alpha,
-  useTheme,
-  Fade,
-} from '@mui/material'
-import { useState, useMemo, memo, FC } from 'react'
-import { useTranslation } from 'react-i18next'
+import { Box, Button, CircularProgress, Typography, alpha, useTheme } from '@mui/material'
+import { useCallback, useEffect, useState } from 'react'
 
-import ProxyControlSwitches from '@/components/shared/proxy-control-switches'
-import { useSystemProxyState } from '@/hooks/use-system-proxy-state'
-import { useSystemState } from '@/hooks/use-system-state'
-import { useVerge } from '@/hooks/use-verge'
+import { EnhancedCard } from '@/components/home/enhanced-card'
+import { locusConnect, locusDisconnect, locusStatus } from '@/services/locus'
 import { showNotice } from '@/services/notice-service'
 
-const LOCAL_STORAGE_TAB_KEY = 'clash-verge-proxy-active-tab'
+/**
+ * The Locus connection control.
+ *
+ * Replaces the two raw Clash switches (system proxy / TUN) with one action,
+ * because a Locus student is not choosing a proxy mode — they are turning the
+ * VPN on. Those switches still exist underneath; they are simply not a decision
+ * the student should have to make, and exposing both invited them to turn on the
+ * one that does not work at school.
+ *
+ * The state machine is deliberately small:
+ *
+ *   unknown -> disconnected -> connecting -> connected
+ *                          \-> error (with the reason, never a bare "failed")
+ *
+ * `unknown` is not `disconnected`. Treating "we have not asked yet" as "off"
+ * would flash a Connect button on every launch and invite a double-tap.
+ */
 
-interface TabButtonProps {
-  isActive: boolean
-  onClick: () => void
-  icon: SvgIconComponent
-  label: string
-  hasIndicator?: boolean
-}
+type Phase = 'unknown' | 'disconnected' | 'connecting' | 'disconnecting' | 'connected'
 
-// Tab组件
-const TabButton: FC<TabButtonProps> = memo(
-  ({ isActive, onClick, icon: Icon, label, hasIndicator = false }) => (
-    <Paper
-      elevation={isActive ? 2 : 0}
-      onClick={onClick}
-      sx={{
-        cursor: 'pointer',
-        px: 2,
-        py: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 1,
-        bgcolor: isActive ? 'primary.main' : 'background.paper',
-        color: isActive ? 'primary.contrastText' : 'text.primary',
-        borderRadius: 1.5,
-        flex: 1,
-        maxWidth: 160,
-        transition: 'all 0.2s ease-in-out',
-        position: 'relative',
-        '&:hover': {
-          transform: 'translateY(-1px)',
-          boxShadow: 1,
-        },
-        '&:after': isActive
-          ? {
-              content: '""',
-              position: 'absolute',
-              bottom: -9,
-              left: '50%',
-              width: 2,
-              height: 9,
-              bgcolor: 'primary.main',
-              transform: 'translateX(-50%)',
-            }
-          : {},
-      }}
-    >
-      <Icon fontSize="small" />
-      <Typography variant="body2" sx={{ fontWeight: isActive ? 600 : 400 }}>
-        {label}
-      </Typography>
-      {hasIndicator && (
-        <Box
-          sx={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            bgcolor: isActive ? '#fff' : 'success.main',
-            position: 'absolute',
-            top: 8,
-            right: 8,
-          }}
-        />
-      )}
-    </Paper>
-  ),
-)
-
-interface TabDescriptionProps {
-  description: string
-  tooltipTitle: string
-}
-
-// 描述文本组件
-const TabDescription: FC<TabDescriptionProps> = memo(
-  ({ description, tooltipTitle }) => (
-    <Fade in={true} timeout={200}>
-      <Typography
-        variant="caption"
-        component="div"
-        sx={{
-          width: '95%',
-          textAlign: 'center',
-          color: 'text.secondary',
-          p: 0.8,
-          borderRadius: 1,
-          borderColor: 'primary.main',
-          borderWidth: 1,
-          borderStyle: 'solid',
-          backgroundColor: 'background.paper',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 0.5,
-          wordBreak: 'break-word',
-          hyphens: 'auto',
-        }}
-      >
-        {description}
-        <Tooltip title={tooltipTitle}>
-          <HelpOutlineRounded
-            sx={{ fontSize: 14, opacity: 0.7, flexShrink: 0 }}
-          />
-        </Tooltip>
-      </Typography>
-    </Fade>
-  ),
-)
-
-export const ProxyTunCard: FC = () => {
-  const { t } = useTranslation()
+const ProxyTunCard = () => {
   const theme = useTheme()
-  const [activeTab, setActiveTab] = useState<string>(
-    () => localStorage.getItem(LOCAL_STORAGE_TAB_KEY) || 'system',
-  )
+  const [phase, setPhase] = useState<Phase>('unknown')
+  const [error, setError] = useState<string | null>(null)
+  const [tier, setTier] = useState<string | null>(null)
 
-  const { verge } = useVerge()
-  const { isTunModeAvailable } = useSystemState()
-  // Display the observed OS state, not the requested configuration.
-  const { indicator: systemProxyIndicator } = useSystemProxyState()
-
-  const { enable_tun_mode } = verge ?? {}
-
-  const handleError = (err: unknown) => {
-    showNotice.error(err)
-  }
-
-  const handleTabChange = (tab: string) => {
-    setActiveTab(tab)
-    localStorage.setItem(LOCAL_STORAGE_TAB_KEY, tab)
-  }
-
-  const tabDescription = useMemo(() => {
-    if (activeTab === 'system') {
-      return {
-        text: systemProxyIndicator
-          ? t('home.components.proxyTun.status.systemProxyEnabled')
-          : t('home.components.proxyTun.status.systemProxyDisabled'),
-        tooltip: t('home.components.proxyTun.tooltips.systemProxy'),
-      }
-    } else {
-      return {
-        text: !isTunModeAvailable
-          ? t('home.components.proxyTun.status.tunModeServiceRequired')
-          : enable_tun_mode
-            ? t('home.components.proxyTun.status.tunModeEnabled')
-            : t('home.components.proxyTun.status.tunModeDisabled'),
-        tooltip: t('home.components.proxyTun.tooltips.tunMode'),
-      }
+  const refresh = useCallback(async () => {
+    try {
+      const status = await locusStatus()
+      setTier(status.tier)
+      setPhase((current) =>
+        // Never stomp an in-flight transition: a poll landing mid-connect would
+        // otherwise snap the button back and let the student double-fire it.
+        current === 'connecting' || current === 'disconnecting'
+          ? current
+          : status.activated
+            ? 'disconnected'
+            : 'unknown'
+      )
+    } catch {
+      // Leave the phase alone. A status read failing is not evidence about the
+      // tunnel, and flapping the UI on a transient error is worse than a stale
+      // label a moment longer.
     }
-  }, [activeTab, systemProxyIndicator, enable_tun_mode, isTunModeAvailable, t])
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 15000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  const toggle = useCallback(async () => {
+    setError(null)
+    const connecting = phase !== 'connected'
+    setPhase(connecting ? 'connecting' : 'disconnecting')
+
+    try {
+      const result = connecting ? await locusConnect() : await locusDisconnect()
+      setPhase(result.connected ? 'connected' : 'disconnected')
+    } catch (err) {
+      // Show the backend's reason verbatim. It already distinguishes "your code
+      // is bound elsewhere" from "the config was refused" from "the core would
+      // not start", and rewording it here would lose that.
+      const message = String(err)
+      setError(message)
+      setPhase(connecting ? 'disconnected' : 'connected')
+      showNotice.error(message)
+    }
+  }, [phase])
+
+  const busy = phase === 'connecting' || phase === 'disconnecting'
+  const connected = phase === 'connected'
+
+  const label =
+    phase === 'unknown'
+      ? 'Checking…'
+      : phase === 'connecting'
+        ? 'Connecting…'
+        : phase === 'disconnecting'
+          ? 'Disconnecting…'
+          : connected
+            ? 'Disconnect'
+            : 'Connect'
+
+  const statusText = connected
+    ? tier
+      ? `Connected · ${tier} tier`
+      : 'Connected'
+    : error
+      ? error
+      : 'Not connected'
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          position: 'relative',
-          zIndex: 2,
-        }}
-      >
-        <TabButton
-          isActive={activeTab === 'system'}
-          onClick={() => handleTabChange('system')}
-          icon={ComputerRounded}
-          label={t('settings.sections.system.toggles.systemProxy')}
-          hasIndicator={systemProxyIndicator}
-        />
-        <TabButton
-          isActive={activeTab === 'tun'}
-          onClick={() => handleTabChange('tun')}
-          icon={TroubleshootRounded}
-          label={t('settings.sections.system.toggles.tunMode')}
-          hasIndicator={enable_tun_mode && isTunModeAvailable}
-        />
-      </Stack>
+    <EnhancedCard title="Locus" icon={undefined}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box
+            sx={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              flexShrink: 0,
+              bgcolor: connected
+                ? theme.palette.success.main
+                : error
+                  ? theme.palette.error.main
+                  : theme.palette.text.disabled,
+              boxShadow: connected
+                ? `0 0 0 4px ${alpha(theme.palette.success.main, 0.18)}`
+                : 'none',
+              transition: 'background-color 0.2s, box-shadow 0.2s',
+            }}
+          />
+          <Typography
+            variant="body2"
+            sx={{
+              color: error ? 'error.main' : 'text.secondary',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={statusText}
+          >
+            {statusText}
+          </Typography>
+        </Box>
 
-      <Box
-        sx={{
-          width: '100%',
-          my: 1,
-          position: 'relative',
-          display: 'flex',
-          justifyContent: 'center',
-          overflow: 'visible',
-        }}
-      >
-        <TabDescription
-          description={tabDescription.text}
-          tooltipTitle={tabDescription.tooltip}
-        />
-      </Box>
+        <Button
+          fullWidth
+          size="large"
+          variant={connected ? 'outlined' : 'contained'}
+          color={connected ? 'inherit' : 'primary'}
+          disabled={busy || phase === 'unknown'}
+          onClick={() => void toggle()}
+          sx={{ py: 1.3 }}
+        >
+          {busy ? <CircularProgress size={20} color="inherit" /> : label}
+        </Button>
 
-      <Box
-        sx={{
-          mt: 0,
-          p: 1,
-          bgcolor: alpha(theme.palette.primary.main, 0.04),
-          borderRadius: 2,
-        }}
-      >
-        <ProxyControlSwitches
-          onError={handleError}
-          label={
-            activeTab === 'system'
-              ? t('settings.sections.system.toggles.systemProxy')
-              : t('settings.sections.system.toggles.tunMode')
-          }
-          noRightPadding={true}
-        />
+        {phase === 'unknown' && (
+          <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+            This device needs an activation code before it can connect.
+          </Typography>
+        )}
       </Box>
-    </Box>
+    </EnhancedCard>
   )
 }
+
+export default ProxyTunCard
