@@ -1,5 +1,5 @@
 use super::{CmdResult, StringifyErr as _, WithErrorCode as _, coded_error};
-use crate::cmd::validate::{ValidationNoticeTarget, handle_validation_notice};
+use crate::cmd::validate::handle_validation_notice;
 use crate::config::profiles;
 use crate::utils::window_manager::WindowManager;
 use crate::{
@@ -39,7 +39,7 @@ pub async fn enhance_profiles() -> CmdResult<ValidationOutcome> {
                 "Reactivate profiles command failed validation: {}",
                 outcome
             );
-            handle_validation_notice(&outcome, ValidationNoticeTarget::Runtime, "运行时配置");
+            handle_validation_notice(&outcome, "运行时配置");
             Ok(outcome)
         }
         Err(e) => {
@@ -130,7 +130,7 @@ async fn handle_validation_failure(
 ) -> CmdResult<ValidationOutcome> {
     logging!(warn, Type::Cmd, "配置验证失败: {}", outcome);
     discard_and_restore(current_profile).await?;
-    handle_validation_notice(&outcome, ValidationNoticeTarget::Runtime, "运行时配置");
+    handle_validation_notice(&outcome, "运行时配置");
     Ok(outcome)
 }
 

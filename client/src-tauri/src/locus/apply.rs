@@ -93,11 +93,7 @@ pub async fn apply_tier(config: &TierConfig, udp_relay: bool) -> Result<ApplyOut
             Ok(ApplyOutcome::Rejected { reason })
         }
         Err(error) => {
-            logging!(
-                warn,
-                Type::Config,
-                "[locus] could not apply the tier config: {error:#}"
-            );
+            logging!(warn, Type::Config, "[locus] could not apply the tier config: {error:#}");
             Ok(ApplyOutcome::Rejected {
                 reason: format!("{error:#}"),
             })
@@ -119,7 +115,9 @@ async fn write_tier_profile(yaml: &str) -> Result<()> {
         itype: Some(SmartString::from("local")),
         name: Some(SmartString::from(TIER_PROFILE_NAME)),
         file: Some(SmartString::from(TIER_PROFILE_FILE)),
-        desc: Some(SmartString::from("Your Locus tier. Managed automatically — do not edit.")),
+        desc: Some(SmartString::from(
+            "Your Locus tier. Managed automatically — do not edit.",
+        )),
         // The YAML is handed over rather than pre-written so the existing helper
         // performs the write, the same way every other profile is created.
         // `PrfItem` uses smartstring throughout, including here.
@@ -246,8 +244,7 @@ mod tests {
         };
 
         let profile = build_profile(&config, true);
-        let parsed: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&profile.yaml).expect("must be valid YAML");
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&profile.yaml).expect("must be valid YAML");
 
         assert_eq!(
             parsed["proxies"][0]["server"], "networkingguides.duckdns.org",
@@ -270,8 +267,7 @@ mod tests {
         };
 
         let profile = build_profile(&config, false);
-        let parsed: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&profile.yaml).expect("must be valid YAML");
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&profile.yaml).expect("must be valid YAML");
         assert_eq!(parsed["proxies"].as_sequence().map(Vec::len), Some(1));
     }
 

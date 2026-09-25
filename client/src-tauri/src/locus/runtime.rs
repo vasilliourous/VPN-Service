@@ -73,11 +73,7 @@ pub fn start(activation: store::Activation) {
             // A poisoned lock means a previous holder panicked. The loop itself
             // is still valid, so recover the guard rather than leaving the app
             // unable to heartbeat for the rest of its life.
-            logging!(
-                warn,
-                Type::Config,
-                "[locus] heartbeat mutex was poisoned; recovering"
-            );
+            logging!(warn, Type::Config, "[locus] heartbeat mutex was poisoned; recovering");
             *poisoned.into_inner() = Some(loop_handle);
         }
     }
@@ -151,11 +147,7 @@ async fn handle_success(response: &crate::locus::heartbeat::HeartbeatResponse) {
     // decision: doing it silently mid-session would drop their connection
     // without warning, and on a school network that is the worst moment.
     if let Some(version) = &response.update_available {
-        logging!(
-            info,
-            Type::System,
-            "[locus] the hub is offering update {version}"
-        );
+        logging!(info, Type::System, "[locus] the hub is offering update {version}");
     }
 }
 
@@ -188,11 +180,9 @@ async fn apply_refreshed_config(config: &crate::locus::contract::TierConfig, udp
     }
 
     match apply::apply_tier(config, udp_relay).await {
-        Ok(apply::ApplyOutcome::Rejected { reason }) => logging!(
-            warn,
-            Type::Config,
-            "[locus] refreshed config was refused: {reason}"
-        ),
+        Ok(apply::ApplyOutcome::Rejected { reason }) => {
+            logging!(warn, Type::Config, "[locus] refreshed config was refused: {reason}")
+        }
         Err(error) => logging!(
             warn,
             Type::Config,
@@ -208,11 +198,7 @@ async fn apply_refreshed_config(config: &crate::locus::contract::TierConfig, udp
 /// working on the strength of a stale local record, which is precisely what
 /// suspension exists to prevent.
 async fn handle_refusal(reason: &str) {
-    logging!(
-        warn,
-        Type::Config,
-        "[locus] the hub refused this device: {reason}"
-    );
+    logging!(warn, Type::Config, "[locus] the hub refused this device: {reason}");
 
     stop();
 
@@ -224,11 +210,7 @@ async fn handle_refusal(reason: &str) {
         );
     }
     if let Err(error) = store::clear().await {
-        logging!(
-            warn,
-            Type::Config,
-            "[locus] could not clear the entitlement: {error:#}"
-        );
+        logging!(warn, Type::Config, "[locus] could not clear the entitlement: {error:#}");
     }
 }
 

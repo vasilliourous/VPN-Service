@@ -14,9 +14,9 @@
 use super::CmdResult;
 use crate::config::Config;
 use crate::core::CoreManager;
-use clash_verge_logging::{Type, logging};
 use crate::locus::{activation, apply, contract, device, store};
 use crate::utils::dirs;
+use clash_verge_logging::{Type, logging};
 use serde::Serialize;
 
 /// Whether the app has an activation to work with, and what it is.
@@ -149,9 +149,7 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
                 fingerprint: fingerprint.clone(),
             })
             .await
-            .map_err(|error| {
-                super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}"))
-            })?;
+            .map_err(|error| super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}")))?;
 
             // The tier's connection details, so Connect has something to dial.
             // Stored separately from the entitlement because a hub response can
@@ -162,9 +160,7 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
                 Some(tier_config) => {
                     store::store_tier_config(tier_config, udp_relay)
                         .await
-                        .map_err(|error| {
-                            super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}"))
-                        })?;
+                        .map_err(|error| super::coded_error("LOCUS_STORE_FAILED", format!("{error:#}")))?;
 
                     // Apply it now so the tunnel is ready to start. A failure
                     // here is reported in the result rather than failing the
@@ -218,10 +214,7 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
         // Every other outcome is a definitive answer about the code, not an
         // error in our code. Returning them as failures would make the UI show
         // "something went wrong" when the truth is "your code is expired".
-        other => Err(super::coded_error(
-            "LOCUS_ACTIVATION_REFUSED",
-            describe_outcome(&other),
-        )),
+        other => Err(super::coded_error("LOCUS_ACTIVATION_REFUSED", describe_outcome(&other))),
     }
 }
 
@@ -248,25 +241,17 @@ fn describe_outcome(outcome: &activation::ActivationOutcome) -> String {
     use activation::ActivationOutcome as O;
     match outcome {
         O::Activated { .. } => "Activated".to_owned(),
-        O::BoundToAnotherDevice => {
-            "This code is already activated on a different device. \
+        O::BoundToAnotherDevice => "This code is already activated on a different device. \
              Contact the person who sold it to you — they can move it to this one."
-                .to_owned()
-        }
-        O::Suspended => {
-            "This code has been suspended. Contact the person who sold it to you.".to_owned()
-        }
+            .to_owned(),
+        O::Suspended => "This code has been suspended. Contact the person who sold it to you.".to_owned(),
         O::Expired => "This code has expired. You will need a new one.".to_owned(),
-        O::NotFound => {
-            "That code was not recognised. Check it against the card — it is easy \
+        O::NotFound => "That code was not recognised. Check it against the card — it is easy \
              to mix up 0 and O, or 1 and I, which is why Locus codes leave them out."
-                .to_owned()
-        }
-        O::RateLimited { .. } => {
-            "Too many attempts. Wait ten minutes and try again — the limit protects \
+            .to_owned(),
+        O::RateLimited { .. } => "Too many attempts. Wait ten minutes and try again — the limit protects \
              everyone's codes from being guessed."
-                .to_owned()
-        }
+            .to_owned(),
         O::ServerError { message, .. } => {
             if message.is_empty() {
                 "The Locus hub could not complete the activation. Try again in a moment.".to_owned()
@@ -295,9 +280,8 @@ fn describe_outcome(outcome: &activation::ActivationOutcome) -> String {
 #[tauri::command]
 pub async fn locus_connect() -> CmdResult<ConnectionResult> {
     let verge = Config::verge().await;
-    let activation = store::read(&verge.latest_arc()).ok_or_else(|| {
-        super::coded_error("LOCUS_NOT_ACTIVATED", "This device is not activated yet.")
-    })?;
+    let activation = store::read(&verge.latest_arc())
+        .ok_or_else(|| super::coded_error("LOCUS_NOT_ACTIVATED", "This device is not activated yet."))?;
 
     // Turn TUN on BEFORE applying, so the generated config is built for TUN
     // rather than being rebuilt immediately afterwards.
@@ -427,9 +411,7 @@ mod tests {
             O::Suspended,
             O::Expired,
             O::NotFound,
-            O::RateLimited {
-                retry_after_secs: None,
-            },
+            O::RateLimited { retry_after_secs: None },
             O::ServerError {
                 code: 500,
                 message: String::new(),
@@ -477,9 +459,7 @@ mod tests {
     /// immediately makes it worse and the limit is 10 minutes.
     #[test]
     fn the_rate_limit_message_says_to_wait() {
-        let text = describe_outcome(&O::RateLimited {
-            retry_after_secs: None,
-        });
+        let text = describe_outcome(&O::RateLimited { retry_after_secs: None });
         assert!(
             text.to_lowercase().contains("wait") || text.to_lowercase().contains("minute"),
             "the message must tell the student to wait, got {text:?}"

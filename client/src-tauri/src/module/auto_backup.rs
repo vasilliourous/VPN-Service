@@ -29,19 +29,21 @@ const MIN_BACKUP_INTERVAL_SECS: i64 = 60;
 const AUTO_BACKUP_KEEP: usize = 20;
 const AUTO_MARKER: &str = "-auto-";
 
+/// What caused a backup.
+///
+/// Only `Scheduled` remains: `GlobalMerge` and `GlobalScript` fired on edits to
+/// a profile's merge/script chain, and their producer went with the profile UI.
+/// The `merge`/`script` filename slugs are still handled by `slug()` below, so an
+/// existing backup file with that suffix is still recognised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AutoBackupTrigger {
     Scheduled,
-    GlobalMerge,
-    GlobalScript,
 }
 
 impl AutoBackupTrigger {
     const fn slug(self) -> &'static str {
         match self {
             Self::Scheduled => "scheduled",
-            Self::GlobalMerge => "merge",
-            Self::GlobalScript => "script",
         }
     }
 
@@ -123,19 +125,6 @@ impl AutoBackupManager {
         let _ = self.settings_tx.send(settings);
         self.maybe_start_runner(settings);
         Ok(())
-    }
-
-    pub fn trigger_backup(trigger: AutoBackupTrigger) {
-        AsyncHandler::spawn(move || async move {
-            if let Err(err) = Self::global().execute_trigger(trigger).await {
-                logging!(
-                    warn,
-                    Type::Backup,
-                    "Auto backup execution failed ({:?}): {err:#?}",
-                    trigger
-                );
-            }
-        });
     }
 
     fn maybe_start_runner(&self, settings: AutoBackupSettings) {

@@ -233,11 +233,7 @@ pub fn redact(fingerprint: &str) -> String {
 mod tests {
     use super::*;
 
-    fn verge_with(
-        code: Option<&str>,
-        tier: Option<&str>,
-        fingerprint: Option<&str>,
-    ) -> IVerge {
+    fn verge_with(code: Option<&str>, tier: Option<&str>, fingerprint: Option<&str>) -> IVerge {
         IVerge {
             activation_code: code.map(SmartString::from),
             locus_tier: tier.map(SmartString::from),
@@ -292,14 +288,9 @@ mod tests {
     #[test]
     fn diagnostics_never_include_the_code() {
         let secret = "RQ-SECR-ETXX-XXXX-T";
-        let verge = verge_with(
-            Some(secret),
-            Some("strike"),
-            Some(&"b".repeat(64)),
-        );
+        let verge = verge_with(Some(secret), Some("strike"), Some(&"b".repeat(64)));
 
-        let exported = serde_json::to_string(&redacted_for_diagnostics(&verge))
-            .expect("export must serialise");
+        let exported = serde_json::to_string(&redacted_for_diagnostics(&verge)).expect("export must serialise");
 
         assert!(
             !exported.contains(secret),

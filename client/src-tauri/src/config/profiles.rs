@@ -216,22 +216,6 @@ impl IProfiles {
         Ok(())
     }
 
-    async fn reorder(&mut self, active_id: &str, over_id: &str) -> Result<()> {
-        {
-            let Some(items) = self.items.as_mut() else {
-                return Ok(());
-            };
-            let old_index = items.iter().rposition(|item| item.uid.as_deref() == Some(active_id));
-            let new_index = items.iter().rposition(|item| item.uid.as_deref() == Some(over_id));
-            let (Some(old_idx), Some(new_idx)) = (old_index, new_index) else {
-                return Ok(());
-            };
-            let item = items.remove(old_idx);
-            items.insert(new_idx, item);
-        }
-        self.save_file().await
-    }
-
     async fn patch_item(&mut self, uid: &str, item: &PrfItem) -> Result<()> {
         if let Some(file) = &item.file {
             Self::validate_profile_file(file)?;
@@ -412,11 +396,6 @@ impl IProfiles {
 // These helpers serialize asynchronous operations against committed profile data.
 use crate::config::Config;
 
-pub(crate) async fn profiles_append_item_with_filedata_safe(item: &PrfItem, file_data: Option<String>) -> Result<()> {
-    let item = &mut PrfItem::from(item, file_data).await?;
-    profiles_append_item_safe(item).await
-}
-
 pub(crate) async fn profiles_append_item_safe(item: &mut PrfItem) -> Result<()> {
     let profiles = Config::profiles().await;
     profiles_append_item_to_safe(&profiles, item).await
@@ -436,16 +415,6 @@ pub(crate) async fn profiles_patch_item_safe(index: &str, item: &PrfItem) -> Res
         .await
         .with_data_modify(|mut profiles| async move {
             profiles.patch_item(index, item).await?;
-            Ok((profiles, ()))
-        })
-        .await
-}
-
-pub(crate) async fn profiles_reorder_safe(active_id: &str, over_id: &str) -> Result<()> {
-    Config::profiles()
-        .await
-        .with_data_modify(|mut profiles| async move {
-            profiles.reorder(active_id, over_id).await?;
             Ok((profiles, ()))
         })
         .await
@@ -1087,43 +1056,6 @@ mod tests {
             }),
             ..PrfItem::default()
         }
-    }
-
-    #[tokio::test]
-    async fn missing_reorder_ids_preserve_ordered_items() -> Result<()> {
-        let mut profiles = IProfiles {
-            current: Some("a".into()),
-            items: Some(vec![
-                PrfItem {
-                    uid: Some("a".into()),
-                    ..PrfItem::default()
-                },
-                PrfItem {
-                    uid: Some("b".into()),
-                    ..PrfItem::default()
-                },
-                PrfItem {
-                    uid: Some("c".into()),
-                    ..PrfItem::default()
-                },
-            ]),
-        };
-        let expected = Some(vec![Some("a"), Some("b"), Some("c")]);
-
-        profiles.reorder("missing", "b").await?;
-        let ordered_uids = profiles
-            .items
-            .as_ref()
-            .map(|items| items.iter().map(|item| item.uid.as_deref()).collect::<Vec<_>>());
-        assert_eq!(ordered_uids, expected);
-
-        profiles.reorder("a", "missing").await?;
-        let ordered_uids = profiles
-            .items
-            .as_ref()
-            .map(|items| items.iter().map(|item| item.uid.as_deref()).collect::<Vec<_>>());
-        assert_eq!(ordered_uids, expected);
-        Ok(())
     }
 
     #[test]

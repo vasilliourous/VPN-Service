@@ -1,7 +1,7 @@
 use crate::{
     config::profiles,
     utils::{
-        dirs, help,
+        help,
         network::{NetworkManager, ProxyType},
         tmpl,
     },
@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Mapping;
 use smartstring::alias::String;
 use std::time::Duration;
-use tokio::fs;
 // TODO, use other re-export
 use reqwest_dav::re_exports::url::form_urlencoded;
 use tauri::Url;
@@ -142,98 +141,6 @@ impl PrfOption {
 }
 
 impl PrfItem {
-    /// Builds an item from a partial value that must include `itype`.
-    pub(super) async fn from(item: &Self, file_data: Option<String>) -> Result<Self> {
-        let itype = item
-            .itype
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("type should not be null"))?;
-        match itype.as_str() {
-            "remote" => {
-                let url = item
-                    .url
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("url should not be null"))?;
-                let name = item.name.as_ref();
-                let desc = item.desc.as_ref();
-                let option = item.option.as_ref();
-                Self::from_url(url, name, desc, option).await
-            }
-            "local" => {
-                let name = item.name.clone().unwrap_or_else(|| "Local File".into());
-                let desc = item.desc.clone().unwrap_or_else(|| "".into());
-                let option = item.option.as_ref();
-                Self::from_local(name, desc, file_data, option).await
-            }
-            typ => bail!("invalid profile item type \"{typ}\""),
-        }
-    }
-
-    async fn from_local(
-        name: String,
-        desc: String,
-        file_data: Option<String>,
-        option: Option<&PrfOption>,
-    ) -> Result<Self> {
-        let uid = help::get_uid("L").into();
-        let file = format!("{uid}.yaml").into();
-        let opt_ref = option.as_ref();
-        let update_interval = opt_ref.and_then(|o| o.update_interval);
-        let mut merge = opt_ref.and_then(|o| o.merge.clone());
-        let mut script = opt_ref.and_then(|o| o.script.clone());
-        let mut rules = opt_ref.and_then(|o| o.rules.clone());
-        let mut proxies = opt_ref.and_then(|o| o.proxies.clone());
-        let mut groups = opt_ref.and_then(|o| o.groups.clone());
-
-        if merge.is_none() {
-            let merge_item = &mut Self::from_merge(None);
-            profiles::profiles_append_item_safe(merge_item).await?;
-            merge = merge_item.uid.clone();
-        }
-        if script.is_none() {
-            let script_item = &mut Self::from_script(None);
-            profiles::profiles_append_item_safe(script_item).await?;
-            script = script_item.uid.clone();
-        }
-        if rules.is_none() {
-            let rules_item = &mut Self::from_rules();
-            profiles::profiles_append_item_safe(rules_item).await?;
-            rules = rules_item.uid.clone();
-        }
-        if proxies.is_none() {
-            let proxies_item = &mut Self::from_proxies();
-            profiles::profiles_append_item_safe(proxies_item).await?;
-            proxies = proxies_item.uid.clone();
-        }
-        if groups.is_none() {
-            let groups_item = &mut Self::from_groups();
-            profiles::profiles_append_item_safe(groups_item).await?;
-            groups = groups_item.uid.clone();
-        }
-        Ok(Self {
-            uid: Some(uid),
-            itype: Some("local".into()),
-            name: Some(name),
-            desc: Some(desc),
-            file: Some(file),
-            url: None,
-            selected: None,
-            extra: None,
-            option: Some(PrfOption {
-                update_interval,
-                merge,
-                script,
-                rules,
-                proxies,
-                groups,
-                ..PrfOption::default()
-            }),
-            home: None,
-            updated: Some(chrono::Local::now().timestamp() as usize),
-            file_data: Some(file_data.unwrap_or_else(|| tmpl::ITEM_LOCAL.into())),
-        })
-    }
-
     pub(crate) async fn from_url(
         url: &str,
         name: Option<&String>,
@@ -489,18 +396,6 @@ impl PrfItem {
             file_data: Some(tmpl::ITEM_GROUPS.into()),
             ..Default::default()
         }
-    }
-
-    pub(crate) async fn read_file(&self) -> Result<String> {
-        let file = self
-            .file
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("could not find the file"))?;
-        let path = dirs::app_profiles_dir()?.join(file.as_str());
-        let content = fs::read_to_string(&path)
-            .await
-            .with_context(|| format!("failed to read the file \"{}\"", path.display()))?;
-        Ok(content.into())
     }
 }
 

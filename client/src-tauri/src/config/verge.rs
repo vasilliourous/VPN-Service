@@ -214,7 +214,6 @@ pub struct IVerge {
     // which is exactly the shape this struct already uses, so adding them needs
     // no migration and inherits Verge's existing draft/transaction/save
     // machinery — one store, one backup mechanism, one thing that can corrupt.
-
     /// The activation code this device was activated with.
     ///
     /// This is a BEARER CREDENTIAL for the student's tier, and it is stored in

@@ -321,8 +321,7 @@ mod tests {
           "tier": "strike"
         }"#;
 
-        let parsed: LookupResponse =
-            serde_json::from_str(live).expect("the live response shape must parse");
+        let parsed: LookupResponse = serde_json::from_str(live).expect("the live response shape must parse");
 
         assert_eq!(
             parsed.status,

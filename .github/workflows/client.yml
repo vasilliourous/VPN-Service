@@ -54,9 +54,18 @@ permissions:
   contents: write
 
 # A tag build and a branch build must not race to publish.
+#
+# `cancel-in-progress: true` is deliberate. With it false, an older run that is
+# merely QUEUED holds the group indefinitely: a run queued at 09:51 was still
+# blocking a 23:58 dispatch fourteen hours later, and every newer run sat behind
+# it. Since a superseded run's artifacts are not wanted — the newer commit is the
+# one that matters — cancelling it is strictly better than waiting.
+#
+# Tag builds are excluded from cancellation so a release in flight is never lost
+# to an unrelated push to main.
 concurrency:
   group: client-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # ── Gate: fast checks that must pass before any expensive build ──

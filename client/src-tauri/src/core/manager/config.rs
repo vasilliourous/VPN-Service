@@ -1,4 +1,4 @@
-use super::{CoreManager, PROFILE_SELECTIONS_PENDING_COMMIT, RunningMode};
+use super::{CoreManager, RunningMode};
 use crate::core::service::StageRequest;
 use crate::{
     config::{Config, IProfiles, runtime::IRuntime},
@@ -40,14 +40,6 @@ enum ConfigApplication {
     ReloadFrom(String),
     ReplaceCore,
     Fail(String),
-}
-
-pub(crate) struct ConfigUpdateGuard<'a>(&'a CoreManager);
-
-impl Drop for ConfigUpdateGuard<'_> {
-    fn drop(&mut self) {
-        self.0.finish_config_update();
-    }
 }
 
 /// Avoids replacing a working core only when the service staged successfully or rejected the
@@ -181,63 +173,6 @@ impl CoreManager {
         }
 
         self.perform_config_update(None).await
-    }
-
-    #[tracing::instrument(skip_all, level = "info", fields(profile = ?candidate.current, outcome = tracing::field::Empty))]
-    pub(crate) async fn update_config_forced_with_profiles(
-        &self,
-        candidate: &IProfiles,
-        rollback: &IProfiles,
-    ) -> Result<std::result::Result<ConfigUpdateGuard<'_>, ValidationOutcome>> {
-        if handle::Handle::global().is_exiting() {
-            return Ok(Err(ValidationOutcome::Skipped {
-                reason: ValidationSkipReason::Exiting,
-            }));
-        }
-        if !self.try_start_config_update() {
-            return Ok(Err(ValidationOutcome::Busy));
-        }
-        let guard = ConfigUpdateGuard(self);
-        self.set_last_update(Instant::now());
-        crate::config::profiles::supersede_selected_activation();
-
-        let outcome = match PROFILE_SELECTIONS_PENDING_COMMIT
-            .scope(true, self.perform_config_update(Some(candidate)))
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                tracing::Span::current().record("outcome", "rolled_back");
-                self.restore_profile_config(rollback).await?;
-                return Err(error);
-            }
-        };
-        if !outcome.is_valid() {
-            tracing::Span::current().record("outcome", "invalid");
-            crate::config::profiles::restore_selected_nodes().await;
-            return Ok(Err(outcome));
-        }
-        match candidate.save_file().await {
-            Ok(()) => {
-                tracing::Span::current().record("outcome", "committed");
-                Ok(Ok(guard))
-            }
-            Err(error) => {
-                tracing::Span::current().record("outcome", "save_rolled_back");
-                self.restore_profile_config(rollback).await?;
-                Err(error)
-            }
-        }
-    }
-
-    async fn restore_profile_config(&self, profiles: &IProfiles) -> Result<()> {
-        let outcome = self.perform_config_update(Some(profiles)).await?;
-        if outcome.is_valid() {
-            crate::config::profiles::restore_selected_nodes().await;
-            Ok(())
-        } else {
-            Err(anyhow!("failed to restore previous Core configuration: {outcome}"))
-        }
     }
 
     pub async fn update_config_checked(&self) -> Result<()> {
