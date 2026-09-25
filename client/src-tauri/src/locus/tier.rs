@@ -48,7 +48,16 @@ pub struct TierProfile {
 pub const PROXY_NAME: &str = "Locus";
 
 /// The name of the generated proxy group.
-pub const GROUP_NAME: &str = "Locus";
+///
+/// **Must differ from [`PROXY_NAME`].** mihomo treats a group whose name matches
+/// a proxy inside it as a reference loop and refuses the entire configuration:
+///
+///     loop is detected in ProxyGroup, please check following ProxyGroups: [Locus]
+///
+/// which surfaces on the device as a tunnel that never starts. Verified against
+/// the real mihomo sidecar with `-t`, which is the only check that catches this —
+/// the document is valid YAML either way.
+pub const GROUP_NAME: &str = "Locus Auto";
 
 /// The name of the UDP-over-TCP outbound, when a tier has one.
 pub const UOT_PROXY_NAME: &str = "Locus-UoT";
@@ -97,7 +106,9 @@ pub fn build_profile(config: &TierConfig, udp_relay: bool) -> TierProfile {
             // UDP that is not pinned to the UoT outbound still has to leave
             // somewhere; send it through the group so a tier without UoT keeps
             // its previous behaviour.
-            Value::String("MATCH,Locus".into()),
+            // Names the GROUP, which is what routes UDP via the group's
+            // UDP-pinned member. Naming the proxy directly would bypass it.
+            Value::String(format!("MATCH,{GROUP_NAME}")),
         ]),
     );
 
@@ -327,6 +338,63 @@ mod tests {
         assert!(
             !members.contains(&UOT_PROXY_NAME),
             "a group listing a proxy that does not exist makes mihomo refuse the config"
+        );
+    }
+
+    /// The proxy group and the proxy inside it must NOT share a name.
+    ///
+    /// mihomo reads a group whose name matches a member as a reference loop and
+    /// refuses the whole configuration:
+    ///
+    ///     loop is detected in ProxyGroup, please check following ProxyGroups: [Locus]
+    ///
+    /// This is invisible in YAML terms — the document is perfectly valid — and
+    /// surfaces only on the device, as a tunnel that never starts. It was caught
+    /// by running the real mihomo sidecar with `-t` against generated output,
+    /// which is why the rule is pinned here as a test rather than a comment.
+    #[test]
+    fn the_group_name_does_not_collide_with_its_members() {
+        assert_ne!(
+            GROUP_NAME, PROXY_NAME,
+            "a group named the same as a proxy inside it is a reference loop to mihomo"
+        );
+        assert_ne!(GROUP_NAME, UOT_PROXY_NAME);
+
+        for udp_relay in [false, true] {
+            let config = if udp_relay { strike_tier() } else { tcp_only_tier() };
+            let profile = build_profile(&config, udp_relay);
+            let parsed: Value = serde_yaml_ng::from_str(&profile.yaml).expect("valid YAML");
+
+            let group_name = parsed["proxy-groups"][0]["name"]
+                .as_str()
+                .expect("group must have a name");
+            let members: Vec<&str> = parsed["proxy-groups"][0]["proxies"]
+                .as_sequence()
+                .expect("group members")
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect();
+
+            assert!(
+                !members.contains(&group_name),
+                "group {group_name:?} lists itself, which mihomo rejects as a loop"
+            );
+        }
+    }
+
+    /// The MATCH rule must name the GROUP, not the proxy. Naming the proxy would
+    /// bypass the group entirely and take the UDP pinning with it, so a Strike
+    /// student would silently get raw UDP — the exact thing the tier exists to
+    /// avoid.
+    #[test]
+    fn the_match_rule_routes_through_the_group() {
+        let profile = build_profile(&strike_tier(), true);
+        let parsed: Value = serde_yaml_ng::from_str(&profile.yaml).expect("valid YAML");
+        let rule = parsed["rules"][0].as_str().expect("a MATCH rule");
+
+        assert!(
+            rule.contains(GROUP_NAME),
+            "the catch-all rule must name the group ({GROUP_NAME}), got {rule:?}"
         );
     }
 

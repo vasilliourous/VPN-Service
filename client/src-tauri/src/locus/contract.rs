@@ -307,6 +307,61 @@ mod tests {
         assert_eq!(artifact_for("macos"), None);
     }
 
+    /// The EXACT response shape the deployed hub returns, verified live on
+    /// 2026-09-25. A parsing mismatch here would show a student the wrong reason
+    /// their code was refused — or, worse, report a bound code as ready.
+    #[test]
+    fn parses_the_live_hub_lookup_response() {
+        // Verbatim from https://networkingguides.duckdns.org/api/code-lookup
+        // for a real bound code.
+        let live = r#"{
+          "expires_at": "2027-09-19 00:00:00.000Z",
+          "message": "This code is already in use on another device",
+          "status": "bound_other",
+          "tier": "strike"
+        }"#;
+
+        let parsed: LookupResponse =
+            serde_json::from_str(live).expect("the live response shape must parse");
+
+        assert_eq!(
+            parsed.status,
+            LookupStatus::BoundOther,
+            "misreading this status would tell a student their in-use code is ready"
+        );
+        assert_eq!(parsed.tier.as_deref(), Some("strike"));
+        assert!(parsed.expires_at.is_some());
+    }
+
+    /// Every status the hub emits must round-trip. An unrecognised one degrades
+    /// to `Unknown`, which is safe (not "ready") but silently loses the reason —
+    /// so a new status on the hub side should fail here rather than in the field.
+    #[test]
+    fn every_hub_status_maps_to_a_known_variant() {
+        for (wire, expected) in [
+            ("unbound", LookupStatus::Unbound),
+            ("ok", LookupStatus::Ok),
+            ("bound_this_device", LookupStatus::BoundThisDevice),
+            ("bound_other", LookupStatus::BoundOther),
+            ("suspended", LookupStatus::Suspended),
+            ("expired", LookupStatus::Expired),
+            ("not_found", LookupStatus::NotFound),
+        ] {
+            let json = format!(r#"{{"status":"{wire}"}}"#);
+            let parsed: LookupResponse = serde_json::from_str(&json).expect("must parse");
+            assert_eq!(parsed.status, expected, "{wire} mapped to the wrong variant");
+        }
+    }
+
+    /// A brand-new status must degrade to `Unknown`, never to `Ok`. Guessing
+    /// "ready" tells a student to activate a code that will be refused.
+    #[test]
+    fn an_unrecognised_status_degrades_safely() {
+        let json = r#"{"status":"some_future_state"}"#;
+        let parsed: LookupResponse = serde_json::from_str(json).expect("must still parse");
+        assert_eq!(parsed.status, LookupStatus::Unknown);
+    }
+
     /// The running build must be able to name its own platform, or the updater
     /// cannot choose an artifact.
     #[test]
