@@ -30,7 +30,7 @@ import {
   Switch,
   TooltipIcon,
 } from '@/components/base'
-import { EditorViewer } from '@/components/profile/editor-viewer'
+import { EditorViewer } from '@/components/shared/editor-viewer'
 import { useDisplayedMixedPort } from '@/hooks/use-displayed-mixed-port'
 import { useSystemProxyState } from '@/hooks/use-system-proxy-state'
 import { useVerge } from '@/hooks/use-verge'

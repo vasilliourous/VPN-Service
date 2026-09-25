@@ -19,18 +19,23 @@ import { toast } from '../toast'
 //   1. Publish  — hub pulls from GitHub, verifies, writes update_config
 //   2. Offer    — choose what proportion of clients is told about it
 //
-// They are separate because they fail differently and at different times: a
-// GitHub fetch can fail for reasons that have nothing to do with rollout, and
-// raising the rollout over an un-fetched version sends the fleet to a 404.
-// Doing the fetch first makes that mistake impossible to reach.
+// Fetching and offering are separate steps because they fail differently: a
+// GitHub fetch can fail for reasons that have nothing to do with the release
+// itself, and offering an un-fetched (or unsigned) version sends the fleet to a
+// 404 or an unverifiable download. Doing the fetch first makes that mistake
+// impossible to reach.
+//
+// There is no rollout percentage any more — see setOffering().
 
 interface Platform {
   url: string
   sha256: string
+  /** Whether a signature exists for this platform's artifact. Without one the
+   *  updater refuses to install, so an unsigned platform reaches nobody. */
+  signed: boolean
 }
 interface Release {
   version: string
-  rollout_percent: number
   active: boolean
   platforms: Record<string, Platform>
 }
@@ -46,7 +51,6 @@ const EXPECTED: { key: string; filename: string; label: string }[] = [
 
 const release = ref<Release | null>(null)
 const version = ref('')
-const rollout = ref(5)
 const loading = ref(true)
 const savingRollout = ref(false)
 const fetching = ref(false)
@@ -75,7 +79,6 @@ async function loadRelease() {
     // the current version is a useful default, but after they enter a new one
     // (e.g. 2.2.1 while the hub is on 2.2.0) reloading must not reset the field.
     if (!version.value.trim()) version.value = res.data.release.version
-    rollout.value = res.data.release.rollout_percent
   } else {
     toast.err(res.message || res.transportError || 'Could not load release state')
   }
@@ -118,7 +121,7 @@ async function publishFromGithub() {
     //
     // The hashes come from the files the hub actually hashed on disk, not from
     // anything the browser claims. Rollout is NOT changed here — publishing and
-    // offering are separate decisions (releases.set owns the rollout).
+    // offering are separate decisions (releases.set owns `active`).
     const pub = await call('releases.publish', {
       version: v,
       artifacts: res.data.artifacts,
@@ -172,30 +175,43 @@ async function copyLink() {
   }
 }
 
-// ── Rollout ──
-async function activate(percentOverride?: number) {
+// ── Offering on/off ──
+//
+// There is no rollout percentage. Publishing a release IS offering it; this
+// flips the single `active` flag, which is the only remaining lever.
+//
+// Why the percentage went: it existed to limit how many devices saw a bad
+// build, because the client has no rollback beyond the installer's own
+// atomicity. In practice it mostly caused misdiagnosis — on a small fleet a low
+// percentage means your own test device is probably outside the bucket, so a
+// working updater looks broken.
+async function setOffering(active: boolean) {
   const v = version.value.trim().replace(/^v/, '')
   if (!v) {
     toast.err('Enter a version number')
     return
   }
-  const pct = percentOverride !== undefined ? percentOverride : rollout.value
 
   // Never advertise a version we cannot serve.
   //
-  // The heartbeat sends whatever URLs sit in update_config, independently of
-  // what is on disk. Raising the rollout while those URLs are empty or point at
-  // a different version tells every eligible client to download a 404 — and a
-  // client that fetches nothing cannot update, so the release silently fails
-  // for the whole fleet with no error anywhere but the client log. The hook
-  // enforces this too; checking here gives a better message than a 400.
-  if (pct > 0) {
-    const missing = EXPECTED.filter((e) => !release.value?.platforms[e.key]?.url)
-      .map((e) => e.label)
+  // The hub sends whatever URLs sit in update_config, independently of what is
+  // on disk and independently of whether the artifacts are signed. Activating a
+  // release whose URLs are empty, point at another version, or carry no
+  // signature tells every client to fetch something that will 404 or fail
+  // verification — and a client that cannot install cannot update, so the
+  // release silently fails for the whole fleet with no error anywhere but the
+  // client log. The hook enforces this too; checking here gives a better
+  // message than a 400.
+  if (active) {
+    const missing = EXPECTED.filter((e) => {
+      const platform = release.value?.platforms[e.key]
+      return !platform?.url || !platform?.signed
+    }).map((e) => e.label)
     if (missing.length) {
       toast.err(
-        `Refusing to offer ${v} at ${pct}% — nothing published for: ${missing.join(', ')}. ` +
-        `Publish the release first, or clients will be sent to a 404.`
+        `Refusing to offer ${v} — not published, or unsigned, for: ${missing.join(', ')}. ` +
+          `Publish the release first, or clients will be sent to a 404 or handed ` +
+          `an update the updater cannot verify.`
       )
       return
     }
@@ -203,9 +219,13 @@ async function activate(percentOverride?: number) {
 
   savingRollout.value = true
   try {
-    const res = await call('releases.set', { version: v, rollout_percent: pct, active: true })
+    const res = await call('releases.set', { version: v, active })
     if (res.ok) {
-      toast.ok(pct === 0 ? `Release ${v} staged (offered to nobody yet)` : `Release ${v} live at ${pct}%`)
+      toast.ok(
+        active
+          ? `Release ${v} is now offered to all clients`
+          : `Stopped offering ${v}`
+      )
       await loadRelease()
     } else {
       toast.err(res.message || res.transportError || 'Could not update the release')
@@ -213,11 +233,6 @@ async function activate(percentOverride?: number) {
   } finally {
     savingRollout.value = false
   }
-}
-
-async function stopOffering() {
-  if (!window.confirm('Stop offering this update? Clients that already updated stay updated.')) return
-  await activate(0)
 }
 
 // What the hub is currently advertising, for the "on the hub" summary.
@@ -245,8 +260,7 @@ onMounted(() => {
     <template v-else-if="release">
       <div class="kv">
         <div><span class="muted">Version</span><strong>{{ release.version || '—' }}</strong></div>
-        <div><span class="muted">Rollout</span><strong>{{ release.rollout_percent }}%</strong></div>
-        <div><span class="muted">Active</span><strong>{{ release.active ? 'yes' : 'no' }}</strong></div>
+        <div><span class="muted">Offered</span><strong>{{ release.active ? 'yes' : 'no' }}</strong></div>
       </div>
 
       <table class="grid">
@@ -343,37 +357,34 @@ onMounted(() => {
     <p v-if="link" class="mono breakall">{{ link }}</p>
   </div>
 
-  <!-- ── Step 2: rollout ── -->
+  <!-- ── Step 2: offer it, or stop offering it ── -->
   <div class="card">
-    <h2>Rollout</h2>
+    <h2>Offer this update</h2>
     <p class="muted">
-      Decides what proportion of clients is told the update exists. Clients are
-      selected by a stable hash of their device, so the same device always sees
-      the same decision. Start low, widen as confidence grows.
+      While this is on, every client is told the update exists on its next
+      check. There is no staged rollout — what you publish is what clients are
+      offered, so publish only once you are ready for everyone.
     </p>
 
-    <div class="row">
-      <label class="field">
-        <span>Rollout percentage</span>
-        <input v-model.number="rollout" type="number" min="0" max="100" />
-      </label>
-      <div class="shrink">
-        <button class="primary" :disabled="savingRollout" @click="activate()">
-          {{ savingRollout ? 'Saving…' : 'Publish at this rollout' }}
-        </button>
-      </div>
+    <div class="actions">
+      <button class="primary" :disabled="savingRollout" @click="setOffering(true)">
+        {{ savingRollout ? 'Saving…' : 'Offer to all clients' }}
+      </button>
+      <button class="danger" :disabled="savingRollout" @click="setOffering(false)">
+        Stop offering
+      </button>
     </div>
 
-    <div class="actions">
-      <button @click="activate(5)">Stage at 5%</button>
-      <button @click="activate(25)">Widen to 25%</button>
-      <button @click="activate(100)">Full rollout (100%)</button>
-      <button class="danger" @click="stopOffering">Stop offering (0%)</button>
+    <div v-if="!allPublished" class="msg warn">
+      Not every platform is published and signed, so this release cannot be
+      offered yet. Publish it first.
     </div>
 
     <p class="muted" style="margin-bottom: 0; margin-top: 12px; font-size: 12px">
-      There is no automatic downgrade. If a bad build reaches 100%, the fix is to
-      publish a higher version — so watch the first hours at a low percentage.
+      <strong>There is no automatic downgrade.</strong> Stopping only stops
+      <em>offering</em> the update — clients that already installed it stay on
+      it. If a build is bad, the fix is to publish a higher version, so test a
+      release on a real machine before turning this on.
     </p>
   </div>
 </template>

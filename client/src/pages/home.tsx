@@ -35,6 +35,7 @@ import { ProxyTunCard } from '@/components/home/proxy-tun-card'
 import { useProfiles } from '@/hooks/use-profiles'
 import { useVerge } from '@/hooks/use-verge'
 import { entry_lightweight_mode } from '@/services/cmds'
+import { HUB_URL } from '@/services/hub'
 import { showNotice } from '@/services/notice-service'
 import { openExternalUrl } from '@/utils/open-external-url'
 
@@ -242,8 +243,8 @@ const HomePage = () => {
     (verge?.home_cards as HomeCardsSettings | undefined) ?? DEFAULT_HOME_CARDS
 
   // 文档链接函数
-  const toGithubDoc = useLockFn(() =>
-    openExternalUrl('https://locus.app/help').catch(
+  const toHub = useLockFn(() =>
+    openExternalUrl(HUB_URL).catch(
       showNotice.error,
     ),
   )
@@ -335,7 +336,7 @@ const HomePage = () => {
             </IconButton>
           </Tooltip>
           <Tooltip title={t('home.page.tooltips.manual')} arrow>
-            <IconButton onClick={toGithubDoc} size="small" color="inherit">
+            <IconButton onClick={toHub} size="small" color="inherit">
               <HelpOutlineRounded />
             </IconButton>
           </Tooltip>

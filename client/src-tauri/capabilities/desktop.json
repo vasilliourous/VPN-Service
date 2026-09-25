@@ -1,8 +1,16 @@
 {
   "identifier": "desktop-capability",
-  "platforms": ["macOS", "windows", "linux"],
-  "webviews": ["main"],
-  "windows": ["main"],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "webviews": [
+    "main"
+  ],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "global-shortcut:default",
     "updater:default",
@@ -12,7 +20,6 @@
     "updater:default",
     "updater:allow-check",
     "updater:allow-download-and-install",
-    "deep-link:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
@@ -22,7 +29,14 @@
     "http:allow-fetch",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://*/*" }, { "url": "http://*/*" }]
+      "allow": [
+        {
+          "url": "https://*/*"
+        },
+        {
+          "url": "http://*/*"
+        }
+      ]
     },
     "mihomo:default"
   ]

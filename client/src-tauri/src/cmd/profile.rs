@@ -5,15 +5,10 @@ use crate::utils::window_manager::WindowManager;
 use crate::{
     config::{
         Config, IProfiles, PrfItem, PrfOption,
-        profiles::{
-            PROFILE_WRITE_LOCK, profiles_append_item_with_filedata_safe, profiles_patch_item_safe,
-            profiles_reorder_safe, profiles_save_file_safe,
-        },
-        profiles_append_item_safe,
+        profiles::{PROFILE_WRITE_LOCK, profiles_patch_item_safe, profiles_save_file_safe},
     },
-    core::{CoreManager, handle, timer::Timer, tray::Tray, validate::ValidationOutcome},
+    core::{CoreManager, handle, timer::Timer, validate::ValidationOutcome},
     feat,
-    utils::{dirs, help},
 };
 use clash_verge_draft::{Draft, SharedDraft};
 use clash_verge_logging::{Type, logging, logging_error};
@@ -22,14 +17,6 @@ use smartstring::alias::String;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static CURRENT_SWITCHING_PROFILE: AtomicBool = AtomicBool::new(false);
-
-fn profile_import_error(err: &anyhow::Error) -> std::string::String {
-    if let Some(cause) = err.chain().find(|cause| cause.to_string().contains("TLS 1.0/1.1")) {
-        return cause.to_string();
-    }
-
-    format!("导入订阅失败: {err:#}")
-}
 
 #[tauri::command]
 pub async fn get_profiles() -> CmdResult<SharedDraft<IProfiles>> {
@@ -63,73 +50,6 @@ pub async fn enhance_profiles() -> CmdResult<ValidationOutcome> {
 }
 
 #[tauri::command]
-#[tracing::instrument(skip_all, level = "info", fields(url = %help::mask_url(&url), uid = tracing::field::Empty))]
-pub async fn import_profile(url: std::string::String, option: Option<PrfOption>) -> CmdResult {
-    let item = &mut match PrfItem::from_url(&url, None, None, option.as_ref()).await {
-        Ok(it) => it,
-        Err(e) => {
-            logging!(error, Type::Cmd, "[导入订阅] 下载失败: {e:#}");
-            return Err(coded_error("PROFILE_IMPORT_FAILED", profile_import_error(&e)));
-        }
-    };
-
-    if let Err(e) = profiles_append_item_safe(item).await {
-        logging!(error, Type::Cmd, "[导入订阅] 保存配置失败: {e:#}");
-        return Err(coded_error("PROFILE_IMPORT_FAILED", e));
-    }
-
-    if let Err(e) = profiles_save_file_safe().await {
-        logging!(error, Type::Cmd, "[导入订阅] 保存配置文件失败: {e:#}");
-        return Err(coded_error("PROFILE_IMPORT_FAILED", e));
-    }
-    logging_error!(Type::Timer, Timer::global().refresh().await);
-
-    if let Some(uid) = &item.uid {
-        tracing::Span::current().record("uid", tracing::field::display(uid));
-        handle::Handle::notify_profile_changed(uid);
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn reorder_profile(active_id: String, over_id: String) -> CmdResult {
-    match profiles_reorder_safe(&active_id, &over_id).await {
-        Ok(_) => {
-            logging!(info, Type::Cmd, "重新排序配置文件: {} -> {}", active_id, over_id);
-            Ok(())
-        }
-        Err(err) => {
-            logging!(
-                error,
-                Type::Cmd,
-                "重新排序配置文件失败: {} -> {}: {err:#}",
-                active_id,
-                over_id
-            );
-            Err(coded_error("PROFILE_REORDER_FAILED", err))
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn create_profile(item: PrfItem, file_data: Option<String>) -> CmdResult {
-    match profiles_append_item_with_filedata_safe(&item, file_data).await {
-        Ok(_) => {
-            profiles_save_file_safe()
-                .await
-                .with_error_code("PROFILE_CREATE_FAILED")?;
-            logging_error!(Type::Timer, Timer::global().refresh().await);
-            if let Some(uid) = &item.uid {
-                handle::Handle::notify_profile_changed(uid);
-            }
-            Ok(())
-        }
-        Err(err) => Err(coded_error("PROFILE_CREATE_FAILED", err)),
-    }
-}
-
-#[tauri::command]
 pub async fn update_profile(index: String, option: Option<PrfOption>) -> CmdResult {
     match feat::update_profile(&index, option.as_ref(), true).await {
         Ok(_) => Ok(()),
@@ -138,67 +58,6 @@ pub async fn update_profile(index: String, option: Option<PrfOption>) -> CmdResu
             Err(coded_error("PROFILE_UPDATE_FAILED", e))
         }
     }
-}
-
-#[tauri::command]
-pub async fn delete_profile(index: String) -> CmdResult {
-    let profile_write_guard = PROFILE_WRITE_LOCK.lock().await;
-
-    let profiles = Config::profiles().await;
-    let result = profiles
-        .with_data_modify(|mut candidate| async move {
-            let original = candidate.clone();
-            let (should_update, plan) = candidate.plan_delete_item(&index)?;
-            let guard = if should_update {
-                match CoreManager::global()
-                    .update_config_forced_with_profiles(&candidate, &original)
-                    .await?
-                {
-                    Ok(guard) => Some(guard),
-                    Err(outcome) => return Ok((original, Err(outcome))),
-                }
-            } else {
-                candidate.save_file().await?;
-                None
-            };
-            let current = candidate.current.clone();
-            plan.cleanup().await;
-            Ok((candidate, Ok((should_update, current, guard))))
-        })
-        .await
-        .with_error_code("PROFILE_DELETE_FAILED")?;
-    let (should_update, current, config_update_guard) = match result {
-        Ok(result) => result,
-        Err(outcome) => {
-            handle_validation_notice(&outcome, ValidationNoticeTarget::Runtime, "运行时配置");
-            return Err(coded_error("PROFILE_DELETE_FAILED", outcome));
-        }
-    };
-    if should_update {
-        profiles::activate_selected_nodes();
-    }
-    drop(config_update_guard);
-    drop(profile_write_guard);
-
-    if should_update {
-        logging_error!(Type::Config, Config::sync_dns_override().await);
-    }
-
-    if let Err(e) = Tray::global().update_tooltip().await {
-        logging!(warn, Type::Cmd, "异步更新托盘提示失败: {e:#}");
-    }
-
-    if let Err(e) = Tray::global().update_menu().await {
-        logging!(warn, Type::Cmd, "异步更新托盘菜单失败: {e:#}");
-    }
-    if should_update {
-        handle::Handle::refresh_clash();
-        if let Some(current) = current.as_ref() {
-            handle::Handle::notify_profile_changed(current);
-        }
-    }
-    logging_error!(Type::Timer, Timer::global().refresh().await);
-    Ok(())
 }
 
 async fn restore_previous_profile(prev_profile: &String) -> CmdResult<()> {
@@ -381,65 +240,6 @@ pub async fn patch_profile(index: String, profile: PrfItem) -> CmdResult {
     }
 
     Ok(())
-}
-
-#[tauri::command]
-pub async fn view_profile(index: String) -> CmdResult {
-    let profiles = Config::profiles().await;
-    let profiles_ref = profiles.latest_arc();
-    let file = profiles_ref
-        .get_item(&index)
-        .with_error_code("PROFILE_OPEN_FAILED")?
-        .file
-        .as_ref()
-        .ok_or_else(|| coded_error("PROFILE_OPEN_FAILED", "the file field is null"))?;
-
-    let path = dirs::app_profiles_dir()
-        .with_error_code("PROFILE_OPEN_FAILED")?
-        .join(file.as_str());
-    if !path.exists() {
-        return CmdResult::Err(coded_error(
-            "PROFILE_OPEN_FAILED",
-            format!("file not found \"{}\"", path.display()),
-        ));
-    }
-
-    help::open_file(path).with_error_code("PROFILE_OPEN_FAILED")
-}
-
-#[tauri::command]
-pub async fn read_profile_file(index: String) -> CmdResult<String> {
-    let item = {
-        let profiles = Config::profiles().await;
-        let profiles_ref = profiles.latest_arc();
-        PrfItem {
-            file: profiles_ref
-                .get_item(&index)
-                .with_error_code("PROFILE_READ_FAILED")?
-                .file
-                .to_owned(),
-            ..Default::default()
-        }
-    };
-
-    if let Some(file) = item.file.as_ref() {
-        let path = dirs::app_profiles_dir()
-            .with_error_code("PROFILE_READ_FAILED")?
-            .join(file.as_str());
-        match tokio::fs::try_exists(&path).await {
-            Ok(true) => {}
-            Ok(false) => return Ok(String::new()),
-            Err(err) => {
-                return Err(coded_error(
-                    "PROFILE_READ_FAILED",
-                    format!("failed to check profile file \"{}\": {err}", path.display()),
-                ));
-            }
-        }
-    }
-
-    let data = item.read_file().await.with_error_code("PROFILE_READ_FAILED")?;
-    Ok(data)
 }
 
 #[tauri::command]

@@ -36,15 +36,26 @@ routerAdd("POST", "/api/heartbeat", function(e) {
 
         var response = {status:"ok", server_time:new Date().toISOString()};
 
-        // Staged rollout check — read from update_config
+        // Update signal — read from update_config.
+        //
+        // There is NO rollout percentage. An active release is advertised to
+        // every client that heartbeats; `active` is the single off switch.
+        //
+        // The percentage was removed deliberately (2026-09): it existed to
+        // limit how many devices saw a bad build, because the client has no
+        // rollback beyond the installer's own atomicity. The cost was a fleet
+        // where a low percentage means the operator's own test device is
+        // probably outside the bucket — so a working updater looks broken, and
+        // the usual outcome was a misdiagnosis rather than safety. With it gone,
+        // "publish" and "offer" are the same act, and `active` stops offering.
         //
         // IMPORTANT: use findFirstRecordByFilter, NOT findRecordsByFilter.
         // In this PocketBase build (0.22.21) findRecordsByFilter silently
         // returns ZERO rows for every collection and filter, even `1=1` on a
         // populated table, with no error raised. That made the update gate a
-        // permanent no-op: no client was ever offered an update regardless of
-        // rollout_percent. findFirstRecordByFilter and findRecordsByExpr both
-        // work reliably (verified live 2026-09-19), including on bool fields.
+        // permanent no-op: no client was ever offered an update. Both
+        // findFirstRecordByFilter and findRecordsByExpr work reliably (verified
+        // live 2026-09-19), including on bool fields.
         try {
             var u = null;
             try {
@@ -52,32 +63,37 @@ routerAdd("POST", "/api/heartbeat", function(e) {
             } catch (noRow) {
                 u = null; // no active row — nothing to advertise
             }
-            if (u) {
-                var pct = parseInt(u.get("rollout_percent") || "0", 10);
-                if (pct > 0) {
-                    // Deterministic bucket per device: the same fingerprint
-                    // always lands in the same bucket, so a client cannot
-                    // flip in and out of the rollout between heartbeats.
-                    var key = fingerprint || code, hash = 0;
-                    for (var i = 0; i < key.length; i++) { hash = ((hash << 5) - hash) + key.charCodeAt(i); hash |= 0; }
-                    var bucket = Math.abs(hash) % 100;
-                    if (bucket < pct) {
-                        response.update_available = u.get("version");
-                        response.update_url = u.get("update_url");
-                        response.update_sha256 = u.get("update_sha256");
-                        if (u.get("download_linux")) response.update_linux = u.get("download_linux");
-                        if (u.get("download_windows")) response.update_windows = u.get("download_windows");
-                        if (u.get("download_macos_intel")) response.update_macos_intel = u.get("download_macos_intel");
-                        if (u.get("download_macos_arm")) response.update_macos_arm = u.get("download_macos_arm");
-                        // Per-platform hashes: the client verifies the bytes it
-                        // actually downloads, so a single update_sha256 is not
-                        // enough (it can only ever match one platform, and the
-                        // updater refuses to apply an update with an empty hash).
-                        if (u.get("sha256_linux")) response.update_sha256_linux = u.get("sha256_linux");
-                        if (u.get("sha256_windows")) response.update_sha256_windows = u.get("sha256_windows");
-                        if (u.get("sha256_macos_intel")) response.update_sha256_macos_intel = u.get("sha256_macos_intel");
-                        if (u.get("sha256_macos_arm")) response.update_sha256_macos_arm = u.get("sha256_macos_arm");
-                    }
+            if (u && u.get("version")) {
+                response.update_available = u.get("version");
+
+                // Generic fallback fields. update_url/update_sha256 are the
+                // legacy single-platform pair and describe the LINUX binary
+                // only, so they are kept for older clients and must not be
+                // treated as describing the device's own platform.
+                if (u.get("update_url")) response.update_url = u.get("update_url");
+                if (u.get("update_sha256")) response.update_sha256 = u.get("update_sha256");
+
+                // Per-platform URL and checksum. The client verifies the bytes
+                // it actually downloads, so a single update_sha256 is not enough
+                // — it can only ever match one platform, and the updater refuses
+                // to apply an update with an empty hash.
+                //
+                // The field NAMES are renamed on the way out: the record stores
+                // download_<platform>, the response carries update_<platform>.
+                // That rename is historical and load-bearing — deployed clients
+                // read update_linux, so the hook must keep translating. Do not
+                // "simplify" it to emit download_* directly.
+                var platKeysH = ["linux", "windows", "macos_intel", "macos_arm"];
+                for (var hi = 0; hi < platKeysH.length; hi++) {
+                    var hk = platKeysH[hi];
+                    if (u.get("download_" + hk)) response["update_" + hk] = u.get("download_" + hk);
+                    if (u.get("sha256_" + hk)) response["update_sha256_" + hk] = u.get("sha256_" + hk);
+                    // The minisign signature. The Tauri updater verifies one
+                    // MANDATORILY, so a release advertised without this cannot be
+                    // installed — the client would download and then fail. This
+                    // hook is the path that carries it; /api/update serves the
+                    // same data to the plugin directly.
+                    if (u.get("signature_" + hk)) response["update_signature_" + hk] = u.get("signature_" + hk);
                 }
             }
         } catch(ex) { /* update_config missing or unreadable — skip updates */ }

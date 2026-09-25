@@ -153,7 +153,7 @@ async fn is_logs_dir_writable(log_dir: &Path) -> bool {
     }
 
     let probe_path = log_dir.join(format!(
-        ".clash-verge-write-test-{}-{}",
+        ".locus-write-test-{}-{}",
         std::process::id(),
         Local::now().timestamp_nanos_opt().unwrap_or_default()
     ));
@@ -545,56 +545,6 @@ pub async fn init_resources() -> Result<()> {
 
     Ok(())
 }
-
-#[cfg(target_os = "windows")]
-pub fn init_scheme() -> Result<()> {
-    use tauri::utils::platform::current_exe;
-    use winreg::{RegKey, enums::HKEY_CURRENT_USER};
-
-    let app_exe = current_exe()?;
-    let app_exe = dunce::canonicalize(app_exe)?;
-    let app_exe = app_exe.to_string_lossy().into_owned();
-
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let (clash, _) = hkcu.create_subkey("Software\\Classes\\Clash")?;
-    clash.set_value("", &"Clash Verge")?;
-    clash.set_value("URL Protocol", &"Clash Verge URL Scheme Protocol")?;
-    let (default_icon, _) = hkcu.create_subkey("Software\\Classes\\Clash\\DefaultIcon")?;
-    default_icon.set_value("", &app_exe)?;
-    let (command, _) = hkcu.create_subkey("Software\\Classes\\Clash\\Shell\\Open\\Command")?;
-    command.set_value("", &format!("{app_exe} \"%1\""))?;
-
-    Ok(())
-}
-#[cfg(target_os = "linux")]
-pub fn init_scheme() -> Result<()> {
-    const DESKTOP_FILE: &str = "clash-verge.desktop";
-
-    for scheme in DEEP_LINK_SCHEMES {
-        let handler = format!("x-scheme-handler/{scheme}");
-        let output = std::process::Command::new("xdg-mime")
-            .arg("default")
-            .arg(DESKTOP_FILE)
-            .arg(&handler)
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "failed to set {handler}, {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-    }
-
-    crate::utils::linux::mime::ensure_mimeapps_entries(DESKTOP_FILE, DEEP_LINK_SCHEMES)?;
-    Ok(())
-}
-#[cfg(target_os = "macos")]
-pub const fn init_scheme() -> Result<()> {
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-const DEEP_LINK_SCHEMES: &[&str] = &["clash", "clash-verge"];
 
 pub async fn startup_script() -> Result<()> {
     let app_handle = handle::Handle::app_handle();

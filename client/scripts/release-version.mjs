@@ -38,24 +38,10 @@ function getGitShortCommit() {
 }
 
 function getLatestTauriCommit() {
-  try {
-    const fullHash = execSync(
-      'bash ./scripts-workflow/get_latest_tauri_commit.bash',
-    )
-      .toString()
-      .trim()
-    const shortHash = execSync(`git rev-parse --short ${fullHash}`)
-      .toString()
-      .trim()
-    console.log(`[INFO]: Latest Tauri-related commit: ${shortHash}`)
-    return shortHash
-  } catch (error) {
-    console.warn(
-      '[WARN]: Failed to get latest Tauri commit, fallback to current git short commit',
-    )
-    console.warn(`[WARN]: Error details: ${error.message}`)
-    return getGitShortCommit()
-  }
+  // The upstream helper `scripts-workflow/get_latest_tauri_commit.bash` was
+  // removed with the rest of the Clash Verge release tooling. Fall back to the
+  // current git short commit for the autobuild/deploytest tag format.
+  return getGitShortCommit()
 }
 
 /** Generates `MMDD`, optionally followed by a commit, in the Asia/Shanghai timezone. */

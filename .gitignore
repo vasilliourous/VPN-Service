@@ -49,6 +49,13 @@ whale.txt
 .vscode/
 *.iml
 
+# Locus update signing keys. The private key signs every shipped client update;
+# a leak lets anyone publish a build every installed client will accept, and a
+# loss means no installed client can ever be updated again. Never commit either
+# file — the public key belongs in tauri.conf.json, the private key in CI
+# secrets and offline custody.
+.locus-keys/
+
 # Secrets (encrypted is fine; plaintext never)
 .secrets.env
 age-key.txt

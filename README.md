@@ -8,20 +8,34 @@ Bypasses N4L's Palo Alto firewall using Shadowsocks TCP (no TLS fingerprinting, 
 
 | If you want to … | Go to |
 |---|---|
-| Work on **the client students run** | `client/` — Tauri 2 fork of Clash Verge Rev, mihomo engine. Docs in `client/docs/` |
+| Work on **the client that will ship** | `client/` — Tauri 2 copy of Clash Verge Rev, mihomo engine. **Not tailored yet** — read "Client status" below first. Docs in `client/docs/` |
 | Work on **the hub / server** | `server/` — deploy modules + PocketBase hooks. Docs in `docs/DEPLOY.md`, `docs/OPS.md` |
 | Operate the **admin console** | `server/console/`, served at `/admin/` (see `docs/POCKETBASE-SETUP.md`) |
+| Find **any document** | `docs/README.md` — the documentation index (what each doc is, and what is archived) |
 | Understand **the whole project** | `docs/CONTEXT.md` — read this first |
 | See **what is still open** | `docs/STILL-OPEN.md` |
 
 ### Client status — read this before assuming
 
-There are **three clients** in this repository and only one of them ships:
+> **⚠️ `client/` does not work as the Locus client yet.** It is a **branding-only
+> copy of Clash Verge Rev v2.5.5** — the product name, icon and app id are Locus's,
+> but **no Locus logic has been written**. There is no activation, no heartbeat, no
+> tier handling, no Locus update path, and no `locus/` Rust module (verified: the
+> `src-tauri/src/locus/` tree specified in `client/docs/LOGIC-INVENTORY.md` does not
+> exist, and the string `locus` appears nowhere in `client/src-tauri/src/`).
+> What it *is* scheduled to become is specified — not implemented — in
+> `client/docs/LOGIC-INVENTORY.md`, `ARCHITECTURE.md`, and `UPDATE-ARCHITECTURE.md`.
+> Treat "the shipping client" in any doc as "the client that **will** ship", not as a
+> working product. The full port is the single largest open item — see
+> `docs/STILL-OPEN.md`.
+
+There are **three clients** in this repository. Only one will ship, and it is **not
+finished**:
 
 | Client | Where | Status |
 |---|---|---|
-| **Fork of Clash Verge Rev v2.5.5** (Tauri 2 + Rust + React, mihomo engine) | `client/` | **SHIPPING** |
-| Wails client (Go + Wails + Vue 3, sing-box engine) | `legacy/wails-client/` | **RETIRED** — kept for its contract tests, see its `ARCHIVED.md` |
+| **Fork of Clash Verge Rev v2.5.5** (Tauri 2 + Rust + React, mihomo engine) | `client/` | **TO BE TAILORED** — branding-only upstream copy; **no Locus logic yet.** The directory that will ship. |
+| Wails client (Go + Wails + Vue 3, sing-box engine) | `legacy/wails-client/` | **RETIRED & STALE** — reference-only for its logic; see its `ARCHIVED.md` |
 | Fyne client (Go) | `legacy/v4/` | Historical reference only |
 
 **Everything below was written when the Wails client was current.** Where these
@@ -142,12 +156,14 @@ charset `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). The `MYVPN-` form was retired in th
 
 ```
 VPN-Service/
-├── client/                   ← THE SHIPPING CLIENT (Tauri 2 fork, mihomo engine)
+├── client/                   ← THE CLIENT THAT WILL SHIP (Tauri 2 copy of Clash Verge Rev — NOT tailored yet, no Locus logic)
 │   ├── src/                  ── React + TypeScript frontend
 │   ├── src-tauri/            ── Rust backend (Tauri), capabilities, bundle config
 │   ├── crates/               ── Inherited workspace crates
 │   ├── docs/                 ── ARCHITECTURE, LOGIC-INVENTORY, UPDATE-ARCHITECTURE, RESTRUCTURE
-│   └── scripts/prebuild.mjs  ── Fetches the mihomo sidecar + geo databases (MANDATORY before a Rust build)
+│   ├── scripts/prebuild.mjs  ── Fetches the mihomo sidecar + geo databases (MANDATORY before a Rust build)
+│   ├── AGENTS.md             ── agent rules for the client (CLAUDE.md / GEMINI.md load it)
+│   └── CONTRIBUTING.md       ── human build/submission guide
 ├── server/                   ← LIVE hub
 │   ├── modules/              ── Numbered VPS deploy modules (00-env … 08-firewall)
 │   ├── pb_hooks/             ── PocketBase JS hooks (activation, heartbeat, release, console)
@@ -157,20 +173,27 @@ VPN-Service/
 ├── legacy/
 │   ├── wails-client/         ← RETIRED Wails + sing-box client (STALE. Reference-only for its logic; see ARCHIVED.md)
 │   └── v4/                   ← Historical Go + Fyne client (stale)
-├── docs/                     ← Architecture, deploy, ops, API, FIXES, CONTEXT, STILL-OPEN
-│   └── history/              ── Curated research + dated session records
+├── docs/                     ← LIVE project documentation
+│   ├── ...                   ── Architecture, deploy, ops, API, FIXES, CONTEXT, STILL-OPEN
+│   ├── archive/              ── Retired-client docs (build guide, backend API, migration, aesthetics)
+│   └── history/              ── Curated pre-V5 research + dated session records
 └── scripts/                  ← Code generation + local probes
     ├── generate_codes.sh     ── Luhn-mod-N activation codes
     ├── print_codes.sh        ── Printable PDF code cards
     └── vps-test/             ── Read-only network probes against the live VPS
 ```
 
+> **Build output is not committed.** `client/target/`, `node_modules/`, `dist/`,
+> geo databases and the mihomo sidecar are all gitignored and re-fetchable/rebuildable
+> (`client/scripts/prebuild.mjs` fetches the binaries/databases; they are not in git).
+>
 > **No version file, no bump script, no CI.** Root `VERSION`, `bump.sh`,
 > `server/scripts/bump-version.sh`/`stamp-syso.py`/`smoke-bump.sh`,
 > `scripts/release-cut.sh`, the committed `rsrc_windows_*.syso` resources, and
 > `.github/workflows/build.yml` were **removed** — they versioned and released the
 > retired client, not the shipping fork. The fork's release path is an open
-> decision (`docs/STILL-OPEN.md`).
+> decision (`docs/STILL-OPEN.md`). The client's inherited upstream READMEs,
+> changelog pipeline, devcontainer, and release/CI helpers were removed with it.
 
 ---
 
@@ -415,4 +438,4 @@ idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
 > ⚠️ **Live customer data.** The hub holds real activation codes in daily use.
 > Never bulk-delete `codes` or `code_events` — suspend or unbind instead.
 
-See `docs/CONTEXT.md` for the full project context, `docs/STILL-OPEN.md` for what is unresolved, and `client/docs/` for the shipping client.
+See `docs/CONTEXT.md` for the full project context, `docs/STILL-OPEN.md` for what is unresolved, and `client/docs/` for the client that will ship (not yet tailored).

@@ -1,4 +1,4 @@
-import { GitHub, HelpOutlineRounded, Telegram } from '@mui/icons-material'
+import { HelpOutlineRounded } from '@mui/icons-material'
 import { Box, ButtonGroup, IconButton, Grid } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import { useTranslation } from 'react-i18next'
@@ -8,6 +8,7 @@ import SettingClash from '@/components/setting/setting-clash'
 import SettingSystem from '@/components/setting/setting-system'
 import SettingVergeAdvanced from '@/components/setting/setting-verge-advanced'
 import SettingVergeBasic from '@/components/setting/setting-verge-basic'
+import { HUB_URL } from '@/services/hub'
 import { showNotice } from '@/services/notice-service'
 import { useThemeMode } from '@/services/states'
 import { openExternalUrl } from '@/utils/open-external-url'
@@ -19,21 +20,11 @@ const SettingPage = () => {
     showNotice.error(err)
   }
 
-  const toGithubRepo = useLockFn(() =>
-    openExternalUrl('https://locus.app/help').catch(
-      onError,
-    ),
-  )
-
-  const toGithubDoc = useLockFn(() =>
-    openExternalUrl('https://locus.app/help').catch(
-      onError,
-    ),
-  )
-
-  const toTelegramChannel = useLockFn(() =>
-    openExternalUrl('https://t.me/clash_verge_re').catch(onError),
-  )
+  // Locus has one external destination: its own hub. The upstream project's
+  // repository, documentation and community channel were removed rather than
+  // re-pointed — none of them describe this product, and a dead or misleading
+  // support link is worse than no link.
+  const toHub = useLockFn(() => openExternalUrl(HUB_URL).catch(onError))
 
   const mode = useThemeMode()
   const isDark = mode === 'light' ? false : true
@@ -50,26 +41,9 @@ const SettingPage = () => {
             size="medium"
             color="inherit"
             title={t('settings.page.actions.manual')}
-            onClick={toGithubDoc}
+            onClick={toHub}
           >
             <HelpOutlineRounded fontSize="inherit" />
-          </IconButton>
-          <IconButton
-            size="medium"
-            color="inherit"
-            title={t('settings.page.actions.telegram')}
-            onClick={toTelegramChannel}
-          >
-            <Telegram fontSize="inherit" />
-          </IconButton>
-
-          <IconButton
-            size="medium"
-            color="inherit"
-            title={t('settings.page.actions.github')}
-            onClick={toGithubRepo}
-          >
-            <GitHub fontSize="inherit" />
           </IconButton>
         </ButtonGroup>
       }

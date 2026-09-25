@@ -19,7 +19,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { BaseDialog, DialogRef } from '@/components/base'
-import { EditorViewer } from '@/components/profile/editor-viewer'
+import { EditorViewer } from '@/components/shared/editor-viewer'
 import { useVerge } from '@/hooks/use-verge'
 import { defaultDarkTheme, defaultTheme } from '@/pages/_theme'
 import { showNotice } from '@/services/notice-service'

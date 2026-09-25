@@ -2,9 +2,19 @@
 
 Instructions for AI coding agents working in `client/`, the Locus desktop client.
 
-This directory is a **fork of [Clash Verge Rev](https://github.com/clash-verge-rev/clash-verge-rev)
-v2.5.5** (Tauri 2 + Rust backend, React + TypeScript frontend). It is the
-shipping Locus client. The predecessor Wails client is archived at
+> **⚠️ `client/` is NOT tailored yet — it is a branding-only copy of Clash Verge
+> Rev.** The product name, icon, and app id say Locus; the code is upstream. There
+> is **no Locus logic**: no activation, no heartbeat, no tier handling, no Locus
+> update path, and **no `src-tauri/src/locus/` module** (the string `locus` does not
+> appear in `client/src-tauri/src/` at all). Everything the client must *become* is
+> specified in `docs/LOGIC-INVENTORY.md` (the modules to write),
+> `docs/ARCHITECTURE.md` (what to cut/keep), and `docs/UPDATE-ARCHITECTURE.md`.
+> Do not assume any Locus behaviour exists because a doc describes it — check the
+> code. See the root `README.md` "Client status" and `docs/STILL-OPEN.md`.
+
+This directory is a **copy of [Clash Verge Rev](https://github.com/clash-verge-rev/clash-verge-rev)
+v2.5.5** (Tauri 2 + Rust backend, React + TypeScript frontend), intended to become
+the Locus client once tailored. The predecessor Wails client is archived at
 `legacy/wails-client/` and is **not** the product; see that directory's
 `ARCHIVED.md` before reading it as current.
 

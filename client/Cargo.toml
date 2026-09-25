@@ -2,7 +2,6 @@
 members = [
   "src-tauri",
   "crates/clash-verge-draft",
-  "crates/clash-verge-media-unlock",
   "crates/clash-verge-logging",
   "crates/clash-verge-signal",
   "crates/tauri-plugin-clash-verge-sysinfo",
@@ -54,7 +53,6 @@ tray-icon = { git = "https://github.com/Tunglies/tray-icon.git", rev = "5750c67d
 
 [workspace.dependencies]
 clash-verge-draft = { path = "crates/clash-verge-draft" }
-clash-verge-media-unlock = { path = "crates/clash-verge-media-unlock" }
 clash-verge-logging = { path = "crates/clash-verge-logging" }
 clash-verge-signal = { path = "crates/clash-verge-signal" }
 clash-verge-i18n = { path = "crates/clash-verge-i18n" }

@@ -203,10 +203,6 @@ interface IConnections {
   connections: IConnectionsItem[]
 }
 
-interface IConnectionSetting {
-  layout: 'table' | 'list'
-}
-
 interface IClashInfo {
   mixed_port?: number // clash mixed port
   socks_port?: number // clash socks port

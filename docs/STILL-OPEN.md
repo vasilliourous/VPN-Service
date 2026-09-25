@@ -30,6 +30,34 @@ opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ## Open, and fixable now
 
+### The client port has not started — `client/` is an untailored upstream copy
+
+**This is the largest open item in the project.** `client/` is a **branding-only
+copy of Clash Verge Rev v2.5.5** — the name, icon, and app id say Locus; the code
+is upstream. Verified: the string `locus` appears nowhere in
+`client/src-tauri/src/`, and the `src-tauri/src/locus/` module tree specified in
+`client/docs/LOGIC-INVENTORY.md` does not exist.
+
+None of the following Locus behaviour exists in the client yet:
+
+- activation (`/api/activate`, Luhn code validation, code lookup pre-check)
+- heartbeat loop, backoff, grace
+- tier payload → mihomo config
+- device fingerprint
+- the Locus update path (hybrid: hub `update_config` + public `/api/release`)
+- product state storage on top of Verge's app dir
+
+The plan for all of it is written (`client/docs/LOGIC-INVENTORY.md`,
+`ARCHITECTURE.md`, `UPDATE-ARCHITECTURE.md`), including what to debloat from
+upstream and which contracts to port verbatim from `legacy/wails-client/`. What is
+missing is the implementation.
+
+**Why it matters beyond "unfinished":** every doc that calls `client/` "the
+shipping client" means "the directory that *will* ship." Nothing in the repo
+executes Locus logic on a client today. Until this port is done, the Locus client
+does not exist as software — do not test against it, and do not "fix" upstream
+behaviour as though it were ours.
+
 ### Fork versioning and release path — an open decision
 
 The old version/release machinery is **deleted** (root `VERSION`, `bump.sh`,

@@ -7,21 +7,14 @@ import {
   PauseCircleOutlined,
 } from '@mui/icons-material'
 import { Typography, Stack, Divider, Chip, IconButton } from '@mui/material'
-import { useLockFn } from 'ahooks'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 
 import { useServiceInstaller } from '@/hooks/use-service-installer'
 import { useSystemState } from '@/hooks/use-system-state'
-import {
-  useUpdate,
-  updateLastCheckTime,
-  readLastCheckTime,
-} from '@/hooks/use-update'
 import { useVerge } from '@/hooks/use-verge'
 import { getSystemInfo } from '@/services/cmds'
-import { showNotice } from '@/services/notice-service'
 import { version as appVersion } from '@root/package.json'
 
 import { EnhancedCard } from './enhanced-card'
@@ -34,14 +27,7 @@ export const SystemInfoCard = () => {
     useSystemState()
   const { installServiceAndRestartCore } = useServiceInstaller()
 
-  const { checkUpdate: triggerCheckUpdate, lastCheckUpdate } = useUpdate(true)
-
   const [osInfo, setOsInfo] = useState('')
-
-  const lastCheckUpdateText = useMemo(
-    () => (lastCheckUpdate ? new Date(lastCheckUpdate).toLocaleString() : '-'),
-    [lastCheckUpdate],
-  )
 
   useEffect(() => {
     getSystemInfo()
@@ -60,17 +46,6 @@ export const SystemInfoCard = () => {
       })
       .catch(console.error)
   }, [])
-
-  useEffect(() => {
-    if (!verge?.auto_check_update) return
-    if (readLastCheckTime() !== null) return
-
-    updateLastCheckTime()
-    const timeoutId = window.setTimeout(() => {
-      triggerCheckUpdate().catch(console.error)
-    }, 5000)
-    return () => window.clearTimeout(timeoutId)
-  }, [verge?.auto_check_update, triggerCheckUpdate])
 
   const goToSettings = useCallback(() => {
     navigate('/settings')
@@ -96,24 +71,6 @@ export const SystemInfoCard = () => {
     installServiceAndRestartCore,
     mutateSystemState,
   ])
-
-  const onCheckUpdate = useLockFn(async () => {
-    try {
-      const result = await triggerCheckUpdate()
-      const info = result.data
-      if (!info?.available) {
-        showNotice.success(
-          'settings.components.verge.advanced.notifications.latestVersion',
-        )
-      } else {
-        showNotice.info('shared.feedback.notifications.updateAvailable', 2000)
-        goToSettings()
-      }
-    } catch (err) {
-      console.warn('update check failed:', err)
-      showNotice.warning(err)
-    }
-  })
 
   const autoLaunchEnabled = useMemo(
     () => verge?.enable_auto_launch || false,
@@ -263,24 +220,6 @@ export const SystemInfoCard = () => {
           >
             {getModeIcon()}
             {getModeText()}
-          </Typography>
-        </Stack>
-        <Divider />
-        <Stack direction="row" sx={{ justifyContent: 'space-between' }}>
-          <Typography variant="body2" color="text.secondary">
-            {t('home.components.systemInfo.fields.lastCheckUpdate')}
-          </Typography>
-          <Typography
-            variant="body2"
-            onClick={onCheckUpdate}
-            sx={{
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              fontWeight: 'medium',
-              '&:hover': { opacity: 0.7 },
-            }}
-          >
-            {lastCheckUpdateText}
           </Typography>
         </Stack>
         <Divider />

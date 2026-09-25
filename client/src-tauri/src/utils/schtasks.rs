@@ -8,11 +8,11 @@ use std::process::{Command, Output};
 use windows::Win32::Globalization::{GetACP, GetOEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const TASK_NAME_USER: &str = "Clash Verge";
-const TASK_NAME_ADMIN: &str = "Clash Verge (Admin)";
+const TASK_NAME_USER: &str = "Locus";
+const TASK_NAME_ADMIN: &str = "Locus (Admin)";
 const TASK_XML_DIR: &str = "tasks";
-const TASK_XML_USER: &str = "clash-verge-task-user.xml";
-const TASK_XML_ADMIN: &str = "clash-verge-task-admin.xml";
+const TASK_XML_USER: &str = "locus-task-user.xml";
+const TASK_XML_ADMIN: &str = "locus-task-admin.xml";
 
 #[derive(Clone, Copy)]
 pub enum TaskMode {
@@ -97,17 +97,18 @@ fn get_startup_dir() -> Result<PathBuf> {
 
 async fn cleanup_legacy_shortcuts() -> Result<()> {
     let startup_dir = get_startup_dir()?;
-    let old_shortcut = startup_dir.join("Clash-Verge.lnk");
-    let new_shortcut = startup_dir.join("Clash Verge.lnk");
+    // Remove the shortcuts older builds registered. These are historical names:
+    // they must keep pointing at the OLD strings so an upgrade actually cleans up
+    // after itself, and must not be "updated" to the current product name.
+    let legacy_user_shortcut = startup_dir.join("Clash Verge.lnk");
+    let legacy_hyphenated_shortcut = startup_dir.join("Clash-Verge.lnk");
 
-    old_shortcut
-        .remove_if_exists()
-        .await
-        .with_context(|| format!("failed to remove startup shortcut {}", old_shortcut.display()))?;
-    new_shortcut
-        .remove_if_exists()
-        .await
-        .with_context(|| format!("failed to remove startup shortcut {}", new_shortcut.display()))?;
+    for shortcut in [legacy_user_shortcut, legacy_hyphenated_shortcut] {
+        shortcut
+            .remove_if_exists()
+            .await
+            .with_context(|| format!("failed to remove startup shortcut {}", shortcut.display()))?;
+    }
     Ok(())
 }
 

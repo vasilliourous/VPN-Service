@@ -1,4 +1,2 @@
-.github/workflows/*.lock.yml linguist-generated=true
-Changelog.md merge=union
 *.sh text eol=lf
 *.bash text eol=lf

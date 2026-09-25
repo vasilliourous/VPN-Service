@@ -16,10 +16,10 @@
 // public release, and where do I get it?" It is deliberately NOT a replacement
 // for the heartbeat:
 //
-//   - It does NOT do staged rollout. Rollout is per-device and keyed on the
-//     fingerprint, which we do not have here, and exposing the percentages
-//     would leak fleet state. Clients use this only as a FALLBACK when the
-//     heartbeat is unavailable, and are told so.
+//   - It carries no per-device decision. There is no rollout percentage
+//     anywhere any more (removed 2026-09), so this is no longer a difference
+//     from the heartbeat — but it remains the credential-free path, which is
+//     why it exists.
 //   - It exposes NO per-device, per-code or fleet data. Only the published
 //     version and its public download URLs, which are already served openly
 //     from /updates/* anyway.
@@ -59,7 +59,15 @@ routerAdd("GET", "/api/release", function(e) {
             var k = keys[i];
             var url = field(u, "download_" + k);
             if (!url) continue;
-            out.platforms[k] = { url: url, sha256: field(u, "sha256_" + k) };
+            // signature is included because the client's updater verifies one
+            // mandatorily: a platform present here without a signature is an
+            // artifact nobody can install, and the client needs to be able to
+            // tell that apart from "no release at all".
+            out.platforms[k] = {
+                url: url,
+                sha256: field(u, "sha256_" + k),
+                signature: field(u, "signature_" + k),
+            };
         }
         // rollout_percent is intentionally NOT returned: it is fleet policy,
         // and this endpoint is unauthenticated.

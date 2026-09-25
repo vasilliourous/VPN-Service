@@ -484,10 +484,9 @@ routerAdd("POST", "/api/admin/console", function(e) {
         if (action === "releases.get") {
             var rel = null;
             try { rel = $app.dao().findFirstRecordByFilter("update_config", "id != ''"); } catch (nf7) { rel = null; }
-            var payload = {version: "", rollout_percent: 0, active: false, platforms: {}};
+            var payload = {version: "", active: false, platforms: {}};
             if (rel) {
                 payload.version = rel.getString("version");
-                payload.rollout_percent = parseInt(rel.get("rollout_percent") || "0", 10);
                 payload.active = rel.getBool("active");
                 var platKeys = ["linux", "windows", "macos_intel", "macos_arm"];
                 for (var pi = 0; pi < platKeys.length; pi++) {
@@ -495,6 +494,11 @@ routerAdd("POST", "/api/admin/console", function(e) {
                     payload.platforms[pk] = {
                         url: rel.getString("download_" + pk) || "",
                         sha256: rel.getString("sha256_" + pk) || "",
+                        // Surfaced so the console can show whether each platform
+                        // is actually installable. A published release with no
+                        // signature looks fine but reaches nobody, because the
+                        // updater verifies one mandatorily.
+                        signed: !!rel.getString("signature_" + pk),
                     };
                 }
             }
@@ -553,13 +557,13 @@ routerAdd("POST", "/api/admin/console", function(e) {
         // every hash and file format. This action is the OTHER half: it points
         // update_config at those artifacts.
         //
-        // WHY IT IS A SEPARATE ACTION FROM releases.set
-        // releases.set deliberately refuses to raise rollout above 0 unless
-        // every platform already has a URL and a hash that names the version
-        // being advertised. That guard is what makes a "raise the rollout"
-        // click safe. So publishing has to happen first: fetch -> publish ->
-        // raise. This action is the middle step, and it is the only place the
-        // download_* / sha256_* columns are written from a fetch result.
+        // WHY IT IS STILL SEPARATE FROM releases.set
+        // releases.set only flips `active`, and refuses to activate a release
+        // whose artifacts are missing, unsigned, or point at a different
+        // version. So the artifacts must be recorded first: fetch -> publish ->
+        // activate. This action is the middle step, and it is the only place the
+        // download_* / sha256_* / signature_* columns are written from a fetch
+        // result.
         //
         // The per-platform hashes come from the files the service actually
         // hashed on disk, not from what the caller claims — the fetcher returns
@@ -571,21 +575,26 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 return bad(400, "version must look like 1.2.3");
             }
 
-            // artifacts: { linux: {sha256, bytes, filename}, ... }
+            // artifacts: { linux: {sha256, bytes, filename, signature}, ... }
             var arts = body.artifacts || {};
             var platKeysP = ["linux", "windows", "macos_intel", "macos_arm"];
             var missingP = [];
             for (var pi2 = 0; pi2 < platKeysP.length; pi2++) {
                 var pk2 = platKeysP[pi2];
                 var a = arts[pk2];
-                if (!a || !a.sha256 || !a.filename) missingP.push(pk2);
+                // signature is required, not optional. The Tauri updater
+                // verifies a minisign signature MANDATORILY and has no bypass,
+                // so a release published without one is uninstallable by every
+                // client — while looking perfectly healthy from here.
+                if (!a || !a.sha256 || !a.filename || !a.signature) missingP.push(pk2);
             }
             if (missingP.length) {
                 return bad(400,
                     "refusing to publish " + pubVersion + " — the fetch did not " +
-                    "produce a verified artifact for: " + missingP.join(", ") +
-                    ". A release missing a platform leaves those clients unable " +
-                    "to update, and the omission is invisible from here.");
+                    "produce a verified, signed artifact for: " + missingP.join(", ") +
+                    ". Every artifact needs a minisign signature (CI signs them; " +
+                    "see client/docs/SIGNING.md); without one no client can " +
+                    "install the update, and the omission is invisible from here.");
             }
 
             var baseUrl = String(body.base_url || "").trim().replace(/\/$/, "");
@@ -611,25 +620,43 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 recP.set("download_" + pk3,
                          baseUrl + "/updates/" + pubVersion + "/" + art.filename);
                 recP.set("sha256_" + pk3, String(art.sha256));
+                recP.set("signature_" + pk3, String(art.signature));
             }
             recP.set("version", pubVersion);
             recP.set("active", true);
-            // Rollout is NOT touched here. Publishing and offering are separate
-            // decisions, and releases.set owns the rollout with its own guard.
+            // Publishing IS offering. There is no rollout percentage any more:
+            // a published release is served to every client on its next check.
+            // `active` remains as the single off switch — see releases.set.
             $app.dao().saveRecord(recP);
 
             logEvent("(release " + pubVersion + ")", "release-published",
-                     "artifacts verified and written; rollout unchanged at " +
-                     recP.get("rollout_percent") + "%", "");
+                     "artifacts verified, signed and written; live to all clients", "");
             return ok({
                 version: pubVersion,
-                rollout_percent: parseInt(recP.get("rollout_percent") || "0", 10),
+                active: recP.getBool("active"),
                 platforms: platKeysP,
             });
         }
 
         // ─────────────────────────────────────────────────────────────
-        // releases.set — point clients at a version / change rollout
+        // releases.set — turn an update on or off
+        //
+        // There is NO rollout percentage. A published release is served to every
+        // client on its next check; this action exists only to flip `active`.
+        //
+        // WHY THE PERCENTAGE WENT
+        // It compensated for having no rollback: the client's only automatic
+        // recovery is the installer's own atomicity, so a build that launches
+        // but misbehaves stays installed, and the gate limited how many users
+        // found out first. It was removed deliberately — the cost was a fleet
+        // where a low percentage means your own test device is probably not in
+        // the bucket, so a working updater looks broken and is misdiagnosed.
+        //
+        // `active` is kept, and it is the ONLY remaining lever. Without it a bad
+        // build would have no off switch at all. Note what it does and does not
+        // do: it stops the hub OFFERING the update. Clients that already
+        // installed it stay on it, and there is still no server-driven
+        // downgrade — the fix for a bad build is a higher version.
         // ─────────────────────────────────────────────────────────────
         if (action === "releases.set") {
             var version = String(body.version || "").trim().replace(/^v/, "");
@@ -637,8 +664,7 @@ routerAdd("POST", "/api/admin/console", function(e) {
             if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(version)) {
                 return bad(400, "version must look like 1.2.3");
             }
-            var rollout = body.rollout_percent === undefined ? 0 : parseInt(body.rollout_percent, 10);
-            if (isNaN(rollout) || rollout < 0 || rollout > 100) return bad(400, "rollout_percent must be 0-100");
+            var wantActive = body.active === undefined ? true : !!body.active;
 
             var recR = null;
             try { recR = $app.dao().findFirstRecordByFilter("update_config", "id != ''"); } catch (nf8) { recR = null; }
@@ -647,55 +673,58 @@ routerAdd("POST", "/api/admin/console", function(e) {
                 recR = new Record(collR);
             }
 
-            // ── Guard: never advertise a version we cannot serve ──
+            // ── Guard: never ADVERTISE a version we cannot serve ──
             //
-            // The heartbeat only emits update fields when rollout_percent > 0,
-            // and it sends whatever URLs sit in this row. Those URLs are NOT
-            // derived from what is on disk — they are written by
-            // publish-release.sh (which verifies the served bytes) or by this
-            // action. So raising the rollout at a moment when the URLs are
-            // empty or stale sends every eligible client to a 404, and a client
-            // that cannot download cannot update: the release silently fails
-            // for the whole fleet, with no error anywhere but the client log.
+            // The hook serves whatever URLs sit in this row, and those URLs are
+            // NOT derived from what is on disk — they are written by the fetch
+            // service (which verifies the served bytes) or by releases.publish.
+            // Turning a release on while its URLs are empty or stale sends every
+            // client to a 404, and a client that cannot download cannot update:
+            // the release silently fails for the whole fleet with no error
+            // anywhere but the client log.
             //
             // This has actually happened on this hub: an old row pointed at
             // /updates/1.0.2/* after those test artifacts were deleted.
             //
-            // We cannot stat the filesystem from a PocketBase hook (only
-            // $os.getenv is exposed), so the check we CAN make is that every
-            // platform's URL and hash are present and that the URL version
-            // matches the version being advertised.
-            if (rollout > 0) {
+            // A PocketBase hook cannot stat the filesystem (only $os.getenv is
+            // exposed), so the checks available here are that every platform has
+            // a URL, a hash AND a signature, and that the URL names the version
+            // being advertised — a stale row claiming 1.0.0 while pointing at
+            // /updates/1.0.2/ is served as though it were current.
+            //
+            // This guard now applies whenever the release is being ACTIVATED.
+            // Previously it only ran for rollout > 0, so a release could be
+            // marked active with no artifacts at all.
+            if (wantActive) {
                 var platKeysG = ["linux", "windows", "macos_intel", "macos_arm"];
                 var missingG = [];
                 for (var gi = 0; gi < platKeysG.length; gi++) {
                     var gk = platKeysG[gi];
                     var gurl = recR.getString("download_" + gk);
                     var gsha = recR.getString("sha256_" + gk);
+                    var gsig = recR.getString("signature_" + gk);
                     if (!gurl || !gsha) { missingG.push(gk); continue; }
-                    // The URL must point at the version being advertised, or a
-                    // stale row (e.g. URLs for 1.0.2 while claiming 1.0.0) will
-                    // be served as if it were current.
+                    if (!gsig) { missingG.push(gk + " (no signature)"); continue; }
                     if (gurl.indexOf("/updates/" + version + "/") === -1) {
                         missingG.push(gk + " (url is for a different version)");
                     }
                 }
                 if (missingG.length) {
                     return bad(400,
-                        "refusing to offer " + version + " at " + rollout + "% — no usable artifact for: " +
+                        "refusing to activate " + version + " — no usable artifact for: " +
                         missingG.join(", ") +
-                        ". Upload all four raw binaries and publish the release first, " +
-                        "or clients will be sent to a 404.");
+                        ". Publish the release first (all four signed binaries), " +
+                        "or clients will be sent to a 404, or handed an update " +
+                        "the updater cannot verify.");
                 }
             }
 
             recR.set("version", version);
-            recR.set("rollout_percent", rollout);
-            recR.set("active", body.active === undefined ? true : !!body.active);
+            recR.set("active", wantActive);
             $app.dao().saveRecord(recR);
             logEvent("(release " + version + ")", "release-set",
-                     "rollout=" + rollout + "% active=" + recR.getBool("active"), "");
-            return ok({version: version, rollout_percent: rollout});
+                     "active=" + recR.getBool("active"), "");
+            return ok({version: version, active: recR.getBool("active")});
         }
 
         return bad(400, "Unknown action: " + action);

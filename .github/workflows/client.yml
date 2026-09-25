@@ -1,0 +1,372 @@
+# Locus client — build, sign, release.
+#
+# WHY THIS MUST LIVE AT THE REPO ROOT
+# GitHub only runs workflows from `.github/workflows/` at the repository root. A
+# workflow placed in `client/.github/workflows/` would never trigger at all —
+# this is noted because the fork's planned CI was once described as living there.
+#
+# WHAT IT PRODUCES, AND WHY EXACTLY THIS
+# The hub's publish path (`server/scripts/fetch-release.py`) resolves assets BY
+# NAME from the GitHub Release, and requires all of them:
+#
+#   locus-linux-amd64          + .sig
+#   locus-windows-amd64.exe    + .sig
+#   locus-darwin-amd64         + .sig
+#   locus-darwin-arm64         + .sig
+#   manifest.json
+#
+# The filenames are a frozen contract spanning three systems (CI, the hub's
+# fetcher, and the client's updater). `macos_*` platform keys pair with
+# `darwin-*` filenames deliberately — see client/src-tauri/src/locus/contract.rs.
+# Renaming either side breaks publishing for that platform.
+#
+# WHY `.sig` FILES ARE MANDATORY
+# The Tauri updater verifies a minisign signature over every download and has no
+# bypass. A release without signatures is installable by nobody, while looking
+# perfectly healthy from the hub's side. Signing here, and refusing to continue
+# without the key, means that failure surfaces in CI rather than as "updates
+# silently never arrive" weeks later.
+#
+# WHY THE BINARIES ARE STAGED BY HAND
+# `createUpdaterArtifacts` is false, so `tauri build` does NOT emit the raw
+# per-platform executables the updater consumes. It produces the *installed*
+# forms (NSIS, .app). The updater replaces an installed application, so it is
+# handed the bare executable. Staging copies it out of the compiled output under
+# the name the hub expects.
+
+name: Client
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'client/**'
+      - '.github/workflows/client.yml'
+  pull_request:
+    paths:
+      - 'client/**'
+      - '.github/workflows/client.yml'
+  workflow_dispatch:
+
+# GITHUB_TOKEN needs write access only to create the Release on a tag.
+permissions:
+  contents: write
+
+# A tag build and a branch build must not race to publish.
+concurrency:
+  group: client-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Gate: fast checks that must pass before any expensive build ──
+  #
+  # Deliberately separate from the release jobs so a lint failure costs seconds
+  # rather than a full cross-platform build.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # package.json is in client/, and defaults.run.working-directory does
+          # NOT apply to `uses:` steps — only to `run:`. Without this the action
+          # cannot find the pinned version and fails.
+          package_json_file: client/package.json
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      # --frozen-lockfile so a package.json edit that skipped the lockfile fails
+      # here. That exact drift shipped once (a removed dependency left the
+      # lockfile stale), and it would have broken every clean install.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check and build the frontend
+        run: pnpm run web:build
+
+      - name: Lint
+        run: pnpm run lint
+
+  # ── Build, sign and upload the four updater artifacts ──
+  build:
+    name: Build (${{ matrix.label }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: client
+    strategy:
+      # One platform failing must not hide the others: a release missing a
+      # platform cannot be published at all, so seeing every failure at once is
+      # worth more than stopping early.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            triple: x86_64-unknown-linux-gnu
+            artifact: locus-linux-amd64
+          - os: windows-latest
+            label: windows
+            triple: x86_64-pc-windows-msvc
+            artifact: locus-windows-amd64.exe
+          - os: macos-13
+            label: macos-intel
+            triple: x86_64-apple-darwin
+            artifact: locus-darwin-amd64
+          - os: macos-14
+            label: macos-arm
+            triple: aarch64-apple-darwin
+            artifact: locus-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # See the note in `verify`: action steps ignore working-directory.
+          package_json_file: client/package.json
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Matches client/rust-toolchain.toml. `edition = "2024"` needs >= 1.85.
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The Cargo workspace root is client/, not client/src-tauri/ — the
+          # cache would key on the wrong directory otherwise.
+          workspaces: client
+
+      # Tauri's Linux build needs these; without them the build fails in build.rs
+      # with a glib-sys error that reads like a code fault.
+      - name: Install Linux dependencies
+        if: matrix.label == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Downloads the mihomo sidecars and geo data into the gitignored
+      # src-tauri/sidecar and src-tauri/resources. The Rust build fails without
+      # them, and it needs an explicit target triple in CI (the script bails
+      # otherwise rather than guessing).
+      - name: Fetch sidecars and geo data
+        run: node scripts/prebuild.mjs "${{ matrix.triple }}"
+
+      - name: Build
+        run: pnpm run build -- --target ${{ matrix.triple }}
+
+      # ── Stage the raw executable under the name the hub expects ──
+      #
+      # tauri build produces the *installed* form (NSIS / .app). The updater is
+      # handed the bare executable, so copy it out of the compiler's output.
+      - name: Stage the raw updater artifact (unix)
+        if: matrix.label != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.triple }}/release/locus"
+          [ -f "$src" ] || { echo "::error::expected binary not found: $src"; ls -R target/*/release 2>/dev/null | head -50; exit 1; }
+          mkdir -p artifacts
+          cp "$src" "artifacts/${{ matrix.artifact }}"
+          chmod +x "artifacts/${{ matrix.artifact }}"
+
+      - name: Stage the raw updater artifact (windows)
+        if: matrix.label == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.triple }}/release/locus.exe"
+          [ -f "$src" ] || { echo "::error::expected binary not found: $src"; ls -R target/*/release 2>/dev/null | head -50; exit 1; }
+          mkdir -p artifacts
+          cp "$src" "artifacts/${{ matrix.artifact }}"
+
+      # ── Sign ──
+      #
+      # A release without signatures is uninstallable by every client. Failing
+      # here, loudly, is the whole point: the alternative is discovering it as
+      # "updates never arrive" with no error anywhere.
+      - name: Install minisign
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            curl -sSL -o /tmp/minisign.tar.gz \
+              https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz
+            tar -xzf /tmp/minisign.tar.gz -C /tmp
+            sudo cp /tmp/minisign-linux/x86_64/minisign /usr/local/bin/minisign
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            brew install minisign
+          else
+            choco install minisign -y
+          fi
+          minisign -v
+
+      - name: Sign the artifact
+        shell: bash
+        env:
+          # The private half of the key whose public half is compiled into the
+          # app (tauri.conf.json -> plugins.updater.pubkey). See
+          # client/docs/SIGNING.md for custody and rotation.
+          LOCUS_UPDATE_KEY: ${{ secrets.LOCUS_UPDATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LOCUS_UPDATE_KEY:-}" ]; then
+            echo "::error::LOCUS_UPDATE_KEY is not set. A release without signatures cannot be installed by any client — see client/docs/SIGNING.md."
+            exit 1
+          fi
+          printf '%s' "$LOCUS_UPDATE_KEY" > "$RUNNER_TEMP/locus.key"
+          chmod 600 "$RUNNER_TEMP/locus.key"
+          minisign -S -s "$RUNNER_TEMP/locus.key" \
+            -m "artifacts/${{ matrix.artifact }}" \
+            -x "artifacts/${{ matrix.artifact }}.sig" \
+            -t "Locus ${{ matrix.label }}"
+          rm -f "$RUNNER_TEMP/locus.key"
+          echo "Signed ${{ matrix.artifact }}:"
+          cat "artifacts/${{ matrix.artifact }}.sig"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-${{ matrix.label }}
+          # The binary AND its signature, always together. They are published as
+          # a pair and a release with one and not the other is refused.
+          path: |
+            client/artifacts/${{ matrix.artifact }}
+            client/artifacts/${{ matrix.artifact }}.sig
+          if-no-files-found: error
+
+  # ── Assemble the release ──
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-*
+          # download-artifact does NOT flatten by default, and the release job
+          # previously assumed it did — producing a release whose assets were in
+          # per-platform subdirectories. merge-multiple puts them all in one dir.
+          merge-multiple: true
+          path: release
+
+      - name: List what will be published
+        run: ls -la release/
+
+      # ── The manifest the hub cross-checks against ──
+      #
+      # fetch-release.py and publish-release.sh both compare their hashes with
+      # this file, so a mismatch aborts a publish rather than serving bytes that
+      # do not match what CI built.
+      - name: Build manifest.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os
+
+          # Platform key -> filename. The keys say macos_*, the files say darwin-*:
+          # that asymmetry is frozen and must not be "tidied".
+          platforms = {
+              "linux": "locus-linux-amd64",
+              "windows": "locus-windows-amd64.exe",
+              "macos_intel": "locus-darwin-amd64",
+              "macos_arm": "locus-darwin-arm64",
+          }
+
+          out = {"version": os.environ["VERSION"], "platforms": {}}
+          missing = []
+
+          for key, filename in platforms.items():
+              path = os.path.join("release", filename)
+              if not os.path.isfile(path):
+                  missing.append(filename)
+                  continue
+              digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              # The signature is read back and embedded, so the manifest is a
+              # complete description of what the hub should serve.
+              sig_path = path + ".sig"
+              if not os.path.isfile(sig_path):
+                  missing.append(filename + ".sig")
+                  continue
+              out["platforms"][key] = {
+                  "file": filename,
+                  "sha256": digest,
+                  "signature": open(sig_path).read().strip(),
+              }
+
+          if missing:
+              raise SystemExit(
+                  "refusing to publish a partial release — missing: " + ", ".join(missing)
+              )
+
+          with open(os.path.join("release", "manifest.json"), "w") as f:
+              json.dump(out, f, indent=2)
+          print(json.dumps(out, indent=2))
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: Verify every artifact is signed
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in release/locus-*; do
+            case "$f" in
+              *.sig) continue ;;
+            esac
+            if [ ! -f "$f.sig" ]; then
+              echo "::error::no signature for $(basename "$f")"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "All artifacts are signed."
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Attach ONLY the updater artifacts. Installers and zips may be added
+          # later as human-facing assets; fetch-release.py resolves by name from
+          # an allowlist, so extra assets neither break the all-or-nothing check
+          # nor risk an installer being handed to the updater as a payload.
+          files: |
+            release/locus-linux-amd64
+            release/locus-linux-amd64.sig
+            release/locus-windows-amd64.exe
+            release/locus-windows-amd64.exe.sig
+            release/locus-darwin-amd64
+            release/locus-darwin-amd64.sig
+            release/locus-darwin-arm64
+            release/locus-darwin-arm64.sig
+            release/manifest.json
+          draft: false
+          # Idempotent: re-running on the same tag replaces assets rather than
+          # failing. A half-published release is worse than a re-run.
+          fail_on_unmatched_files: true
+          generate_release_notes: false

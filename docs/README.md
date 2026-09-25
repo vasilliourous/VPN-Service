@@ -1,16 +1,20 @@
 # Locus documentation index
 
-Documents in a flat directory are only navigable if something says what each one
-is. This is that file.
+`docs/` holds the **live** project documentation. Retired-client material is
+separated into [`archive/`](archive/) and pre-V5 research into [`history/`](history/),
+so what remains at this level is current. This file says what each one is.
 
-**Two rules for reading anything here:**
+**Three rules for reading anything here:**
 
-1. **Check the status banner.** Several documents describe the **retired** Wails
-   client and carry a `⚠️ STATUS: describes the ARCHIVED client` banner; some
-   now carry a `⚠️ STATUS: ... REMOVED` banner for machinery that was deleted.
-   The shipping client is `client/`; its docs live in `client/docs/`. A document
-   with no banner describes something still live.
-2. **The code wins.** Where a document and the code disagree, the code is right
+1. **Check the status banner.** Documents about the **retired** Wails client carry
+   a `⚠️ STATUS: describes the ARCHIVED client` banner; documents about deleted
+   machinery carry a `⚠️ STATUS: ... REMOVED` banner. The client that will ship is
+   `client/` — but note it is currently a **branding-only copy of Clash Verge Rev
+   with no Locus logic yet** (see `STILL-OPEN.md`), and its *spec* docs live in
+   `client/docs/`. A document with no banner describes something still live.
+2. **Nothing current lives in `archive/` or `history/`.** Those are reference
+   material. If you are orienting yourself, you do not need them.
+3. **The code wins.** Where a document and the code disagree, the code is right
    and the document is a bug. Fix it in the same change.
 
 ---
@@ -32,23 +36,25 @@ is. This is that file.
 | [`POCKETBASE-SETUP.md`](POCKETBASE-SETUP.md) | PocketBase specifics, including the admin console at `/admin/`. |
 | [`SECRETS-MANAGEMENT.md`](SECRETS-MANAGEMENT.md) | age-encrypted secrets, what is plaintext, what must never be committed. |
 | [`API.md`](API.md) | HTTP API reference for the hub (activation, heartbeat, code lookup, releases). |
+| [`UPDATE-SYSTEM.md`](UPDATE-SYSTEM.md) | **How an update reaches a client, end to end** — publishing, the `/api/update` endpoint, the two integrity gates, and what is verified vs not. |
 | [`RELEASING.md`](RELEASING.md) | ⚠️ Publishing a build to the hub (still live). The old release-cutting path is removed. |
 | [`CI-CD.md`](CI-CD.md) | ⚠️ REMOVED — the pipeline that built the archived client is deleted. Kept for the surviving asset/consumer contract. |
 | [`FIXES.md`](FIXES.md) | Append-only dated log of every real defect and its fix. **Treat entries as historical** — later entries sometimes correct earlier ones; the corrections are marked. |
 
-## Archived client — banners, reference only
+## Archived client — moved to `archive/`, reference only
 
-These describe `legacy/wails-client/`. They are kept because they document the
-contract the shipping fork must reproduce, not because the code is live.
+These describe `legacy/wails-client/`. They were moved into [`archive/`](archive/)
+so the top level of `docs/` holds only live documents. They are kept because they
+document the contract the shipping fork must reproduce, not because the code is live.
 
 | Document | What it is |
 |---|---|
-| [`CLIENT-GUIDE.md`](CLIENT-GUIDE.md) | ⚠️ Build/run guide for the Go + Wails client. |
-| [`BACKEND-API.md`](BACKEND-API.md) | ⚠️ The `internal/` package API surface. |
-| [`IMPLEMENT.md`](IMPLEMENT.md) | ⚠️ Historical implementation plan (Fyne era). |
-| [`UI-AESTHETICS.md`](UI-AESTHETICS.md) | ⚠️ Visual design spec for the Wails UI. |
-| [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) | ⚠️ Fyne → Wails migration history. |
-| [`README-legacy-v5.md`](README-legacy-v5.md) | ⚠️ The old `v5/README.md`. Its "definitive version" claim is retired. |
+| [`archive/CLIENT-GUIDE.md`](archive/CLIENT-GUIDE.md) | ⚠️ Build/run guide for the Go + Wails client. |
+| [`archive/BACKEND-API.md`](archive/BACKEND-API.md) | ⚠️ The `internal/` package API surface. |
+| [`archive/IMPLEMENT.md`](archive/IMPLEMENT.md) | ⚠️ Historical implementation plan (Fyne era). |
+| [`archive/UI-AESTHETICS.md`](archive/UI-AESTHETICS.md) | ⚠️ Visual design spec for the Wails UI. |
+| [`archive/WAILS-MIGRATION.md`](archive/WAILS-MIGRATION.md) | ⚠️ Fyne → Wails migration history. |
+| [`archive/README-legacy-v5.md`](archive/README-legacy-v5.md) | ⚠️ The old `v5/README.md`. Its "definitive version" claim is retired. |
 
 ## Analysis and design
 

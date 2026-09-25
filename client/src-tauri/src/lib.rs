@@ -7,6 +7,7 @@ mod constants;
 mod core;
 mod enhance;
 mod feat;
+pub mod locus;
 mod module;
 mod process;
 pub mod utils;
@@ -23,12 +24,11 @@ use once_cell::sync::OnceCell;
 use tauri::{AppHandle, Manager as _};
 #[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_deep_link::DeepLinkExt as _;
 
 pub static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
 /// Application initialization helper functions
 mod app_init {
-    use super::*;
+    use super::{AsyncHandler, Result, Type, cmd, files, logging, server};
 
     /// Initialize singleton monitoring for other instances
     pub fn init_singleton_check() -> Result<server::SingletonDisposition> {
@@ -44,14 +44,6 @@ mod app_init {
         let mut builder = builder
             .plugin(tauri_plugin_clash_verge_sysinfo::init())
             .plugin(tauri_plugin_notification::init())
-            .plugin(
-                tauri_plugin_updater::Builder::new()
-                    .default_version_comparator(|current, release| {
-                        release.version > current
-                            || core::updater::is_build_to_stable(&current.to_string(), &release.version.to_string())
-                    })
-                    .build(),
-            )
             .plugin(tauri_plugin_clipboard_manager::init())
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -59,7 +51,6 @@ mod app_init {
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_shell::init())
             .plugin(tauri_plugin_opener::init())
-            .plugin(tauri_plugin_deep_link::init())
             .plugin(tauri_plugin_http::init())
             .plugin(
                 tauri_plugin_mihomo::Builder::new()
@@ -75,24 +66,6 @@ mod app_init {
             builder = builder.plugin(tauri_plugin_devtools::init());
         }
         builder
-    }
-
-    /// Setup deep link handling
-    pub fn setup_deep_links(app: &tauri::App) {
-        #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
-        {
-            logging!(debug, Type::Setup, "注册深层链接...");
-            let _ = app.deep_link().register_all();
-        }
-
-        app.deep_link().on_open_url(|event| {
-            let urls = event.urls();
-            AsyncHandler::spawn(move || async move {
-                if let Some(url) = urls.first() {
-                    resolve::resolve_scheme(url.as_ref()).await;
-                }
-            });
-        });
     }
 
     /// Setup autostart plugin
@@ -188,15 +161,8 @@ mod app_init {
             cmd::get_profiles,
             cmd::enhance_profiles,
             cmd::patch_profiles_config,
-            cmd::view_profile,
             cmd::patch_profile,
-            cmd::create_profile,
-            cmd::import_profile,
-            cmd::reorder_profile,
             cmd::update_profile,
-            cmd::delete_profile,
-            cmd::read_profile_file,
-            cmd::save_profile_file,
             cmd::get_next_update_time,
             cmd::create_local_backup,
             cmd::list_local_backup,
@@ -209,9 +175,6 @@ mod app_init {
             cmd::list_webdav_backup,
             cmd::delete_webdav_backup,
             cmd::restore_webdav_backup,
-            cmd::get_unlock_items,
-            cmd::check_media_unlock,
-            cmd::check_media_unlock_item,
         ]
     }
 }
@@ -244,13 +207,34 @@ pub fn run() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
+    // Adopts a pre-Locus data directory on the first launch under this identity.
+    //
+    // MUST run before anything can touch the app data root: the Windows owner
+    // repair below, the singleton check (which opens a lock file in it), and the
+    // logger all resolve paths through it. Running after any of those would mean
+    // operating on the new root before the old contents moved into it.
+    match utils::dirs::migrate_legacy_app_data_dir() {
+        Ok(Some(adopted)) => {
+            // The logger is not installed yet, so record it on stderr as well.
+            eprintln!("[locus] adopted pre-Locus application data from {adopted:?}");
+        }
+        Ok(None) => {}
+        Err(error) => {
+            // Deliberately non-fatal: a failed adoption must not stop the app
+            // from starting. The user gets an empty profile set and re-activates,
+            // and the original directory is left untouched for a manual move —
+            // which is strictly better than refusing to launch.
+            eprintln!("[locus] WARNING: {error:#}");
+        }
+    }
+
     // Runs before the singleton check, which is the first thing to open a file in that directory.
     #[cfg(windows)]
     if let Err(error) =
         utils::dirs::preinit_app_data_dir().and_then(|root| core::owner_identity::repair_app_data_root_owner(&root))
     {
         // The logger is installed later in setup(), so this would otherwise be lost.
-        eprintln!("[clash-verge] 应用数据目录所有权修复失败: {error:#}");
+        eprintln!("[locus] 应用数据目录所有权修复失败: {error:#}");
         logging!(error, Type::Setup, "应用数据目录所有权修复失败: {error:#}");
     }
 
@@ -274,7 +258,7 @@ pub fn run() -> std::process::ExitCode {
                     .map(|s| (*s).to_string())
                     .or_else(|| panic.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unknown panic payload".to_string());
-                eprintln!("[clash-verge] panic during app setup ({stage}), continuing in degraded mode: {msg}");
+                eprintln!("[locus] panic during app setup ({stage}), continuing in degraded mode: {msg}");
                 logging!(
                     error,
                     Type::Setup,
@@ -300,8 +284,6 @@ pub fn run() -> std::process::ExitCode {
                 if let Err(e) = app_init::setup_autostart(app) {
                     logging!(error, Type::Setup, "Failed to setup autostart: {}", e);
                 }
-
-                app_init::setup_deep_links(app);
 
                 if let Err(e) = app_init::setup_window_state(app) {
                     logging!(error, Type::Setup, "Failed to setup window state: {}", e);

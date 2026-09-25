@@ -164,7 +164,14 @@ fetch_from_github() {
     # not depend on GitHub's asset naming staying in lockstep with our own.
     local files=(manifest.json)
     for entry in "${PLATFORMS[@]}"; do
-        rest="${entry#*:}"; files+=("${rest%%:*}")
+        rest="${entry#*:}"
+        local binary="${rest%%:*}"
+        files+=("$binary")
+        # The minisign signature CI produced for this binary. Fetched here
+        # because the plugin verifies a signature mandatorily: without it the
+        # artifact is not installable, so a publish that skipped it would look
+        # successful and reach nobody.
+        files+=("${binary}.sig")
     done
 
     local missing=()
@@ -197,9 +204,11 @@ PY
 
     if [ "${#missing[@]}" -gt 0 ]; then
         fail "the v${VERSION} release is missing: ${missing[*]}\n"\
-"CI is supposed to attach all four platform executables plus manifest.json.\n"\
-"A release without them cannot be published — fix CI and re-release rather than\n"\
-"publishing a partial update." 4
+"CI is supposed to attach all four platform executables, their .sig signature\n"\
+"files, and manifest.json. A release without them cannot be published — fix CI\n"\
+"and re-release rather than publishing a partial update.\n"\
+"\n"\
+"If only the .sig files are missing, CI is not signing: see client/docs/SIGNING.md." 4
     fi
     log "✓ Fetched $((${#files[@]})) assets for v${VERSION}"
 }
@@ -279,7 +288,7 @@ MANIFEST="${RELEASE_DIR}/manifest.json"
 if [ -f "$MANIFEST" ]; then
     log "Cross-checking against manifest.json…"
     python3 - "$MANIFEST" "$RELEASE_DIR" "${HAVE_KEYS[@]}" <<'PY' || fail "manifest cross-check FAILED — refusing to publish"
-import hashlib, json, os, sys
+import base64, hashlib, json, os, sys
 manifest_path, rel_dir = sys.argv[1], sys.argv[2]
 keys = sys.argv[3:]
 m = json.load(open(manifest_path))
@@ -372,7 +381,7 @@ fi
 
 # Build the record. Only advertise platforms we actually uploaded.
 python3 - "$PB_API" "$PB_TOKEN" "$VERSION" "$ROLLOUT_PERCENT" "$RELEASE_DIR" "${HAVE_KEYS[@]}" <<'PY' || fail "update_config update failed" 3
-import hashlib, json, os, subprocess, sys
+import base64, hashlib, json, os, subprocess, sys
 api, token, version, rollout, rel_dir = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
 keys = sys.argv[6:]
 
@@ -416,6 +425,26 @@ for key in keys:
     # this the updater refuses to apply the update ("empty SHA256 checksum").
     h = hashlib.sha256(open(os.path.join(rel_dir, fname), "rb").read()).hexdigest()
     body["sha256_" + key] = h
+
+    # The minisign signature CI produced alongside the binary. REQUIRED: the
+    # Tauri updater verifies a signature mandatorily and has no bypass, so a row
+    # without one is not installable by any client. /api/update refuses to
+    # advertise such a row rather than letting clients download and then fail
+    # verification — but the right place to catch it is here, at publish time.
+    #
+    # minisign writes a base64-wrapped signature; the plugin decodes it with
+    # base64 before parsing, so it must be stored as the plugin will read it.
+    sig_path = os.path.join(rel_dir, fname + ".sig")
+    if not os.path.exists(sig_path):
+        raise SystemExit(
+            f"refusing to publish: no signature for {fname} (expected {fname}.sig).\n"
+            f"Sign every artifact with the Locus update key before publishing — see\n"
+            f"client/docs/SIGNING.md. A release without signatures cannot be installed\n"
+            f"by any client, because the updater verifies one mandatorily."
+        )
+    with open(sig_path, "rb") as sf:
+        body["signature_" + key] = base64.b64encode(sf.read()).decode("ascii")
+    print(f"  {key}: signature recorded")
 # Legacy single hash: kept populated so any older client that only reads
 # update_sha256 still has a usable (linux) value.
 if body.get("sha256_linux"):

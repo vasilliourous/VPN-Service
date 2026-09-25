@@ -27,7 +27,7 @@ fn main() -> ExitCode {
         .thread_name_fn(|| {
             static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
             let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-            format!("clash-verge-runtime-{id}")
+            format!("locus-runtime-{id}")
         })
         .build()
         .unwrap();

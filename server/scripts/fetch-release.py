@@ -48,6 +48,7 @@ DESIGN NOTES (each deliberate)
 
 Run: python3 fetch-release.py   (binds 127.0.0.1:8091)
 """
+import base64
 import hashlib
 import hmac
 import json
@@ -118,7 +119,11 @@ class FetchError(Exception):
 # Both become paths on disk. Reject anything that is not boring rather than
 # trying to sanitise it.
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$")
+# Every binary is accompanied by a minisign signature. The Tauri updater
+# verifies a signature mandatorily and offers no bypass, so a release fetched
+# without them is not installable by any client.
 ALLOWED_FILENAMES = {name for _, name, _ in PLATFORMS} | {MANIFEST_NAME}
+ALLOWED_FILENAMES |= {name + ".sig" for _, name, _ in PLATFORMS}
 
 
 def validate_version(version):
@@ -323,13 +328,20 @@ def fetch_release(version, force=False):
     target_dir = os.path.join(UPDATES_DIR, version)
     assets = resolve_release(version)
 
-    wanted = [(key, name) for key, name, _ in PLATFORMS] + [("manifest", MANIFEST_NAME)]
+    wanted = [(key, name) for key, name, _ in PLATFORMS]
+    # The signature for each binary is required, not optional: a published
+    # update nobody can install is worse than no update, because it looks like
+    # it worked from the operator's seat.
+    wanted += [("sig_" + key, name + ".sig") for key, name, _ in PLATFORMS]
+    wanted += [("manifest", MANIFEST_NAME)]
     missing = [name for _, name in wanted if name not in assets]
     if missing:
         raise FetchError(
             "the v%s release is missing: %s. CI is supposed to attach all four "
-            "platform executables plus manifest.json — fix CI and re-release "
-            "rather than publishing a partial update."
+            "platform executables, their .sig signature files, and manifest.json "
+            "— fix CI and re-release rather than publishing a partial update. "
+            "If only the .sig files are missing, CI is not signing: see "
+            "client/docs/SIGNING.md."
             % (version, ", ".join(missing)),
             400,
         )
@@ -348,11 +360,24 @@ def fetch_release(version, force=False):
             )
 
         final_path = os.path.join(target_dir, name)
-        # The 1 MB floor is a binary guard (truncated download / Git LFS
-        # pointer). manifest.json is legitimately a few hundred bytes, so it is
-        # only required to be non-empty.
+        # The 1 MB floor is a BINARY guard (a truncated download or a Git LFS
+        # pointer). Two things this publishes are legitimately tiny and must not
+        # be held to it:
+        #
+        #   * manifest.json — a few hundred bytes of JSON. Holding it to the
+        #     binary floor rejected a perfectly good release with "downloaded
+        #     only 719 bytes", which is why MIN_MANIFEST_BYTES exists.
+        #   * *.sig — a minisign signature is a few hundred bytes of text. It is
+        #     not a binary at all, and applying the binary floor to it would
+        #     make every release unpublishable the moment signing was added.
+        #
+        # Both are only required to be non-empty; their content is validated
+        # below (the manifest must parse as JSON, the signature must decode as
+        # base64).
         is_manifest = (name == MANIFEST_NAME)
-        min_bytes = MIN_MANIFEST_BYTES if is_manifest else MIN_BINARY_BYTES
+        is_signature = name.endswith(".sig")
+        min_bytes = MIN_MANIFEST_BYTES if (is_manifest or is_signature) else MIN_BINARY_BYTES
+        what = "manifest" if is_manifest else ("signature" if is_signature else "binary")
 
         # Idempotence: a complete, already-verified artifact is left alone
         # unless the operator asked for a force re-fetch.
@@ -370,8 +395,7 @@ def fetch_release(version, force=False):
         os.close(fd)
         try:
             log("  ↓ %s" % name)
-            sha, size = _download(url, tmp_path, min_bytes, MAX_ASSET_BYTES,
-                                  what=("manifest" if is_manifest else "binary"))
+            sha, size = _download(url, tmp_path, min_bytes, MAX_ASSET_BYTES, what=what)
 
             # The manifest is what proves the bytes came from the same build CI
             # hashed, so a manifest that is not JSON is useless even though it
@@ -483,6 +507,71 @@ def verify_artifact_kind(path, platform_key):
     return True, "unknown"
 
 
+def verify_signature_file(path):
+    """Checks that a .sig file is a readable minisign signature.
+
+    What this can and cannot check matters:
+
+    * It CAN confirm the file is non-empty base64 that decodes, and that the
+      decoded text has the shape minisign produces (an untrusted comment line, a
+      base64 signature line, a trusted comment line, and a global signature
+      line). That catches a placeholder, an empty upload, or a signature for the
+      wrong artifact.
+
+    * It CANNOT verify the signature against the artifact, because this service
+      does not hold the public key — and should not, since the key it would need
+      is the *private* one to sign with. Real verification happens on the client,
+      which has the public key compiled in.
+
+    The distinction is deliberate: this is a "is this obviously not a signature"
+    check, not an endorsement. Its value is catching a broken CI signing step at
+    fetch time, rather than discovering it as "every client refuses this update".
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as exc:
+        return False, "unreadable (%s)" % exc
+
+    if not raw.strip():
+        return False, "empty signature file"
+
+    # A .sig file is PLAIN TEXT, four lines:
+    #
+    #   untrusted comment: signature from minisign secret key
+    #   RUT9eeTiJVDWZMBlzoYn…=            <- the signature (base64)
+    #   trusted comment: <what -t said>
+    #   AHhE2ZGRWCrFe02+ZLxfaDZmV6/…==    <- the global signature (base64)
+    #
+    # The base64 wrapping the client's plugin does is applied to this whole text
+    # when it travels as a JSON string field — NOT to the file. Decoding the
+    # file as base64 here was wrong and rejected every real signature.
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "not text (a minisign signature is four lines of ASCII)"
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 4:
+        return False, "expected 4 lines of minisign output, found %d" % len(lines)
+    if not lines[0].startswith("untrusted comment: "):
+        return False, "missing the 'untrusted comment:' first line"
+    if not lines[2].startswith("trusted comment: "):
+        return False, "missing the 'trusted comment:' third line"
+    # Both the signature and the global signature are base64. Checking they
+    # decode catches a file that merely looks the right shape.
+    for index in (1, 3):
+        try:
+            base64.b64decode(lines[index], validate=True)
+        except (ValueError, TypeError) as exc:
+            # Narrow deliberately: catching Exception here once turned a
+            # NameError (python-base64, which was not imported) into the
+            # plausible-looking message "line 3 is not base64", and a real bug
+            # hid behind a convincing explanation.
+            return False, "line %d is not base64 (%s)" % (index + 1, exc)
+    return True, "minisign signature"
+
+
 def verify_and_report(result):
     """Post-fetch format check. Raises FetchError on a cross-slot mixup."""
     problems = []
@@ -497,6 +586,22 @@ def verify_and_report(result):
             problems.append("%s: %s" % (name, detected))
         else:
             result["artifacts"][key]["format"] = detected
+
+        # Signature, alongside the binary it belongs to. A release whose
+        # signatures are broken is not installable by any client, and it would
+        # otherwise look perfectly healthy from here right up until the first
+        # student tried to update.
+        sig_entry = result["artifacts"].get("sig_" + key)
+        if not sig_entry:
+            problems.append("%s.sig: not fetched" % name)
+            continue
+        sig_path = os.path.join(result["dir"], sig_entry["filename"])
+        sig_ok, sig_detected = verify_signature_file(sig_path)
+        if not sig_ok:
+            problems.append("%s.sig: %s" % (name, sig_detected))
+        else:
+            result["artifacts"]["sig_" + key]["format"] = sig_detected
+
     if problems:
         raise FetchError(
             "the release has the wrong file in one or more platform slots — " +

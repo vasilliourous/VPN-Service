@@ -152,7 +152,7 @@ Every console page is a POST to `/api/admin/console` with an `action`:
 | `codes.history` | Per-code event trail |
 | `middlemen.list` | Distinct middleman labels and their code counts |
 | `tiers.list` / `tiers.update` | Read / edit tier connection settings |
-| `releases.get` / `releases.set` | Read / set version and rollout |
+| `releases.get` / `releases.set` | Read the current release / turn it on or off |
 
 Auth: `X-Admin-Token` header **or** `admin_token` in the body.
 
@@ -278,7 +278,7 @@ when you sign out or the session ends.
 |---|---|
 | **Dashboard** | Counts of available / activated / suspended codes, codes per tier, codes expiring in 30 days, and a recent-activity feed. |
 | **Codes & Clients** | Generate codes (1–500 at a time, per tier, with an expiry, a middleman and a label), search and filter them, suspend/reactivate, unbind a device, edit detail, export CSV. |
-| **Releases** | Pull a build straight from its GitHub Release, verify it, and set the rollout percentage. |
+| **Releases** | Pull a build straight from its GitHub Release, verify it, and offer it (or stop offering it). |
 | **Tiers** | Server hostname, port, method and active/UDP-relay flags per tier. |
 
 ### Common jobs
@@ -298,7 +298,7 @@ recorded in that code's history.
 working. **Reactivate** reverses it. Nothing is deleted.
 
 **Publish an update**
-See "Client Update System" below — fetching from GitHub and the rollout both happen
+See "Client Update System" below — fetching from GitHub and offering both happen
 on the Releases page. Nothing is uploaded from your browser.
 
 **Change a tier's port**
@@ -315,21 +315,20 @@ Tiers → edit → Save. Clients pick it up on their next heartbeat (≤5 min).
    GitHub Release tagged `v2.2.1` itself**, verifies each file's format against
    the platform slot it belongs in (a Windows `.exe` in the Linux slot is
    refused) and records the hashes it computed. The page then shows exactly what
-   was verified — filename, size, detected format, SHA-256.
+   was verified — filename, size, detected format, SHA-256, and its signature.
    Do **not** use the `.zip` bundles: the updater replaces the app binary
    directly and cannot unpack a zip.
-   A release missing any platform is refused — no partial publish is possible.
-3. Set the rollout. For a **first test release, use 100%** (see "Why a
-   percentage" above — at 5% your own device probably is not in the bucket).
-   Once real customers are on it: 5%, confirm a few clients update, then widen
-   25% → 100%.
+   A release missing any platform, or missing a signature for any platform, is
+   refused — no partial publish is possible.
+3. The release is now live — publishing **is** offering. There is no rollout
+   step. Use **Stop offering** if you need to withdraw it.
 
 **Fetching and offering are separate steps.** The fetch writes `update_config`
-with the URLs and hashes but leaves the rollout alone; raising the rollout is a
-second, deliberate action. This is not fussiness — the heartbeat sends whatever
-URLs are in the row regardless of whether the artifacts exist, so raising the
-rollout over an un-fetched version sends the whole fleet to a 404. Both the
-console and the hook refuse it.
+with the URLs, hashes and signatures, but activation is its own action. This is
+not fussiness — the hub sends whatever URLs are in the row regardless of whether
+the artifacts exist or are signed, so activating an un-fetched or unsigned
+version sends the whole fleet to a 404 or to a download the updater will refuse.
+Both the console and the hook check for it.
 
 **Triggering a fetch without the console.** Releases → **New link** mints a
 one-shot trigger URL. It is bound to one version, expires (15 minutes by
@@ -372,54 +371,60 @@ match `ADMIN_API_TOKEN` on the server:
 
 ## Client Update System
 
-Fully wired and verified end-to-end (2026-09-19). Releasing an update is:
-tag → wait for CI → run one script.
+> **Full design:** [`UPDATE-SYSTEM.md`](UPDATE-SYSTEM.md). This section is the
+> operator's summary — what to do, and what not to do.
+
+Releasing an update is: **tag → wait for CI → Releases → Fetch & publish.**
 
 ### How it works
 
-1. **CI** — ⚠️ **REMOVED.** `.github/workflows/build.yml` is deleted, so nothing
-   builds on a `v*` tag any more. The asset list below still describes what a
-   release must contain (the hub and updater depend on this shape), but producing
-   it is now a manual step. See `docs/CI-CD.md` and `docs/RELEASING.md`. What the
-   old workflow attached to a GitHub Release:
-   - `locus-<OS>-<arch>.zip` + `checksums.sha256` — the **portable** bundle, for
-     humans who want to extract and run with no installer.
-   - `locus-setup-<version>.exe` (Windows, Inno Setup) and
-     `locus-setup-<version>-macos-<arch>.dmg` — the **installers**, which put
-     the client in a directory the application owns. Required for the Windows
-     one: the release **fails** if it is missing, because a release without it
-     would look complete while leaving those users on the broken update path.
+1. **CI** — ⚠️ **NOT YET REBUILT.** `.github/workflows/build.yml` was deleted
+   (it built the retired Wails client), so **nothing currently produces
+   artifacts**. A client build workflow is needed before this path can run at
+   all. What a release must contain:
    - **raw** `locus-linux-amd64`, `locus-windows-amd64.exe`,
      `locus-darwin-amd64`, `locus-darwin-arm64` — for the auto-updater.
-   - `manifest.json` — version, per-platform filename + SHA256. The build
-     **fails** if any platform artifact is missing.
+   - a **`.sig` minisign signature for each** of those four.
+   - `manifest.json` — version, per-platform filename + SHA256.
+   - optionally `locus-<OS>-<arch>.zip`, the Windows installer and the macOS
+     `.dmg` — **ignored by the update pipeline**, for humans who want them.
+     `fetch-release.py` resolves assets by name from an allowlist, so adding
+     packaging artefacts neither breaks the all-or-nothing check nor risks an
+     installer being handed to the updater as a payload.
 
-   > The installer and `.dmg` assets are **ignored by the update pipeline**.
-   > `fetch-release.py` resolves by name from an allowlist of the four raw
-   > binaries plus `manifest.json`, so adding packaging artefacts neither
-   > breaks the all-or-nothing check nor risks an installer being handed to the
-   > updater as a payload. Nothing needs re-publishing when packaging changes.
 2. **Publishing** puts those bytes on the hub and points `update_config` at them.
-   There are two equivalent routes:
    - **Console / GitHub fetch (normal)** — `scripts/fetch-release.py` downloads the
      artifacts for a version **straight from its GitHub Release**, verifies each
-     one, and the `releases.publish` hook action writes `update_config`. The hub
-     is the client of GitHub; nothing is uploaded from an operator's machine.
-   - **CLI** — `server/scripts/publish-release.sh <version> --from-github`
-     does the same job from a machine with repo access, and remains the only way
-     to publish a **hand-built or hotfixed binary** that is not on a GitHub
-     Release.
-3. **`heartbeat.pb.js`** reads `update_config` and, only when
-   `hash(fingerprint) % 100 < rollout_percent`, adds `update_available`, the
-   per-platform `update_<platform>` URLs and `update_sha256_<platform>` hashes.
-4. **`internal/updater`** downloads, verifies SHA256, writes `.update-pending`,
-   swaps the binary, forks, and auto-reverts if the new build fails to confirm.
-   It refuses anything that is not **strictly newer** than the running version.
+     one's format, SHA-256 **and signature**, and the `releases.publish` hook
+     action writes `update_config`. The hub is the client of GitHub; nothing is
+     uploaded from an operator's machine.
+   - **CLI** — `server/scripts/publish-release.sh <version> --from-github` does
+     the same from a machine with repo access, and remains the only way to
+     publish a **hand-built or hotfixed binary** not on a GitHub Release.
+
+3. **`heartbeat.pb.js`** advertises an active release on the next heartbeat, and
+   **`update.pb.js`** serves the same data to the updater directly at
+   `GET /api/update`. Both carry `update_<platform>` URLs and
+   `update_sha256_<platform>` / `update_signature_<platform>` values.
+
+4. **The client** refuses anything not **strictly newer**, verifies SHA-256 (fail
+   closed) and the minisign signature, then hands the artifact to the platform
+   installer.
 
 Serving is done by Caddy: `handle_path /updates/*` → `file_server` on
 `/var/www/updates`, listings disabled. Update URLs are therefore
 `https://<domain>/updates/<version>/<file>` — clients never depend on GitHub
 being reachable from inside a school network.
+
+### ⚠️ There is no rollout percentage
+
+Publishing a release **is** offering it. The percentage was removed (2026-09);
+its only remaining lever is `active`, a single on/off switch.
+
+**Stopping only stops *offering* the update.** Clients that already installed it
+stay on it, and there is still no server-driven downgrade — so a bad build can
+only be fixed by publishing a higher version. **Test on a real machine before
+turning it on.**
 
 ### Publishing a release
 
@@ -430,15 +435,16 @@ verified and in what order.
 **CLI path** — for a hand-built binary, or to publish without a browser:
 
 ```bash
-# 1. Tag — CI builds, creates the GitHub Release and manifest.json
+# 1. Tag — CI builds and signs, creating the GitHub Release with the four raw
+#    binaries, their .sig files, and manifest.json
 git tag v1.1.0 && git push origin v1.1.0
 
 # 2. Check it before you ship it: fetch from GitHub and validate, touching nothing
 DRY_RUN=1 server/scripts/publish-release.sh 1.1.0 --from-github
 
-# 3. Publish, starting at a small rollout
+# 3. Publish. This also activates it — there is no rollout step.
 PB_ADMIN_EMAIL=admin@networkingguides.duckdns.org PB_ADMIN_PASS=... \
-  server/scripts/publish-release.sh 1.1.0 --from-github   # ROLLOUT_PERCENT defaults to 5
+  server/scripts/publish-release.sh 1.1.0 --from-github
 ```
 
 Omitting `--from-github` uses files from `RELEASE_DIR` (default
@@ -446,94 +452,54 @@ Omitting `--from-github` uses files from `RELEASE_DIR` (default
 `publish-release.sh` and the console write the **same** `update_config` fields,
 so the two routes are interchangeable.
 
-Useful env: `ROLLOUT_PERCENT`, `VPS`, `PB_API`, `PB_TOKEN` (skips login),
-`DRY_RUN=1`.
+Useful env: `VPS`, `PB_API`, `PB_TOKEN` (skips login), `DRY_RUN=1`.
 
 **The script refuses to publish** when an artifact is under 1MB (truncated
 download / Git LFS pointer), or when a file's hash disagrees with
 `manifest.json` — so a mismatched or partial release cannot reach clients.
 
-### Rollout progression
+### Offering, and stopping
 
-```text
-Day 1:  rollout_percent = 5    (internal testers)
-Day 3:  rollout_percent = 25   (early adopters)
-Day 7:  rollout_percent = 100  (everyone)
-Day 8:  active = false         (stop advertising; keeps the version recorded)
+There is no rollout progression. A published release is offered to every client
+on its next check.
+
+```bash
+# Stop offering (clients that already updated stay updated):
+sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set active=0;"
+# Or, in the console: Releases → Stop offering.
 ```
 
-#### Why a percentage, and when to ignore it
+**There is no server-driven downgrade.** The installer is atomic and protects the
+machine it runs on, but a build that installs and then misbehaves cannot be
+withdrawn — `active=0` stops *offering* it, nothing more. The only fix is
+publishing a higher version, so **test on a real machine before turning it on.**
 
-Question that comes up every time: *"we have rollback, why stage the rollout?"*
-
-**Because there is no rollback.** The client has exactly one automatic recovery:
-the two-phase sentinel (`.update-pending` → `.update-confirmed`), which reverts
-**only if the new binary crashes on startup**. A build that launches fine but is
-broken in some other way — connects but passes no traffic, DNS fails on school
-WiFi, blank UI on one GPU driver — is marked *confirmed* and **stays installed**.
-There is no server-driven downgrade; the only fix is publishing a higher
-version, which the possibly-broken client must then successfully fetch.
-
-So the rollout gate is not a substitute for rollback — it is compensation for
-not having one. It answers: *if this build is bad, how many users find out
-before I do?* At 100%, that is everyone.
-
-Why a **percentage of devices** rather than the usual alternatives:
-
-| Alternative | Why it is not used here |
-|---|---|
-| Canary/lab devices | There is no lab — often only one bound device exists |
-| Opt-in beta channel | Requires student cooperation; students buy codes from middlemen and will not opt into anything |
-| Everyone at once | Only viable if rollback works (it does not — see above) |
-
-The percentage needs **zero client cooperation and no extra infrastructure**:
-15 lines in the heartbeat hook, no new table, no client change, no per-device
-config. The client does not know it is part of a staged rollout; it either sees
-`update_available` or it does not.
-
-The gate is deterministic per device: `hash(fingerprint) % 100`, so a client
-cannot flip in and out of the rollout between heartbeats.
-
-**Practical guidance by fleet size:**
-
-- **Under ~10 users (current):** use **100%**. There is nobody to protect, and a
-  low percentage means your own test device probably is not in the bucket — with
-  one bound device and a 5% rollout there is a ~95% chance you see nothing and
-  wrongly conclude the updater is broken. This is the most common way a rollout
-  is misdiagnosed.
-- **From ~20 users:** stage properly (5% → 25% → 100%). This is where a bad build
-  reaching the whole fleet at once becomes a real event rather than an
-  inconvenience.
-
-Delete this section only if a real downgrade mechanism is ever built; until
-then the gate is the only thing standing between a bad build and the fleet.
-
-Update `update_config` in the admin UI or with:
-`sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=25;"`
+`active` is deliberately kept rather than removed with the percentage: without
+it a bad build would have no off switch at all.
 
 ### Verify it is actually working
 
 ```bash
-# A fingerprint inside the rollout gets update fields; one outside does not.
+# What the hub would tell a given client. 204 = nothing to offer; 200 = an
+# offer, which must contain url AND signature or the client cannot install it.
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://$DOMAIN/api/update?version=2.2.0&platform=windows"
+curl -s "https://$DOMAIN/api/update?version=2.2.0&platform=windows" | python3 -m json.tool
+
+# The heartbeat carries the same signal for activated clients.
 ssh $VPS 'curl -s -X POST http://127.0.0.1:8090/api/heartbeat \
   -H "Content-Type: application/json" \
   -d "{\"code\":\"<valid-code>\",\"fingerprint\":\"<16+ chars>\"}"' | python3 -m json.tool
 
 # Confirm a published artifact is served with the expected hash
 curl -s https://$DOMAIN/updates/1.1.0/locus-linux-amd64 | sha256sum
+
+# And that its signature is well-formed (four lines, base64 payloads)
+curl -s https://$DOMAIN/updates/1.1.0/locus-linux-amd64.sig
 ```
 
-### Rollback
-
-```bash
-# Stop OFFERING the update (clients already updated stay updated):
-sqlite3 /opt/pocketbase/pb_data/data.db "update update_config set rollout_percent=0;"
-```
-
-**There is no server-driven downgrade.** The in-client `.update-pending`
-sentinel protects the machine that installed a broken build, but a bad build
-that reached 100% can only be recovered by publishing a higher version. Treat
-the first hours at a low `rollout_percent` as the safety net.
+`server/scripts/verify-release.sh <version>` does all of this, including hashing
+the served bytes, and exits non-zero if anything disagrees.
 
 ### Notes & limitations
 
@@ -550,6 +516,14 @@ the first hours at a low `rollout_percent` as the safety net.
   update failure, because the two fail in completely different ways.
 - `update_config.version` must match the git tag (CI derives the in-binary
   version from the tag; `publish-release.sh` sets the column from its argument).
+- **Every artifact must be signed.** The Tauri updater verifies a minisign
+  signature mandatorily and has no bypass, so a release published without one is
+  uninstallable by every client while looking perfectly healthy on the hub.
+  `fetch-release.py` and `publish-release.sh` both refuse to publish unsigned
+  artifacts, as does `releases.set` when activating. See `client/docs/SIGNING.md`.
+- **Losing the update signing key is unrecoverable for installed clients.** A
+  client only trusts the key it was built with, and nothing server-side can
+  change that. Keep the private key in CI secrets *and* offline.
 - `/update.json` is still a static placeholder written by `05-caddy.sh`. The
   updater reads `update_config`, **not** this file — it is informational only.
 - `update_sha256` (the legacy single field) is populated with the **Linux**
@@ -631,7 +605,7 @@ Point a Locus client at Strike on the restricted net, connect, then:
 - A 5-minute real game/voice check is the acceptance gate (this was never run —
   see GAMING-UDP.md). Record latency vs. the Section 0 baseline.
 
-### 4. Healthy? Grow rollout; else rollback
+### 4. Healthy? Keep it; else roll back
 
 Rollback (seconds):
 

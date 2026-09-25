@@ -1,3 +1,62 @@
+## `/api/hiddify` HAD NEVER WORKED, AND ITS `all=1` LEAK WAS NEVER EXPLOITABLE (2026-09-25)
+
+`hiddify.pb.js` generated Hiddify-compatible `ss://` links for testing a tier
+without the Locus client. It accepted `?all=1`, which returned **every** active
+tier's link — and since a tier's password is one shared PSK, that would have
+handed the Strike secret to anyone holding a $2 Eco code.
+
+It was reported as a live tier-upgrade bypass. **That was wrong**, and the
+correction matters because it changes the severity and the fix.
+
+### What was actually true
+
+`btoa()` is called on the path that builds every link, and **goja provides no
+`btoa`, `atob` or `Buffer`**. Verified on the live host with a throwaway probe
+hook:
+
+```json
+{ "hasBtoa": false, "hasAtob": false, "hasBuffer": false,
+  "btoaError": "ReferenceError: btoa is not defined" }
+```
+
+So the endpoint threw `500 btoa is not defined` on **every valid code**, before
+reaching any link-building code. The `all=1` branch was unreachable. The endpoint
+had never worked since it was written.
+
+Measured live, on a code that passes every earlier check:
+
+```
+GET /api/hiddify?code=<valid>      -> {"code":500,"message":"btoa is not defined"}
+```
+
+### Why it was still worth fixing
+
+A latent vulnerability behind a runtime error is one `btoa` polyfill away from
+being live, and the next person to touch this file would have been reading a
+tier-scoped-looking handler that also had an all-tiers branch.
+
+### What was done
+
+**The endpoint was deleted**, not repaired. Nothing in the repo, the console, the
+scripts or the tests referenced it; the Locus client supersedes its purpose; and
+it was a credential-emitting surface with no remaining consumer.
+
+The intermediate change (removing `all=1` and scoping the domain lookup to the
+caller's own tier) was made first and is preserved in git history, but became
+moot once the file was removed.
+
+### The lesson worth keeping
+
+**I characterised the severity from reading the code, not from exercising it.**
+The read was correct — the branch really did return every tier — but "what the
+code would do" and "what the deployed system does" diverged, because a runtime
+that lacks `btoa` fails three lines earlier. Probing the live runtime took one
+request and would have caught it immediately.
+
+Test the path, not just the logic.
+
+---
+
 ## RELEASE MACHINERY REMOVED, NOT REPAIRED (2026-09, current)
 
 The archived Wails client's version/release machinery was **deleted** rather than

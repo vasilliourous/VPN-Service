@@ -117,7 +117,7 @@ VPN-Service/
 
 | Directory | Purpose | For whom |
 |-----------|---------|----------|
-| `client/` | **THE SHIPPING CLIENT** — Tauri 2 fork of Clash Verge Rev, mihomo engine | **Everyone — start here** |
+| `client/` | The client **that will ship** — a **branding-only copy of Clash Verge Rev**, not yet tailored (no Locus logic yet; see `docs/STILL-OPEN.md`) | Builders of the client |
 | `legacy/wails-client/` | RETIRED Go + Wails + sing-box client (see its `ARCHIVED.md`) | Contract/spec reference only |
 | `server/console/` | Admin console SPA — day-to-day hub operations in a browser | Operators |
 | `server/` | VPS deployment modules (bash) + PocketBase hooks | Server deployers |
@@ -135,7 +135,7 @@ VPN-Service/
 > from git history.
 >
 > **2026-08-14 follow-up:** macOS support was RE-ENABLED (unsigned local build
-> — see `docs/CLIENT-GUIDE.md` for the Gatekeeper workaround). The darwin
+> — see `docs/archive/CLIENT-GUIDE.md` for the Gatekeeper workaround). The darwin
 > code paths (`darwinTUN`, `pfctl` kill-switch, `networksetup` DNS, `ioreg`
 > fingerprint), `darwin_link.go`, macOS CI targets, updater URLs, and Makefile
 > targets were restored. macOS installs are unsigned: the user must
@@ -305,7 +305,7 @@ chain into `/etc/ufw/before.rules` — the latter locked SSH out completely (por
 > entry point were removed in the Wails migration (the `v5/legacy/` reference
 > copy was deleted in the 2026-08 cleanup; pre-migration client in `v4/`,
 > git history for the removed files). The `internal/` backend packages are
-> unchanged. See `docs/WAILS-MIGRATION.md` and `docs/BACKEND-API.md`.
+> unchanged. See `docs/archive/WAILS-MIGRATION.md` and `docs/archive/BACKEND-API.md`.
 
 ```
 legacy/wails-client/

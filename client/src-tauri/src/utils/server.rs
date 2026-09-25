@@ -1,4 +1,3 @@
-use super::resolve;
 use crate::{
     config::{Config, DEFAULT_PAC, MixedPort},
     module::lightweight,
@@ -21,11 +20,6 @@ use warp::Filter as _;
 const INSTANCE_TOKEN_HEADER: &str = "x-instance-token";
 pub(crate) const INSTANCE_RECORD_FILE: &str = "singleton-instance.json";
 pub(crate) const INSTANCE_LOCK_FILE: &str = "singleton-instance.lock";
-
-#[derive(Deserialize, Debug)]
-struct QueryParam {
-    param: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct InstanceRecord {
@@ -115,19 +109,9 @@ async fn notify_existing_instance(record: &InstanceRecord) -> bool {
         Ok(client) => client,
         Err(_) => return false,
     };
-    #[cfg(not(target_os = "macos"))]
-    let request = if let Some(arg) = std::env::args().nth(1).as_deref() {
-        if arg.starts_with("clash:") {
-            client
-                .get(format!("http://127.0.0.1:{}/commands/scheme", record.port))
-                .query(&[("param", arg)])
-        } else {
-            client.get(format!("http://127.0.0.1:{}/commands/visible", record.port))
-        }
-    } else {
-        client.get(format!("http://127.0.0.1:{}/commands/visible", record.port))
-    };
-    #[cfg(target_os = "macos")]
+    // A second launch only ever asks the running instance to show itself. The
+    // old branch here forwarded a `clash://` URL argument for subscription
+    // import; that feature is gone.
     let request = client.get(format!("http://127.0.0.1:{}/commands/visible", record.port));
 
     request
@@ -248,22 +232,7 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
         )
     });
 
-    let scheme = warp::path!("commands" / "scheme")
-        .and(warp::query::<QueryParam>())
-        .and_then(|query: QueryParam| async move {
-            if !COMMANDS_READY.load(Ordering::Acquire) {
-                return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    "starting".to_string(),
-                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
-                ));
-            }
-            AsyncHandler::spawn(|| async move {
-                resolve::resolve_scheme(&query.param).await;
-            });
-            Ok::<_, warp::Rejection>(warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK))
-        });
-
-    let commands = auth.clone().and(visible).or(auth.and(scheme)).or(pac);
+    let commands = auth.clone().and(visible).or(pac);
     #[cfg(feature = "verge-dev")]
     let commands = commands.or(dev_quit_route(token, &COMMANDS_READY, &DEV_QUIT_REQUESTED, || {
         AsyncHandler::spawn(|| async {

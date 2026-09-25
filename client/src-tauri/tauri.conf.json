@@ -12,9 +12,14 @@
       "icons/icon.ico",
       "icons/Assets.car"
     ],
-    "resources": ["resources"],
+    "resources": [
+      "resources"
+    ],
     "publisher": "Locus",
-    "externalBin": ["sidecar/verge-mihomo", "sidecar/verge-mihomo-alpha"],
+    "externalBin": [
+      "sidecar/verge-mihomo",
+      "sidecar/verge-mihomo-alpha"
+    ],
     "category": "Utility",
     "shortDescription": "Locus VPN client",
     "createUpdaterArtifacts": false
@@ -28,24 +33,30 @@
   },
   "productName": "Locus",
   "identifier": "com.locus.client",
-  "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["locus"]
-      }
-    }
-  },
   "app": {
     "security": {
-      "capabilities": ["desktop-capability", "migrated"],
+      "capabilities": [
+        "desktop-capability",
+        "migrated"
+      ],
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"],
+          "allow": [
+            "**"
+          ],
           "requireLiteralLeadingDot": false
         }
       },
       "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWT9eeTiJVDWZDZ8hFQ7TOE6BW7OEwARW+kVEU7m2jIlxcjfiGR9InKW",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

@@ -58,6 +58,8 @@ pub struct IProfilePreview<'a> {
     pub is_current: bool,
 }
 
+/// Files a profile deletion will remove, held until the config change has been
+/// committed so a failed apply cannot leave the profile pointing at a missing file.
 pub(crate) struct ProfileDeletePlan {
     files: Vec<String>,
 }

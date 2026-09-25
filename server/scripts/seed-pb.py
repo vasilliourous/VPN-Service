@@ -263,6 +263,14 @@ collections = [
         {"name":"sha256_windows","type":"text"},
         {"name":"sha256_macos_intel","type":"text"},
         {"name":"sha256_macos_arm","type":"text"},
+        # Minisign signatures, one per platform. The Tauri updater verifies a
+        # signature MANDATORILY and offers no bypass, so a release published
+        # without these is not installable by any client — /api/update refuses
+        # to advertise it rather than letting clients download and then fail.
+        {"name":"signature_linux","type":"text"},
+        {"name":"signature_windows","type":"text"},
+        {"name":"signature_macos_intel","type":"text"},
+        {"name":"signature_macos_arm","type":"text"},
     ]),
 ]
 

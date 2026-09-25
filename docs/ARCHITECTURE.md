@@ -21,15 +21,15 @@
 
 
 > This document describes the current client architecture. The GUI layer is
-> **Wails + Vue 3** (see [`WAILS-MIGRATION.md`](WAILS-MIGRATION.md) for the
+> **Wails + Vue 3** (see [`archive/WAILS-MIGRATION.md`](archive/WAILS-MIGRATION.md) for the
 > migration history and rollback plan). The backend components (activation,
 > heartbeat, manager, storage, updater) and the TUN-based design described here
-> are accurate against the code in `legacy/wails-client/`; see [`BACKEND-API.md`](BACKEND-API.md)
+> are accurate against the code in `legacy/wails-client/`; see [`archive/BACKEND-API.md`](archive/BACKEND-API.md)
 > for their exact API surface.
 
 > **How to architect a compatible Locus client.** This document describes the
 > key components, their responsibilities, and how they fit together — from an
-> implementation perspective. Use it alongside `CLIENT-GUIDE.md` (build steps),
+> implementation perspective. Use it alongside `archive/CLIENT-GUIDE.md` (build steps),
 > `API.md` (server contracts), and `CONTEXT.md` (background reasoning).
 
 ---
@@ -333,7 +333,7 @@ it is off by default because it runs native code that must be validated per OS.
 The background colour is set natively to avoid a white flash while the WebView loads.
 
 **Dark-green theme** (`#06130C` background, Locus green `#2EA86A` accent — see
-`UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
+`archive/UI-AESTHETICS.md`). No technical protocol names visible — just "Connected" /
 "Disconnected" with a tier badge (Eco/Stealth/Strike).
 
 The old Fyne GUI was removed in the Wails migration (see git history); the
@@ -481,7 +481,7 @@ Update:
 admin rights. sing-box creates TUN interfaces directly.
 
 **macOS note:** the build is unsigned — Gatekeeper blocks first launch; the
-user must right-click → Open or run `xattr -cr` (see `CLIENT-GUIDE.md`).
+user must right-click → Open or run `xattr -cr` (see `archive/CLIENT-GUIDE.md`).
 
 ---
 
@@ -505,17 +505,18 @@ user must right-click → Open or run `xattr -cr` (see `CLIENT-GUIDE.md`).
 | Document | Purpose |
 |----------|---------|
 | `CONTEXT.md` | **Start here** — project history, reasoning, network analysis, agent guidance |
-| `CLIENT-GUIDE.md` | Build commands, package structure, platform notes, testing checklist |
-| `API.md` | Server API contracts (activation, heartbeat, admin, hiddify) |
-| `BACKEND-API.md` | Complete API reference for all `internal/` packages |
+| `archive/CLIENT-GUIDE.md` | Build commands, package structure, platform notes, testing checklist |
+| `API.md` | Server API contracts (activation, heartbeat, admin) |
+| `archive/BACKEND-API.md` | Complete API reference for all `internal/` packages |
 | `DEPLOY.md` | Server deployment from blank VPS |
 | `SECRETS-MANAGEMENT.md` | Age-encrypted secrets workflow (secrets.env.age) |
 | `POCKETBASE-SETUP.md` | PocketBase collections, hooks, admin setup |
 | `OPS.md` | Day-to-day operations |
 | `CI-CD.md` | ⚠️ REMOVED — the archived-client CI workflow is deleted; kept for the surviving asset/consumer contract |
-| `IMPLEMENT.md` | Phased implementation plan (historical) |
+| `archive/IMPLEMENT.md` | Phased implementation plan (historical) |
 | `GAMING-UDP.md` | **Planned:** sing-box server + UDP-over-TCP change plan for gaming on hostile-UDP networks |
-| `WAILS-MIGRATION.md` | Fyne → Wails migration history & build notes |
-| `UI-AESTHETICS.md` | Visual design spec (colors, layout, icons) |
+| `archive/WAILS-MIGRATION.md` | Fyne → Wails migration history & build notes |
+| `archive/UI-AESTHETICS.md` | Visual design spec (colors, layout, icons) |
 | `FIXES.md` | Issues discovered & fixes applied (dated log) |
+| `archive/` | Retired-client docs moved here: build guide, backend API, migration history, aesthetics |
 | `history/` | Curated pre-V5 research archive (business model, N4L threat analysis) — reference only |

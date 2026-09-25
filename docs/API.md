@@ -231,11 +231,50 @@ Standard PocketBase health check.
 
 ---
 
-## 5. Update Manifest
+## 5. Update Check
+
+### `GET /api/update?version=<running>&platform=<key>`
+
+The endpoint the desktop client's updater polls. **Unauthenticated by design** —
+see `docs/UPDATE-SYSTEM.md` §3 for why, and why that exposes nothing new.
+
+`platform` is one of `linux`, `windows`, `macos_intel`, `macos_arm`. Both
+parameters are **required**: without them the hub could not answer for the right
+device, and guessing is how a Windows client is handed a Linux binary.
+
+**Response `200` — an update is available:**
+
+```json
+{
+  "version": "2.4.0",
+  "url": "https://<domain>/updates/2.4.0/locus-windows-amd64.exe",
+  "signature": "<base64 minisign signature>",
+  "sha256": "abc123…"
+}
+```
+
+**Response `204` — nothing to install.** Returned when nothing is published, the
+release is not active, the advertised version is **not strictly newer** than the
+one supplied, or any platform is missing a URL, hash or signature.
+
+> `204` is load-bearing: the Tauri updater treats it as "no update" and returns
+> cleanly, whereas a `200` whose body it cannot parse is raised as an error it
+> logs. Returning `200 {}` would make every up-to-date client log a failure on
+> every check.
+
+**Response `400`:** `version` or `platform` missing, or an unknown platform.
+
+**There is no rollout percentage.** An active release is offered to every client.
+See `docs/UPDATE-SYSTEM.md` §2.
+
+---
+
+## 6. Update Manifest
 
 ### `GET /update.json`
 
-Static file served by Caddy. Contains the current update manifest for staged rollouts.
+Static file served by Caddy. A placeholder — the updater does NOT read it; it reads
+`update_config` via `/api/update` and the heartbeat. Informational only.
 
 **Response `200`:**
 ```json
@@ -249,7 +288,7 @@ Static file served by Caddy. Contains the current update manifest for staged rol
 
 ---
 
-## 6. PocketBase Admin UI
+## 7. PocketBase Admin UI
 
 ### `GET /_/`
 
@@ -257,12 +296,13 @@ PocketBase admin interface at `https://networkingguides.duckdns.org/_/`.
 
 ---
 
-## 7. Client→Server Protocol Summary
+## 8. Client→Server Protocol Summary
 
 ```
 Activation:    POST /api/activate            ─── JSON body
 Code lookup:   POST /api/code-lookup         ─── JSON body (read-only pre-check)
 Heartbeat:     POST /api/heartbeat           ─── JSON body
+Update check:  GET  /api/update              ─── Query: version, platform (no auth)
 Admin Unbind:  POST /api/admin/unbind-code   ─── JSON body (with admin_token)
 Admin API:     POST /api/admin/*             ─── JSON body (admin_token; Web UI)
 Release fetch: POST /api/admin/fetch-release ─── JSON body (admin_token; hub pulls from GitHub)
@@ -275,7 +315,7 @@ Update assets: GET  /updates/<version>/<file>─── Static file (no directory
 
 ---
 
-## 8. Error Response Format
+## 9. Error Response Format
 
 All error responses follow this structure:
 
@@ -290,7 +330,7 @@ HTTP status code matches the `code` field in the JSON body.
 
 ---
 
-## 9. Rate Limiting
+## 10. Rate Limiting
 
 | Endpoint | Limit | Window | Mechanism |
 |----------|:-----:|:------:|-----------|
