@@ -17,6 +17,7 @@ pub mod apply;
 pub mod contract;
 pub mod device;
 pub mod heartbeat;
+pub mod runtime;
 pub mod store;
 pub mod tier;
 pub mod update;

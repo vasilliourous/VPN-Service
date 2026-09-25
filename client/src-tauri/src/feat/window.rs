@@ -115,6 +115,13 @@ pub async fn quit() -> clash_verge_signal::ShutdownOutcome {
     // 设置退出标志
     handle::Handle::global().set_is_exiting();
 
+    // Stop beating BEFORE the config is saved.
+    //
+    // A loop that outlives the app keeps a suspended code looking alive, and one
+    // that fires during shutdown would race the config write it is trying to
+    // update. Stopping first makes the exit path's config write the last word.
+    crate::locus::runtime::stop();
+
     Config::apply_all_and_save_file().await;
 
     let cleanup_result = clean_async().await;

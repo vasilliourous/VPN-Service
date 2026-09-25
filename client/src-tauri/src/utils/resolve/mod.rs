@@ -85,6 +85,7 @@ async fn resolve_setup() {
         init_hotkey(),
         init_auto_lightweight_boot(),
         init_auto_backup(),
+        init_locus_heartbeat(),
     );
 
     Handle::refresh_clash();
@@ -151,6 +152,26 @@ async fn init_auto_lightweight_boot() {
 
 async fn init_auto_backup() {
     logging_error!(Type::Setup, AutoBackupManager::global().init().await);
+}
+
+/// Resumes the heartbeat for an already-activated device.
+///
+/// Started at launch rather than only at activation, because the common case is
+/// a student opening the app on a device that was activated last term. Without
+/// this the entitlement would never refresh, a suspension would go unnoticed,
+/// and the grace period would silently run out.
+async fn init_locus_heartbeat() {
+    let verge = crate::config::Config::verge().await;
+    let activation = match crate::locus::store::read(&verge.latest_arc()) {
+        Some(activation) => activation,
+        None => {
+            // Not activated yet is the normal first-run state, not an error.
+            logging!(debug, Type::Setup, "[locus] no activation stored; heartbeat idle");
+            return;
+        }
+    };
+
+    crate::locus::runtime::start(activation);
 }
 
 pub(crate) fn init_signal() {

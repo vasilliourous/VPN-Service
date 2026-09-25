@@ -170,6 +170,35 @@ mod logging {
     }
 }
 
+/// Whether an incoming tier config actually differs from the stored one.
+///
+/// This exists to stop a RESTART STORM. The hub sends `server_config` on every
+/// heartbeat, and applying it unconditionally would mean re-writing the profile
+/// and reloading-or-restarting the core every five minutes — dropping every
+/// connection the student has, forever, for no reason.
+///
+/// Compares the whole payload including `udp_relay`, because a change to either
+/// can alter the generated config.
+pub async fn tier_changed(config: &TierConfig, udp_relay: bool) -> bool {
+    let verge = Config::verge().await;
+    let data = verge.latest_arc();
+
+    let stored_udp = data.locus_udp_relay.unwrap_or(false);
+    if stored_udp != udp_relay {
+        return true;
+    }
+
+    match data.locus_tier_server.as_deref() {
+        Some(raw) => match serde_json::from_str::<TierConfig>(raw) {
+            Ok(stored) => stored != *config,
+            // Unreadable stored config: treat as changed so it gets replaced.
+            // The alternative is refusing to self-heal a corrupt field.
+            Err(_) => true,
+        },
+        None => true,
+    }
+}
+
 /// A copy of the config with every credential removed.
 ///
 /// Used by the diagnostics export. Written as an allow-list of the fields that

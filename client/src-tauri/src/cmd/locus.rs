@@ -146,7 +146,7 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
             store::store(&store::Activation {
                 code: code.clone(),
                 tier: tier.clone(),
-                fingerprint,
+                fingerprint: fingerprint.clone(),
             })
             .await
             .map_err(|error| {
@@ -190,6 +190,16 @@ pub async fn locus_activate(code: String) -> CmdResult<ActivationResult> {
                 // pretending activation fully succeeded.
                 None => false,
             };
+
+            // Start beating now rather than waiting for the next launch. A
+            // freshly activated device is the one most likely to be used
+            // immediately, and without this its entitlement would only start
+            // refreshing on the next restart.
+            crate::locus::runtime::start(store::Activation {
+                code: code.clone(),
+                tier: tier.clone(),
+                fingerprint: fingerprint.clone(),
+            });
 
             Ok(ActivationResult {
                 code,
