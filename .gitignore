@@ -49,6 +49,11 @@ whale.txt
 .vscode/
 *.iml
 
+# Deploy key for pushing to the VPS from this machine. Not a signing key and
+# not a secret anyone else needs — but it is still a credential, and one that
+# would grant root shell on the hub if it leaked.
+.deploy/
+
 # Locus update signing keys. The private key signs every shipped client update;
 # a leak lets anyone publish a build every installed client will accept, and a
 # loss means no installed client can ever be updated again. Never commit either

@@ -429,6 +429,29 @@ def fetch_release(version, force=False):
                 pass
             raise
 
+    # Fold each platform's signature INTO that platform's entry.
+    #
+    # The console reads `artifacts[<platform>].signature` and hands it to
+    # releases.publish, which writes signature_<platform>. The signatures arrive
+    # under separate "sig_<platform>" keys (they are fetched as their own
+    # assets), so without this join the publish path receives no signature and
+    # refuses a release the operator just watched succeed — while the files sit
+    # correctly on disk, which makes it look like a bug in the publishing half.
+    for key, _, _ in PLATFORMS:
+        entry = results.get(key)
+        sig_entry = results.get("sig_" + key)
+        if not entry or not sig_entry:
+            continue
+        sig_path = os.path.join(target_dir, sig_entry["filename"])
+        try:
+            with open(sig_path, "r", encoding="utf-8") as f:
+                entry["signature"] = f.read().strip()
+        except OSError as exc:
+            raise FetchError(
+                "could not read the signature for %s: %s" % (entry["filename"], exc),
+                500,
+            )
+
     return {"version": version, "dir": target_dir, "artifacts": results}
 
 

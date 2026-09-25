@@ -217,21 +217,48 @@ jobs:
       # A release without signatures is uninstallable by every client. Failing
       # here, loudly, is the whole point: the alternative is discovering it as
       # "updates never arrive" with no error anywhere.
+      # Pinned to 0.12 from the official releases on EVERY platform.
+      #
+      # This used to be brew on macOS and chocolatey on Windows. Chocolatey
+      # ships minisign 0.8, which cannot read the key format 0.11+ writes and
+      # fails with "Unsupported key derivation function" — after successfully
+      # installing and printing a version, so the error reads like a key
+      # problem rather than a tool-version problem. Pinning the same version
+      # everywhere removes that class of variance entirely.
       - name: Install minisign
         shell: bash
         run: |
           set -euo pipefail
+          DEST="$RUNNER_TEMP/minisign"
+          mkdir -p "$DEST"
+
           if [ "${{ runner.os }}" = "Linux" ]; then
-            curl -sSL -o /tmp/minisign.tar.gz \
-              https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz
-            tar -xzf /tmp/minisign.tar.gz -C /tmp
-            sudo cp /tmp/minisign-linux/x86_64/minisign /usr/local/bin/minisign
+            curl -sSL -o "$RUNNER_TEMP/m.tar.gz" \
+              https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+            tar -xzf "$RUNNER_TEMP/m.tar.gz" -C "$RUNNER_TEMP"
+            install -m 755 "$RUNNER_TEMP/minisign-linux/x86_64/minisign" "$DEST/minisign"
           elif [ "${{ runner.os }}" = "macOS" ]; then
-            brew install minisign
+            curl -sSL -o "$RUNNER_TEMP/m.zip" \
+              https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-macos.zip
+            unzip -o -q "$RUNNER_TEMP/m.zip" -d "$RUNNER_TEMP/mac"
+            install -m 755 "$RUNNER_TEMP/mac/minisign" "$DEST/minisign"
           else
-            choco install minisign -y
+            curl -sSL -o "$RUNNER_TEMP/m.zip" \
+              https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip
+            unzip -o -q "$RUNNER_TEMP/m.zip" -d "$RUNNER_TEMP/win"
+            # The Windows zip nests the binary under minisign-win64/x86_64/,
+            # unlike the macOS one which has it at the root. Locating it rather
+            # than hardcoding the path means a future repackaging does not break
+            # the release.
+            found=$(find "$RUNNER_TEMP/win" -name 'minisign.exe' -type f | head -1)
+            [ -n "$found" ] || { echo "::error::minisign.exe not found in the release zip"; find "$RUNNER_TEMP/win" -type f; exit 1; }
+            install -m 755 "$found" "$DEST/minisign.exe"
           fi
-          minisign -v
+
+          echo "$DEST" >> "$GITHUB_PATH"
+          # Print the version so a wrong/old binary is visible in the log rather
+          # than surfacing later as a confusing key error.
+          if [ -x "$DEST/minisign.exe" ]; then "$DEST/minisign.exe" -v; else "$DEST/minisign" -v; fi
 
       - name: Sign the artifact
         shell: bash
