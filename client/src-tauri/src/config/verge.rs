@@ -257,6 +257,22 @@ pub struct IVerge {
 
     /// Whether this tier should carry UDP over TCP.
     pub locus_udp_relay: Option<bool>,
+
+    /// When this code lapses, exactly as the hub last told us.
+    ///
+    /// Stored raw rather than as a timestamp so the value the UI displays is the
+    /// value the hub sent: re-serialising here would mean the client and the
+    /// admin console could disagree about the same code by a timezone. Parsing
+    /// happens at display time in [`crate::locus::expiry`], which is also where
+    /// the "do not invent a date" rule lives.
+    ///
+    /// Refreshed by every heartbeat, so it stays accurate for as long as the app
+    /// runs — unlike the activation-time value, which was all we had before and
+    /// went stale the moment a subscription renewed.
+    ///
+    /// `None` means the hub told us nothing (older hub, or no expiry recorded).
+    /// It does NOT mean expired, and the UI must render nothing.
+    pub locus_expires_at: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
@@ -319,7 +335,7 @@ impl IVerge {
 
         if needs_fix {
             logging!(debug, Type::Config, "正在保存修正后的配置文件...");
-            help::save_yaml(&config_path, &config, Some("# Clash Verge Config")).await?;
+            help::save_yaml(&config_path, &config, Some("# Locus Config")).await?;
             logging!(info, Type::Config, "配置文件修正完成，需要重新加载配置");
 
             Self::reload_config_after_fix(config).await;
@@ -446,7 +462,7 @@ impl IVerge {
     }
 
     pub async fn save_file(&self) -> Result<()> {
-        help::save_yaml(&dirs::verge_path()?, &self, Some("# Clash Verge Config")).await
+        help::save_yaml(&dirs::verge_path()?, &self, Some("# Locus Config")).await
     }
 
     #[allow(clippy::cognitive_complexity)]

@@ -36,6 +36,30 @@ routerAdd("POST", "/api/heartbeat", function(e) {
 
         var response = {status:"ok", server_time:new Date().toISOString()};
 
+        // ── Subscription expiry ──────────────────────────────────────────────
+        //
+        // Sent so the client can show the student when their code lapses. The
+        // value already existed on the record and was already returned by
+        // /api/code-lookup; the heartbeat simply never carried it, which meant a
+        // client could learn the expiry at activation and then had no way to
+        // refresh it. A subscription renews while the app is installed, so that
+        // staleness was the normal case rather than an edge case.
+        //
+        // Emitted as the raw stored value, NOT reformatted. The client parses it
+        // with the same tolerant parser used at activation, and reformatting
+        // here would create a second dialect that has to stay in sync. An
+        // absent/empty value is emitted as null rather than "" so the client can
+        // distinguish "no expiry recorded" from "expiry is the empty string" —
+        // and so a code without an expiry does not render as an expired one.
+        //
+        // ADDITIVE ONLY. Older clients ignore unknown keys, so this cannot break
+        // a build already in the field, and no client requires it to connect.
+        var expiryRaw = record.get("expires_at");
+        var expiryStr = (expiryRaw === null || expiryRaw === undefined)
+            ? ""
+            : String(expiryRaw).trim();
+        response.expires_at = expiryStr ? expiryStr : null;
+
         // Update signal — read from update_config.
         //
         // There is NO rollout percentage. An active release is advertised to

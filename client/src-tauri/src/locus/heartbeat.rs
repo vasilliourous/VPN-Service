@@ -57,6 +57,20 @@ pub struct HeartbeatResponse {
     #[serde(default)]
     pub udp_relay: bool,
 
+    /// When this code lapses, exactly as the hub stores it.
+    ///
+    /// **Optional, and absence is meaningful.** A hub that predates the field
+    /// sends nothing, and a code with no expiry recorded sends `null`; both
+    /// deserialise to `None`. The UI must render nothing in that case rather
+    /// than guessing "expired" — a fabricated expiry date is worse than a
+    /// missing one, because it is a false claim about the student's account that
+    /// support then has to argue with.
+    ///
+    /// Not reformatted here either: it is parsed with [`crate::locus::expiry::parse`]
+    /// at the point of display, so there is one parser and one dialect.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+
     /// The advertised version, present only when this device is inside the
     /// rollout bucket. Absence is the normal case, not an error.
     #[serde(default)]
@@ -473,6 +487,7 @@ mod tests {
             tier: None,
             server_config: None,
             udp_relay: false,
+            expires_at: None,
             update_available: Some("2.0.0".into()),
             update_linux: Some("https://hub/updates/2.0.0/locus-linux-amd64".into()),
             update_windows: Some("https://hub/updates/2.0.0/locus-windows-amd64.exe".into()),
@@ -507,6 +522,7 @@ mod tests {
             tier: None,
             server_config: None,
             udp_relay: false,
+            expires_at: None,
             update_available: Some("2.0.0".into()),
             update_linux: None,
             update_windows: None,
@@ -536,6 +552,7 @@ mod tests {
             tier: None,
             server_config: None,
             udp_relay: false,
+            expires_at: None,
             update_available: None,
             update_linux: None,
             update_windows: None,

@@ -109,6 +109,24 @@ pub async fn record_heartbeat_failure(failures: u32) -> Result<()> {
     verge.data_arc().save_file().await
 }
 
+/// Records the subscription expiry the hub reported.
+///
+/// Stores the hub's own string verbatim. The client never converts it to a
+/// timestamp: that conversion is where a timezone bug would enter, and the only
+/// consumer is a display that parses it once via [`crate::locus::expiry`].
+///
+/// Takes an `Option` rather than a `&str` because the hub may legitimately send
+/// `null` for a code with no expiry recorded. The caller decides whether that is
+/// worth writing; see the note in `runtime::handle_success` for why a `None` from
+/// an older hub must not overwrite a date we already hold.
+pub async fn record_expiry(expires_at: Option<String>) -> Result<()> {
+    let verge = Config::verge().await;
+    verge.edit_draft(|draft| {
+        draft.locus_expires_at = expires_at.map(Into::into);
+    });
+    verge.data_arc().save_file().await
+}
+
 /// Clears the entitlement, e.g. after the hub says the code is suspended.
 ///
 /// Deliberately clears all three fields together. Leaving a stale tier behind

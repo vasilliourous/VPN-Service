@@ -143,6 +143,29 @@ async fn handle_success(response: &crate::locus::heartbeat::HeartbeatResponse) {
         apply_refreshed_config(config, response.udp_relay).await;
     }
 
+    // Persist the expiry on EVERY successful beat, deliberately outside the
+    // `server_config` branch above.
+    //
+    // Expiry changes for reasons that have nothing to do with the connection
+    // details — a renewal extends the date while the server and password stay
+    // identical — so gating this on a config change would leave the Account
+    // screen showing a stale date for a student who had just paid. This is the
+    // value the client could previously only learn once, at activation.
+    //
+    // Stored as an `Option` and written only when the hub actually said
+    // something: a hub that predates the field sends nothing, and overwriting a
+    // known date with `None` because of an older server would lose information
+    // the client legitimately has.
+    if response.expires_at.is_some()
+        && let Err(error) = store::record_expiry(response.expires_at.clone()).await
+    {
+        logging!(
+            warn,
+            Type::Config,
+            "[locus] could not store the subscription expiry: {error:#}"
+        );
+    }
+
     // An update signal is RECORDED, not installed. Installing is the student's
     // decision: doing it silently mid-session would drop their connection
     // without warning, and on a school network that is the worst moment.
