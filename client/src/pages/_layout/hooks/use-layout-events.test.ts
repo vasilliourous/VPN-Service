@@ -39,7 +39,7 @@ it('drains a DNS notice after listeners mount without duplicating its live event
     .mockResolvedValue(false)
 
   useLayoutEvents(([status, message]) => {
-    handleNoticeMessage(status, message, (key) => key, vi.fn())
+    handleNoticeMessage(status, message)
   })
 
   expect(takeDnsOverrideNotice).not.toHaveBeenCalled()
@@ -64,7 +64,7 @@ it('offers service reinstallation for a startup path refusal even before listene
     .mockResolvedValue(false)
 
   useLayoutEvents(([status, message]) => {
-    handleNoticeMessage(status, message, (key) => key, vi.fn())
+    handleNoticeMessage(status, message)
   })
 
   const [handlers, onSubscribed] = vi.mocked(subscribeVergeEvents).mock.calls[0]

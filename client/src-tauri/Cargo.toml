@@ -1,6 +1,6 @@
 [package]
 name = "locus"
-version = "3.0.0"
+version = "3.0.1"
 description = "Locus VPN client"
 authors = ["Locus"]
 license = "UNLICENSED"

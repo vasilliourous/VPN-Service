@@ -2,7 +2,6 @@ import { Alert, AlertTitle, Box, Button, Stack } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router'
 
 import { runStateQueryKey } from '@/hooks/use-system-state'
 import { useAppRefreshers } from '@/providers/app-data-context'
@@ -18,7 +17,6 @@ interface Props {
 
 export const ProxyEmptyState = ({ reason }: Props) => {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const { refreshProxy } = useAppRefreshers()
   const [isRestarting, setIsRestarting] = useState(false)
 
@@ -50,10 +48,6 @@ export const ProxyEmptyState = ({ reason }: Props) => {
         : reason === 'core-unavailable'
           ? t('proxies.page.empty.coreUnavailable.description')
           : t('proxies.page.empty.noProxyInfo.description')
-  const showProfiles =
-    reason === 'no-subscriptions' ||
-    reason === 'inactive-subscription' ||
-    reason === 'no-proxy-info'
   const showCoreActions =
     reason === 'core-unavailable' || reason === 'no-proxy-info'
 
@@ -82,16 +76,6 @@ export const ProxyEmptyState = ({ reason }: Props) => {
           useFlexGap
           sx={{ mt: 2, flexWrap: 'wrap' }}
         >
-          {showProfiles && (
-            <Button
-              size="small"
-              variant="contained"
-              onClick={() => navigate('/profile')}
-            >
-              {t('proxies.page.empty.actions.openProfiles')}
-            </Button>
-          )}
-
           {showCoreActions && (
             <>
               <Button

@@ -7,27 +7,20 @@ import {
 import { showNotice } from '@/services/notice-service'
 import { requestService } from '@/services/service-request'
 
-type NavigateFunction = (path: string, options?: any) => void
-type TranslateFunction = (key: string) => string
-
-export const handleNoticeMessage = (
-  status: string,
-  msg: string,
-  t: TranslateFunction,
-  navigate: NavigateFunction,
-) => {
+// No router or translator argument: this table only raises notices. It used to
+// navigate to '/profile', a route removed with the profiles UI.
+export const handleNoticeMessage = (status: string, msg: string) => {
   const handlers: Record<string, () => void> = {
+    // NOTE: these used to navigate to '/profile'. That route was removed with the
+    // profiles UI, so navigating there landed on a blank page. A notice is the
+    // whole useful behaviour now — see the profiles-UI removal in
+    // client/docs/UPSTREAM-CHANGES.md.
     'import_sub_url::ok': () => {
-      // 空 msg 传入，我们不希望导致 后端-前端-后端 死循环，这里只做提醒。
-      // 未来细分事件通知时，可以考虑传入订阅 ID 或其他标识符
-      // navigate("/profile", { state: { current: msg } });
-      navigate('/profile')
       showNotice.success(
         'shared.feedback.notifications.importSubscriptionSuccess',
       )
     },
     'import_sub_url::error': () => {
-      navigate('/profile')
       showNotice.error(msg)
     },
     'set_config::error': () => showNotice.error(msg),

@@ -30,9 +30,7 @@ import { ClashModeCard } from '@/components/home/clash-mode-card'
 import { CurrentProxyCard } from '@/components/home/current-proxy-card'
 import { EnhancedCard } from '@/components/home/enhanced-card'
 import { EnhancedTrafficStats } from '@/components/home/enhanced-traffic-stats'
-import { HomeProfileCard } from '@/components/home/home-profile-card'
 import ProxyTunCard from '@/components/home/proxy-tun-card'
-import { useProfiles } from '@/hooks/use-profiles'
 import { useVerge } from '@/hooks/use-verge'
 import { entry_lightweight_mode } from '@/services/cmds'
 import { HUB_URL } from '@/services/hub'
@@ -73,7 +71,6 @@ export const preloadHomePageCards = () =>
 
 // 定义首页卡片设置接口
 interface HomeCardsSettings {
-  profile: boolean
   proxy: boolean
   network: boolean
   mode: boolean
@@ -88,7 +85,6 @@ interface HomeCardsSettings {
 
 const DEFAULT_HOME_CARDS: HomeCardsSettings = {
   info: false,
-  profile: true,
   proxy: true,
   network: true,
   mode: true,
@@ -233,7 +229,6 @@ const HomeSettingsDialog = ({
 const HomePage = () => {
   const { t } = useTranslation()
   const { verge } = useVerge()
-  const { current, mutateProfiles } = useProfiles()
 
   // 设置弹窗的状态
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -269,15 +264,11 @@ const HomePage = () => {
 
   const criticalCards = useMemo(
     () => [
-      renderCard(
-        'profile',
-        <HomeProfileCard current={current} onProfileUpdated={mutateProfiles} />,
-      ),
       renderCard('proxy', <CurrentProxyCard />),
       renderCard('network', <NetworkSettingsCard />),
       renderCard('mode', <ClashModeEnhancedCard />),
     ],
-    [current, mutateProfiles, renderCard],
+    [renderCard],
   )
 
   const nonCriticalCards = useMemo(
