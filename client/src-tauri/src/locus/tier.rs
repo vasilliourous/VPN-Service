@@ -50,9 +50,12 @@ pub const PROXY_NAME: &str = "Locus";
 /// The name of the generated proxy group.
 ///
 /// **Must differ from [`PROXY_NAME`].** mihomo treats a group whose name matches
-/// a proxy inside it as a reference loop and refuses the entire configuration:
+/// a proxy inside it as a reference loop and refuses the entire configuration
+/// with:
 ///
-///     loop is detected in ProxyGroup, please check following ProxyGroups: [Locus]
+/// ```text
+/// loop is detected in ProxyGroup, please check following ProxyGroups: [Locus]
+/// ```
 ///
 /// which surfaces on the device as a tunnel that never starts. Verified against
 /// the real mihomo sidecar with `-t`, which is the only check that catches this —
