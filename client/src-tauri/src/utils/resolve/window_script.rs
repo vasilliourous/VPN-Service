@@ -81,15 +81,72 @@ pub const WINDOW_INITIAL_SCRIPT: &str = r##"
         // empty after the app has had time to boot, the document loaded and the
         // bundle executed and React still produced nothing, which points at the
         // mount and not at asset resolution.
+        // Visible text only. `textContent` includes <style> and <script> bodies,
+        // which is how this probe spent two debugging sessions reporting an
+        // @keyframes rule instead of the screen. Walk the elements that actually
+        // render text and skip the non-visible tags.
+        const visibleText = (node) => {
+            if (!node) return '';
+            let out = '';
+            const walk = (el) => {
+                for (const child of el.childNodes) {
+                    if (child.nodeType === 3) {
+                        out += child.nodeValue + ' ';
+                    } else if (child.nodeType === 1) {
+                        const tag = child.tagName.toLowerCase();
+                        if (tag === 'style' || tag === 'script' || tag === 'noscript') continue;
+                        walk(child);
+                    }
+                }
+            };
+            walk(node);
+            return out.replace(/\s+/g, ' ').trim();
+        };
         const report = (label) => {
             const root = document.getElementById('root');
             const overlay = document.getElementById('initial-loading-overlay');
             const kids = root ? root.childElementCount : -1;
-            const text = root ? (root.textContent || '').trim().slice(0, 80) : '';
+            const text = visibleText(root).slice(0, 140);
+            // Report the computed foreground colour and the body's, not just the
+            // text content.
+            //
+            // "The text is in the DOM" and "the text is visible" are different
+            // claims, and this probe previously only made the first one. The
+            // activation screen shipped as an apparently blank white page while
+            // every string was present and correct: the document body said
+            // `color: var(--text-color)` (= white under a dark system scheme) and
+            // MUI painted a white background, so the text was there and
+            // invisible. A probe that cannot see contrast cannot catch that.
+            //
+            // `body_color` is included deliberately: it is the value the screen
+            // must NOT inherit, so its presence here is what makes an inherited
+            // colour immediately obvious in the log rather than requiring a
+            // screenshot tool.
+            let contrast = '';
+            try {
+                // The page background: the outermost painted element. This is
+                // what proves the palette applied, on ANY screen — the old probe
+                // keyed on an `h4`, so it silently reported nothing once the app
+                // was past the activation gate.
+                const shell = root && root.firstElementChild;
+                const shellBg = shell ? getComputedStyle(shell).backgroundColor : '';
+                const bodyBg = getComputedStyle(document.body).backgroundColor;
+                const heading = root && root.querySelector('h4');
+                contrast = ' page_bg=' + (shellBg || bodyBg);
+                if (heading) {
+                    const cs = getComputedStyle(heading);
+                    contrast += ' heading_color=' + cs.color;
+                }
+                // The theme's own variables, which is where a leftover upstream
+                // colour would show up even if the visible surfaces looked right.
+                const rs = getComputedStyle(document.documentElement);
+                contrast += ' accent=' + (rs.getPropertyValue('--primary-main') || 'unset');
+            } catch (e) { contrast = ' contrast_err=' + e; }
             send('info', '[dom] ' + label +
                  ' root=' + (root ? 'yes' : 'MISSING') +
                  ' children=' + kids +
                  ' overlay=' + (overlay ? 'present' : 'removed') +
+                 contrast +
                  ' text=' + JSON.stringify(text));
         };
 

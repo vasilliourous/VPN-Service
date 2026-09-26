@@ -421,7 +421,7 @@ pub(super) async fn init_dns_config() -> Result<()> {
 
     if !dns_path.exists() {
         logging!(info, Type::Setup, "Creating default DNS config file");
-        help::save_yaml(&dns_path, &default_dns_config, Some("# Clash Verge DNS Config")).await?;
+        help::save_yaml(&dns_path, &default_dns_config, Some("# Locus DNS Config")).await?;
     }
 
     Ok(())
@@ -452,7 +452,7 @@ async fn initialize_config_files() -> Result<()> {
         && !path.exists()
     {
         let template = IClashTemp::template().0;
-        help::save_yaml(&path, &template, Some("# Clash Verge"))
+        help::save_yaml(&path, &template, Some("# Locus"))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create clash config: {}", e))?;
         logging!(info, Type::Setup, "Created clash config at {:?}", path);
@@ -462,7 +462,7 @@ async fn initialize_config_files() -> Result<()> {
         && !path.exists()
     {
         let template = IVerge::template();
-        help::save_yaml(&path, &template, Some("# Clash Verge"))
+        help::save_yaml(&path, &template, Some("# Locus"))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create verge config: {}", e))?;
         logging!(info, Type::Setup, "Created verge config at {:?}", path);
@@ -472,7 +472,7 @@ async fn initialize_config_files() -> Result<()> {
         && !path.exists()
     {
         let template = IProfiles::default();
-        help::save_yaml(&path, &template, Some("# Clash Verge"))
+        help::save_yaml(&path, &template, Some("# Locus"))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create profiles config: {}", e))?;
         logging!(info, Type::Setup, "Created profiles config at {:?}", path);

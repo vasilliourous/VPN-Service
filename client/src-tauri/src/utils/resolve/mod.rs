@@ -49,7 +49,7 @@ pub(crate) fn resolve_setup_async() {
 
 #[tracing::instrument(skip_all, level = "info")]
 async fn resolve_setup() {
-    logging!(info, Type::ClashVergeRev, "Version: {}", env!("CARGO_PKG_VERSION"));
+    logging!(info, Type::App, "Version: {}", env!("CARGO_PKG_VERSION"));
 
     // Migrate before windows or timers can change the loaded config.
     logging_error!(Type::Setup, init::migrate_short_update_intervals().await);

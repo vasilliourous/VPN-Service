@@ -39,7 +39,14 @@ pub enum Type {
     Network,
     ProxyMode,
     Validate,
-    ClashVergeRev,
+    /// The application's own lifecycle banner (version, startup milestones).
+    ///
+    /// Was `ClashVergeRev`, which printed `[ClashVergeRev]` in every log file and
+    /// console session — an inherited name for what is now the Locus client, and
+    /// the first thing anyone sees in a log. Renamed rather than merely
+    /// re-labelled so no future caller can reach for the old meaning; the
+    /// variant is used in exactly one place (`utils/resolve/mod.rs`).
+    App,
 }
 
 impl fmt::Display for Type {
@@ -64,7 +71,7 @@ impl fmt::Display for Type {
             Self::Network => write!(f, "[Network]"),
             Self::ProxyMode => write!(f, "[ProxMode]"),
             Self::Validate => write!(f, "[Validate]"),
-            Self::ClashVergeRev => write!(f, "[ClashVergeRev]"),
+            Self::App => write!(f, "[App]"),
         }
     }
 }

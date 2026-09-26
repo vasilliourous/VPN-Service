@@ -136,7 +136,7 @@ impl CoreManager {
             }
         });
 
-        help::save_yaml(&runtime_path, &clash_config, Some("# Clash Verge Runtime")).await?;
+        help::save_yaml(&runtime_path, &clash_config, Some("# Locus Runtime")).await?;
         handle::Handle::notice_message(error_key, error_msg);
         Ok(())
     }
