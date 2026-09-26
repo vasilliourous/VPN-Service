@@ -30,12 +30,12 @@ opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
 
 ## Open, and fixable now
 
-### The client is built; what remains is proving it on Windows and macOS
+### The client works; a real update has never been INSTALLED
 
-**This section used to say the client port had not started. It has.** `client/`
-is no longer a branding-only copy: it has `src-tauri/src/locus/` with activation,
-device fingerprinting, a heartbeat, tier→config translation and a hub-mediated
-updater, plus a first-run activation gate and a single Connect/Disconnect.
+**This section used to say the client port had not started. It has, and it shipped
+as 3.0.0.** `client/` has `src-tauri/src/locus/` with activation, device
+fingerprinting, a heartbeat, tier→config translation and a hub-mediated updater,
+plus a first-run activation gate and a single Connect/Disconnect.
 
 Verified against the **live hub**, not only by unit tests:
 
@@ -46,41 +46,55 @@ Verified against the **live hub**, not only by unit tests:
 - a generated tier config is accepted by the real `mihomo` binary;
 - **traffic egresses from the VPS** (`170.64.196.179`) rather than the local
   address, and a 5 MB download moved the server's `rx_bytes` by 5,135,262;
-- a real heartbeat returns the strike tier's `uot_port` and `udp_relay`.
+- a real heartbeat returns the strike tier's `uot_port` and `udp_relay`;
+- **release 3.0.0 is published**: CI built and signed all four platforms, the hub
+  fetched and verified them, and both `/api/update` and the heartbeat offer it with
+  a signature that verifies against the key compiled into the client.
 
 **What is genuinely still open:**
 
-1. **No release has been published yet.** CI builds and signs Linux and
-   macOS-arm; Windows and macOS-intel are unproven, and publishing requires all
-   four. Until then the update path has nothing to fetch.
-2. **The client has only been run on Linux here.** Windows and macOS are built by
-   CI but have not been exercised on real hardware.
-3. **The tier config is refreshed but a tier CHANGE mid-session is untested** —
-   the code path exists (`store::tier_changed`), but no heartbeats have carried a
-   changed tier in practice.
+1. **No client has ever INSTALLED an update.** Every stage is verified — build,
+   sign, fetch, publish, serve, and the signature check the install path performs —
+   but the installer handoff itself needs Windows or macOS hardware. This is the
+   single most valuable thing left to do.
+2. **The client has only been RUN on Linux.** Windows and macOS are built and
+   signed by CI but have never executed on real hardware. Given four
+   Windows-specific CI bugs already found from Linux, expect runtime surprises.
+3. **A mid-session tier CHANGE has never been exercised.** The code path exists
+   (`store::tier_changed`) but no heartbeat has carried a changed tier in practice.
+4. **The Linux TUN elevation path is untested** — the fork inherits Verge's
+   pkexec→sudo escalation and service, but nobody has run it. Linux is ~2% of
+   clients and last in priority.
 
-### Fork versioning and release path — an open decision
+### Fork versioning — RESOLVED (2026-09-26)
 
-The old version/release machinery is **deleted** (root `VERSION`, `bump.sh`,
-`server/scripts/bump-version.sh`, `stamp-syso.py`, `smoke-bump.sh`,
-`scripts/release-cut.sh`, the committed `rsrc_windows_*.syso`, and
-`.github/workflows/build.yml`). It versioned and released the retired Wails client
-and never the shipping fork.
+This was an open decision; it is settled.
 
-What is left undecided:
+**The client is 3.0.0**, its own Locus line, not Clash Verge's `2.5.5`. The
+reasoning is worth keeping, because the trap was real:
 
-- **What owns the fork's version.** `client/package.json`,
-  `client/src-tauri/tauri.conf.json`, and `client/src-tauri/Cargo.toml` each carry
-  `2.5.5` today, with no rule tying them together.
-- **Whether a root `VERSION` is reintroduced** for the fork, or the fork versions
-  itself in its own manifests.
-- **How a release is built and tagged** now that no CI exists. Publishing to the
-  hub (`server/scripts/publish-release.sh`) still works and takes the version as
-  an argument, but nothing *produces* the artifacts.
+```
+2.5.5 vs 2.2.6 -> strictly newer? true     (publishing 2.5.5 moves the fleet up)
+2.2.9 vs 2.5.5 -> strictly newer? false    (after which every 2.2.x is REFUSED)
+```
 
-This is a **correctness dependency of the updater**, not just hygiene: the update
-comparison runs against build-embedded version metadata, so drift makes the
-updater mis-decide (`client/docs/UPDATE-ARCHITECTURE.md` §4).
+The client reported the version it inherited from Verge while the hub served
+2.2.x. Publishing the inherited number would have pushed the fleet above the hub's
+numbering permanently, with no server-driven downgrade to recover from — a manual
+reinstall per device would be the only fix.
+
+**Three version sites must agree**:
+`client/src-tauri/Cargo.toml`, `client/package.json`,
+`client/src-tauri/tauri.conf.json`. That agreement is enforced by
+`client/src-tauri/tests/version_consistency.rs`, which reads them from disk. Drift
+is a correctness dependency of the updater, not hygiene: a build whose reported
+version disagrees with its bundled one either refuses the update that would fix it
+or silently declines every release, and neither says so.
+
+**No root `VERSION` file.** The fork versions itself in its own manifests.
+
+**Releases are built by CI** — see `docs/RELEASING.md` and `docs/UPDATE-SYSTEM.md`.
+Tag → CI builds, signs and releases → the hub fetches → publishes.
 
 ### ~~`publish-update.sh` (repo root) has two real defects~~ — RESOLVED BY RETIREMENT (2026-09-23)
 

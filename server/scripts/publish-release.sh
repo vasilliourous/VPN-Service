@@ -4,7 +4,7 @@
 # This is the missing link between CI and the client auto-updater. CI produces
 # raw per-platform executables + a manifest.json on a GitHub Release; this
 # script copies them to the VPS (served by Caddy at /updates/<version>/) and
-# points `update_config` at them, starting at a small rollout.
+# points `update_config` at them. Publishing IS offering — there is no rollout.
 #
 # Usage:
 #   server/scripts/publish-release.sh 2.2.1
@@ -16,8 +16,6 @@
 #   # Dry run — does everything except upload and touch the hub:
 #   DRY_RUN=1 server/scripts/publish-release.sh 2.2.1 --from-github
 #
-#   # Publish but keep the rollout at 0 (upload only, offer to nobody):
-#   ROLLOUT_PERCENT=0 server/scripts/publish-release.sh 2.2.1
 #
 # WHY --from-github EXISTS
 #   The first live publish of a release was done with an empty RELEASE_DIR. The
@@ -35,7 +33,6 @@
 #   PB_API           hub base URL (default https://networkingguides.duckdns.org)
 #   PB_ADMIN_EMAIL   PocketBase admin email   ─┐ required for update_config
 #   PB_ADMIN_PASS    PocketBase admin password ─┘ (or PB_TOKEN to skip login)
-#   ROLLOUT_PERCENT  initial rollout gate (default 5)
 #   RELEASE_DIR      where to find the artifacts (default ./release-artifacts)
 #   GITHUB_REPO      owner/name for --from-github (default vasilliourous/VPN-Service)
 #   GH_TOKEN         optional; only needed for a private repo or to dodge
@@ -76,7 +73,15 @@ esac
 
 VPS="${VPS:-root@networkingguides.duckdns.org}"
 PB_API="${PB_API:-https://networkingguides.duckdns.org}"
-ROLLOUT_PERCENT="${ROLLOUT_PERCENT:-5}"
+# Kept only so an older invocation that sets ROLLOUT_PERCENT still runs; the
+# value is written for schema compatibility and is IGNORED by every reader.
+#
+# The rollout percentage was removed in 2026-09: the heartbeat and /api/update both
+# offer a release purely on `active`, so a script that wrote a "gate" here would be
+# documenting a mechanism that no longer exists in the worst possible way — an
+# operator would set 0 expecting to stage a release, and every client would be
+# offered it anyway.
+ROLLOUT_PERCENT="${ROLLOUT_PERCENT:-100}"
 RELEASE_DIR="${RELEASE_DIR:-./release-artifacts}"
 DRY_RUN="${DRY_RUN:-0}"
 GITHUB_REPO="${GITHUB_REPO:-vasilliourous/VPN-Service}"
@@ -362,7 +367,7 @@ fi
 
 # ── Point update_config at the new version ──
 if [ "$DRY_RUN" = "1" ]; then
-    log "Would set update_config: version=${VERSION} rollout=${ROLLOUT_PERCENT} active=true"
+    log "Would set update_config: version=${VERSION} active=true (rollout is ignored)"
     log "✓ Dry run complete"
     exit 0
 fi
@@ -408,6 +413,9 @@ items = existing.get("items", []) if isinstance(existing, dict) else []
 
 body = {
     "version": version,
+    # Written for schema compatibility only. NOTHING reads it: the heartbeat and
+    # /api/update both offer a release on `active` alone. Leaving it out would
+    # also be fine; writing it keeps the row shaped as older tooling expects.
     "rollout_percent": rollout,
     "active": True,
     # Generic fallback fields. update_url/update_sha256 are kept for older
@@ -466,7 +474,7 @@ print("  advertised platforms: " + ", ".join(sorted(keys)))
 sys.exit(0 if resp.get("id") else 1)
 PY
 
-log "✓ Published ${VERSION} — rollout ${ROLLOUT_PERCENT}%"
+log "✓ Published ${VERSION} — offered to every client (set active=false to stop)"
 cat <<EOF
 
 Next steps:

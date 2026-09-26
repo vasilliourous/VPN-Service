@@ -1,50 +1,95 @@
 # Publishing a Release to the Hub
 
-> **⚠️ STATUS: the old release-cutting machinery has been REMOVED.**
-> `scripts/release-cut.sh`, root `bump.sh`, `server/scripts/bump-version.sh`,
-> `server/scripts/stamp-syso.py`, `server/scripts/smoke-bump.sh`, root `VERSION`,
-> the committed `rsrc_windows_*.syso` resources, and the archived-client CI
-> workflow (`.github/workflows/build.yml`) are **deleted**. There is no version
-> authority and no automated release-cutting path any more.
+> **⚠️ STATUS: the old release-cutting machinery is REMOVED, and a new path
+> exists.** `scripts/release-cut.sh`, root `bump.sh`, `bump-version.sh`,
+> `stamp-syso.py`, `smoke-bump.sh`, root `VERSION`, the committed
+> `rsrc_windows_*.syso`, and `.github/workflows/build.yml` are **deleted** — they
+> versioned the retired Wails client and never the fork.
 >
-> What survives here is the **publishing** half — `publish-release.sh`, which
-> uploads a build to the live hub and sets the rollout. That is still live.
+> **What replaced them:**
+> - CI at `.github/workflows/client.yml` (**repo root** — GitHub ignores a workflow
+>   under `client/.github/`). A `v*` tag builds, **signs** and releases all four
+>   platforms plus `manifest.json`.
+> - The client versions itself: `client/src-tauri/Cargo.toml`, `client/package.json`
+>   and `client/src-tauri/tauri.conf.json` must agree, enforced by
+>   `client/src-tauri/tests/version_consistency.rs`. There is no root `VERSION`.
 >
-> How the **shipping fork** (`client/`) is versioned and released is an **open
-> decision** (see `docs/STILL-OPEN.md`). The old machinery versioned only the
-> retired Wails client at `legacy/wails-client/`; it never touched `client/`.
+> **Read `UPDATE-SYSTEM.md` for the full pipeline**, and `client/docs/SIGNING.md`
+> for key custody. The short version:
+
+```
+1. Bump the version in all three sites, so they agree.
+2. git tag -a vX.Y.Z && git push origin vX.Y.Z
+     → CI builds + signs all four platforms, creates the GitHub Release
+3. Fetch:  console Releases → "Fetch & publish",  or
+           POST /api/admin/fetch-release {"version":"X.Y.Z"}
+     → the hub pulls from GitHub, verifies format + SHA-256 + signature
+4. Publish: writes update_config. The console does 3 and 4 in one button.
+```
+
+> **Fetch and publish are two steps.** Forgetting step 4 leaves the artifacts
+> served while `/api/release` still advertises the old version — nothing looks
+> broken, updates simply do not happen.
+>
+> **There is no rollout percentage.** Publishing IS offering; `active` is the only
+> off switch, and there is no server-driven downgrade.
 
 ---
 
 ## Publishing a build to the hub
 
-Once a release artifact exists on GitHub (or you have the files locally),
-publish it to the hub:
+Two routes, both starting from a GitHub Release that CI created:
+
+**The console (normal).** Releases → enter the version → **Fetch & publish**. The
+hub pulls the four binaries and their signatures straight from GitHub, verifies
+each one's format, SHA-256 and signature, and writes `update_config`. Nothing
+large travels from a browser.
+
+**The CLI**, for a hand-built or hotfixed binary that is not on a GitHub Release:
 
 ```bash
-# Hold the rollout at 0 — upload only, offer it to nobody
-ROLLOUT_PERCENT=0 server/scripts/publish-release.sh 2.2.7 --from-github
+# Validate first — fetches from GitHub, touches nothing
+DRY_RUN=1 server/scripts/publish-release.sh 3.1.0 --from-github
 
-# Or start the rollout (default 5%)
-server/scripts/publish-release.sh 2.2.7 --from-github
+# Publish. There is no rollout to set; publishing is offering.
+PB_ADMIN_EMAIL=admin@networkingguides.duckdns.org PB_ADMIN_PASS=... \
+  server/scripts/publish-release.sh 3.1.0 --from-github
 ```
 
-`--from-github` pulls the artifacts for the tag `v<version>` straight from
-GitHub (default repo `vasilliourous/VPN-Service`) and verifies the served bytes.
-This is the normal path — it exists because hand-uploaded artifacts drift
-(`FIXES.md` 41).
+Omitting `--from-github` uses files from `RELEASE_DIR` (default
+`./release-artifacts`). The script **refuses to publish** when an artifact is under
+1MB (a truncated download or Git LFS pointer), when a hash disagrees with
+`manifest.json`, or when a signature is missing.
 
-**Confirm the hub is serving it:**
+### Why signatures are not optional
+
+The Tauri updater verifies a minisign signature over every download and offers no
+bypass. A release published without one is **installable by nobody**, while looking
+perfectly healthy from the hub's side. `fetch-release.py`, `publish-release.sh` and
+`releases.set` all refuse it — the checks exist so this fails at publish time rather
+than as "updates silently never arrive". See `client/docs/SIGNING.md`.
+
+### Confirm the hub is serving it
 
 ```bash
 curl -s https://networkingguides.duckdns.org/api/release
+curl -s "https://networkingguides.duckdns.org/api/update?version=2.2.0&platform=linux"
+server/scripts/verify-release.sh 3.1.0      # read-only; hashes the SERVED bytes
 ```
 
-### ⚠️ Hold the rollout at 0 unless the change was verified on real hardware
+`verify-release.sh` is the right tool: it checks the `update_config` row **and**
+re-downloads each artifact to confirm the served bytes match the recorded hash.
 
-A clean compile is not proof that a runtime fix works. For any release
-containing a client behaviour change, publish with `ROLLOUT_PERCENT=0`, install
-it on a real Windows machine, confirm the fix, and only then raise the rollout.
+### ⚠️ There is no rollout, and no automatic downgrade
+
+Publishing **is** offering. `active` (boolean) is the only off switch, and
+`releases.set` refuses to activate a release whose artifacts are missing, unsigned,
+or point at a different version.
+
+**Stopping only stops OFFERING** — clients that already updated stay updated. A bad
+build can only be fixed by publishing a higher version, which the possibly-broken
+client must then successfully fetch. So **test on real hardware before publishing**,
+not before widening a rollout, because there is no rollout to widen.
 
 ---
 

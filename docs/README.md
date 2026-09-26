@@ -8,9 +8,9 @@ so what remains at this level is current. This file says what each one is.
 
 1. **Check the status banner.** Documents about the **retired** Wails client carry
    a `⚠️ STATUS: describes the ARCHIVED client` banner; documents about deleted
-   machinery carry a `⚠️ STATUS: ... REMOVED` banner. The client that will ship is
-   `client/` — which now has its own Locus logic (activation, tiers, heartbeat,
-   updater) and is verified against the live hub; its docs live in
+   machinery carry a `⚠️ STATUS: ... REMOVED` banner. The client is `client/` —
+   which has its own Locus logic (activation, tiers, heartbeat, updater), is
+   verified against the live hub, and shipped as 3.0.0; its docs live in
    `client/docs/`. A document with no banner describes something still live.
 2. **Nothing current lives in `archive/` or `history/`.** Those are reference
    material. If you are orienting yourself, you do not need them.
@@ -62,6 +62,12 @@ document the contract the shipping fork must reproduce, not because the code is 
 |---|---|
 | [`ENGINE-SWAP-ANALYSIS.md`](ENGINE-SWAP-ANALYSIS.md) | sing-box → mihomo analysis. **Partly moot by construction**: the fork bundles mihomo, so Track B is settled. Read the correction. |
 | [`GAMING-UDP.md`](GAMING-UDP.md) | The UoT (UDP-over-TCP) work for the gaming tier. Built; the open question is whether it has ever carried a real game session. |
+
+## History
+
+| Document | What it is |
+|---|---|
+| `client/docs/` | The client's own documents: `UPSTREAM-CHANGES.md` (what differs from Clash Verge Rev), `SIGNING.md`, `IDENTITY-MIGRATION.md`, `ARCHITECTURE.md`, `LOGIC-INVENTORY.md`, `UPDATE-ARCHITECTURE.md`, `RESTRUCTURE.md` |
 
 ## History
 

@@ -1,6 +1,18 @@
 # Client fork — architecture and rework plan
 
-> **Status:** design document, pre-implementation.
+> **⚠️ STATUS: IMPLEMENTED — kept as the design record, not a to-do.**
+> This was written before the port. The plan it describes has been carried out:
+> `src-tauri/src/locus/` exists with the modules listed in `LOGIC-INVENTORY.md`, the
+> debloat in §6 is done, and the client shipped as 3.0.0.
+>
+> **Read `UPSTREAM-CHANGES.md` alongside this** — it is the authoritative statement
+> of what actually changed, including several load-bearing details this document
+> could not have known (the mihomo proxy-group loop, the frozen wire names, the
+> `204` on `/api/update`).
+>
+> Where this document and the code disagree, **the code is right** and this file is
+> a bug — fix it in the same change.
+>
 > **Fork base:** Clash Verge Rev `v2.5.5` (`22e3f1ac`), copied into `client/`, history removed.
 > **Reference implementation:** the retired Wails client at `legacy/wails-client/` (formerly
 > `v5/client/`). It is *reference only* — it does not ship — but three years of

@@ -1,10 +1,25 @@
 # Updater architecture: replacing the Tauri updater with the hub-mediated path
 
-> This is the design for the single biggest divergence between the fork and its
-> Verge base. Read this before touching anything update-related.
+> **⚠️ STATUS: IMPLEMENTED, with one correction to the wording below.**
+> The hub-mediated path is built (`locus/update/`). See `UPSTREAM-CHANGES.md` §3
+> and `../../docs/UPDATE-SYSTEM.md` for what is live.
 >
-> **Decision: the Tauri updater plugin is removed, not configured.** Locus's
-> hub-mediated update path is ported to Rust.
+> **Correction: the Tauri updater plugin is not removed — it is used as the
+> INSTALLER.** What is removed is its *decision layer*: `core/updater.rs`, the
+> plugin's Tauri registration, the WebView-facing `updater:*` capabilities, and the
+> whole `@tauri-apps/plugin-updater` frontend surface.
+>
+> `locus/update/install.rs` still calls `Update::install()`, which is what gives us
+> NSIS/macOS/Linux installation and the mandatory minisign verification. We feed it
+> our own URL, hash and signature via `UpdaterBuilder::endpoints(..)`.
+>
+> A second correction: `Update` **cannot be hand-constructed** — `extract_path` and
+> `context` are private. An earlier version of this plan assumed a struct literal
+> would work; it does not compile. The route that does work is `check()` against a
+> dynamic `{version, url, signature}` manifest served by the hub.
+>
+> This document is the design for the single biggest divergence between the fork and
+> its Verge base. Read it before touching anything update-related.
 
 ---
 

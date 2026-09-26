@@ -146,11 +146,12 @@ charset `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`). The `MYVPN-` form was retired in th
 
 ```
 VPN-Service/
-├── client/                   ← THE CLIENT THAT WILL SHIP (Tauri 2 copy of Clash Verge Rev — NOT tailored yet, no Locus logic)
+├── client/                   ← THE LOCUS CLIENT (Tauri 2, built on Clash Verge Rev; Locus logic in src-tauri/src/locus/)
 │   ├── src/                  ── React + TypeScript frontend
 │   ├── src-tauri/            ── Rust backend (Tauri), capabilities, bundle config
-│   ├── crates/               ── Inherited workspace crates
-│   ├── docs/                 ── ARCHITECTURE, LOGIC-INVENTORY, UPDATE-ARCHITECTURE, RESTRUCTURE
+│   ├── crates/               ── Inherited workspace crates (upstream, untouched)
+│   ├── docs/                 ── ARCHITECTURE, LOGIC-INVENTORY, UPDATE-ARCHITECTURE,
+│   │                            SIGNING, IDENTITY-MIGRATION, UPSTREAM-CHANGES
 │   ├── scripts/prebuild.mjs  ── Fetches the mihomo sidecar + geo databases (MANDATORY before a Rust build)
 │   ├── AGENTS.md             ── agent rules for the client (CLAUDE.md / GEMINI.md load it)
 │   └── CONTRIBUTING.md       ── human build/submission guide
@@ -428,4 +429,6 @@ idempotent, and `smoke-test.sh` reports **23 passed / 0 failed / 0 warnings**.
 > ⚠️ **Live customer data.** The hub holds real activation codes in daily use.
 > Never bulk-delete `codes` or `code_events` — suspend or unbind instead.
 
-See `docs/CONTEXT.md` for the full project context, `docs/STILL-OPEN.md` for what is unresolved, and `client/docs/` for the client that will ship (not yet tailored).
+See `docs/CONTEXT.md` for the full project context, `docs/STILL-OPEN.md` for what is
+unresolved, and `client/docs/UPSTREAM-CHANGES.md` for exactly how the client differs
+from the Clash Verge Rev version it was built on.

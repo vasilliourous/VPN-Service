@@ -81,7 +81,7 @@ The business and sales docs are kept privately — not in this repo.
 
 ```
 VPN-Service/
-├── client/              ← THE SHIPPING CLIENT. Tauri 2 fork of Clash Verge Rev,
+├── client/              ← THE LOCUS CLIENT. Tauri 2, built on Clash Verge Rev
 │                        tunnelling via mihomo. Has its own docs in client/docs/.
 ├── server/              ← LIVE hub. VPS deployment modules + PocketBase hooks
 │   ├── console/         ← Admin console SPA (Vue 3 + Vite), served at /admin/
@@ -298,7 +298,50 @@ chain into `/etc/ufw/before.rules` — the latter locked SSH out completely (por
 
 ---
 
-## 5. Client Code Structure (legacy/wails-client/)
+## 5. Client Code Structure
+
+### The current client — `client/` (Tauri 2, built on Clash Verge Rev)
+
+> **Read `client/docs/UPSTREAM-CHANGES.md` first.** It is the authoritative list of
+> what is ours versus upstream's, and it covers the load-bearing details that look
+> like mistakes.
+
+```
+client/
+├── src/                          # React + TypeScript frontend
+│   ├── pages/activation.tsx      #   first-run gate — NOTHING else renders until activated
+│   ├── components/home/proxy-tun-card.tsx  # rewritten: one Connect/Disconnect
+│   ├── services/locus.ts         #   typed shims over the cmd::locus_* commands
+│   └── services/hub.ts           #   the hub URL, in exactly one place
+└── src-tauri/src/
+    ├── locus/                    # ← ALL the product logic we own
+    │   ├── contract.rs           #   every wire name: tier payload, frozen uot_port, platform ids
+    │   ├── activation.rs         #   Luhn-mod-N, /api/activate, /api/code-lookup
+    │   ├── device.rs             #   per-OS fingerprint (the code-binding key)
+    │   ├── heartbeat.rs          #   loop, backoff, jitter, 7-day grace
+    │   ├── tier.rs               #   tier → mihomo YAML, incl. the UoT outbound
+    │   ├── store.rs              #   product state as additive IVerge fields
+    │   ├── apply.rs              #   writes the tier as a profile, calls Verge's pipeline
+    │   ├── runtime.rs            #   owns the heartbeat loop's lifecycle
+    │   └── update/               #   version compare, signal decode, installer hand-off
+    ├── cmd/locus.rs              # thin Tauri commands over locus/*
+    ├── core/ config/ enhance/    # INHERITED from Clash Verge Rev — do not rewrite
+    └── tests/version_consistency.rs  # the three version sites must agree
+```
+
+**The architectural rule:** upstream's machinery is *used*, not replaced. The Locus
+modules sit beside it and call into it — in particular `apply.rs` hands the tier to
+`CoreManager::update_config_forced()`, so config validation, the service-vs-sidecar
+decision and reload-vs-restart policy stay Verge's. **Never write a second apply
+path.** The profiles *engine* (`config/profiles.rs`, `enhance/`) is load-bearing and
+must not be deleted; only the profiles *UI* was removed.
+
+### The retired client — `legacy/wails-client/`
+
+> **⚠️ Reference only.** It does not ship. It is kept because it encodes the
+> behavioural contract the current client reproduces, in executable form —
+> `internal/updatecfg`'s test reads the hub's hook and publish script *as text* and
+> asserts the field names agree, spanning three languages.
 
 > **⚠️ Updated for the Wails migration (2026).** The GUI moved from Fyne to
 > **Wails v2 + Vue 3** (`frontend/`). The old Fyne GUI, helper binary, and old
