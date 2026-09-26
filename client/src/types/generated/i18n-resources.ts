@@ -64,6 +64,49 @@ export interface TranslationResources {
             rule: string
           }
         }
+        connection: {
+          account: {
+            activateForExpiry: string
+            appearance: string
+            appVersion: string
+            autoUpdate: string
+            daysLeft: string
+            deviceId: string
+            deviceIdHint: string
+            expired: string
+            expires: string
+            expiresSoon: string
+            language: string
+            noExpiryYet: string
+            notActivated: string
+            off: string
+            on: string
+            oneDayLeft: string
+            plan: string
+            platform: string
+            preferences: string
+            refresh: string
+            subscription: string
+            themeDark: string
+            themeLight: string
+            themeSystem: string
+            thisDevice: string
+            title: string
+            today: string
+          }
+          activeConnections: string
+          checking: string
+          connect: string
+          connected: string
+          connecting: string
+          disconnect: string
+          disconnecting: string
+          needsActivation: string
+          notConnected: string
+          sessionDownload: string
+          sessionUpload: string
+          speed: string
+        }
         currentProxy: {
           actions: {
             refreshDelay: string

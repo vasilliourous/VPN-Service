@@ -6,10 +6,56 @@ use tauri::{Theme, WebviewWindow};
 use crate::{config::Config, core::handle, utils::resolve::window_script::build_window_initial_script};
 use clash_verge_logging::{Type, logging, logging_error};
 
-const DARK_BACKGROUND_COLOR: Color = Color(46, 48, 61, 255); // #2E303D
-const LIGHT_BACKGROUND_COLOR: Color = Color(245, 245, 245, 255); // #F5F5F5
-const DARK_BACKGROUND_HEX: &str = "#2E303D";
-const LIGHT_BACKGROUND_HEX: &str = "#F5F5F5";
+// Locus's window colours, applied natively.
+//
+// The window is shown before the WebView has parsed anything, so this is the
+// first pixel a student sees. Verge's grey used to live here, which meant a
+// flash of another product's colours before Locus's green-black page painted.
+//
+// Must stay in step with `src/pages/_theme.tsx` (LOCUS_COLORS.background /
+// LOCUS_LIGHT.background) and the `--bg-color` values in `src/index.html`. The
+// three layers exist because each one paints at a different moment: native
+// window, pre-bundle document, then themed app.
+//
+// The hex strings are the source and the `Color` tuples are DERIVED from them,
+// rather than four independent literals. Two literals per mode is exactly how
+// the tuple and the hex drift apart — and the symptom would be a subtly wrong
+// flash colour that no test would catch.
+const DARK_BACKGROUND_HEX: &str = "#06130C";
+const LIGHT_BACKGROUND_HEX: &str = "#F4F8F5";
+
+/// Parses `#RRGGBB` into the `Color` the window builder wants.
+///
+/// `const fn` so the tuples stay compile-time constants. Panics on a malformed
+/// literal, which is correct: these are source constants, and a bad one is a
+/// build-time mistake, not a runtime condition.
+const fn parse_hex(value: &str) -> Color {
+    let bytes = value.as_bytes();
+    assert!(bytes.len() == 7 && bytes[0] == b'#', "expected #RRGGBB");
+    Color(
+        parse_channel(bytes, 1),
+        parse_channel(bytes, 3),
+        parse_channel(bytes, 5),
+        255,
+    )
+}
+
+/// One hex byte pair at `offset`, as a u8.
+const fn parse_channel(bytes: &[u8], offset: usize) -> u8 {
+    (hex_nibble(bytes[offset]) << 4) | hex_nibble(bytes[offset + 1])
+}
+
+const fn hex_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => panic!("invalid hex digit"),
+    }
+}
+
+const DARK_BACKGROUND_COLOR: Color = parse_hex(DARK_BACKGROUND_HEX);
+const LIGHT_BACKGROUND_COLOR: Color = parse_hex(LIGHT_BACKGROUND_HEX);
 
 const DEFAULT_WIDTH: f64 = 940.0;
 const DEFAULT_HEIGHT: f64 = 700.0;
@@ -215,5 +261,59 @@ pub fn reload_main_window_if_needed() {
     logging!(info, Type::Window, "渲染进程曾被系统终止，窗口聚焦后重载页面");
     if let Err(e) = window.reload() {
         logging!(warn, Type::Window, "重载页面失败: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The native window colour is Locus's, not Verge's.
+    ///
+    /// Pinned as literals because this is the FIRST pixel a student sees, and it
+    /// is the one layer with no CSS to inspect. It previously held Clash Verge
+    /// Rev's grey (`#2E303D` / `#F5F5F5`), so a flash of another product's
+    /// colours preceded Locus's own page.
+    #[test]
+    fn the_window_background_is_locus_green_black() {
+        assert_eq!(DARK_BACKGROUND_HEX, "#06130C");
+        assert_eq!(DARK_BACKGROUND_COLOR, Color(6, 19, 12, 255));
+    }
+
+    /// Light mode is Locus's light surface, not Verge's grey.
+    #[test]
+    fn the_light_window_background_is_locus_light() {
+        assert_eq!(LIGHT_BACKGROUND_HEX, "#F4F8F5");
+        assert_eq!(LIGHT_BACKGROUND_COLOR, Color(244, 248, 245, 255));
+    }
+
+    /// The tuple is DERIVED from the hex, so the two cannot disagree.
+    ///
+    /// This is the whole reason `parse_hex` exists: with two independent
+    /// literals per mode, someone updating one and not the other produces a
+    /// flash of the wrong colour that nothing else would catch.
+    #[test]
+    fn the_color_tuple_matches_its_hex_literal() {
+        for hex in [DARK_BACKGROUND_HEX, LIGHT_BACKGROUND_HEX, "#000000", "#FFFFFF", "#2EA86A"] {
+            let parsed = parse_hex(hex);
+            let expected = Color(
+                u8::from_str_radix(&hex[1..3], 16).unwrap(),
+                u8::from_str_radix(&hex[3..5], 16).unwrap(),
+                u8::from_str_radix(&hex[5..7], 16).unwrap(),
+                255,
+            );
+            assert_eq!(parsed, expected, "parse_hex disagrees with the literal {hex}");
+        }
+    }
+
+    /// Hex parsing handles both cases and the extremes.
+    #[test]
+    fn hex_parsing_is_case_insensitive_and_exact() {
+        assert_eq!(parse_hex("#2ea86a"), parse_hex("#2EA86A"));
+        assert_eq!(parse_hex("#000000"), Color(0, 0, 0, 255));
+        assert_eq!(parse_hex("#FFFFFF"), Color(255, 255, 255, 255));
+        // Alpha is always opaque: a translucent window background would show the
+        // desktop through the app before the page painted.
+        assert_eq!(parse_hex("#06130C").3, 255);
     }
 }

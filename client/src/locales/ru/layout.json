@@ -23,13 +23,13 @@
     "serviceMigration": {
       "locationRefusedMessage": "Служба не может запустить ядро: путь установки или права доступа к каталогу не прошли проверку безопасности. Переустановите службу, чтобы восстановить файлы и права доступа, затем повторите попытку. Windows может запросить подтверждение администратора.",
       "title": "Service update required",
-      "message": "The Clash Verge service version does not match the version required by this app. Choose Reinstall Service to uninstall the existing service and install the required version, or continue with Sidecar for this session.",
+      "message": "The Locus service version does not match the version required by this app. Choose Reinstall Service to uninstall the existing service and install the required version, or continue with Sidecar for this session.",
       "checkingMessage": "Checking the system service status and current running mode. Please wait…",
-      "unavailableMessage": "The required Clash Verge service is not available. Install or repair it, or continue with Sidecar for this session.",
+      "unavailableMessage": "The required Locus service is not available. Install or repair it, or continue with Sidecar for this session.",
       "reinstall": "Reinstall service",
       "repair": "Repair service",
       "continueSidecar": "Continue with Sidecar",
-      "success": "The Clash Verge service was updated successfully",
+      "success": "The Locus service was updated successfully",
       "errors": {
         "actionFailed": "Не удалось выполнить операцию со службой",
         "stateRefreshFailed": "Не удалось обновить состояние службы",
@@ -40,15 +40,15 @@
     },
     "sysproxyPrivilege": {
       "title": "Не удалось настроить системный прокси",
-      "message": "macOS отклонила изменение из-за нехватки прав. После установки службы Clash Verge настройки прокси будет применять служба с правами администратора, и это сообщение больше не появится.",
-      "serviceReadyMessage": "Служба Clash Verge готова, но ядро всё ещё работает как sidecar, поэтому в настройке системного прокси отказано. Переключение в режим службы решает проблему без переустановки.",
+      "message": "macOS отклонила изменение из-за нехватки прав. После установки службы Locus настройки прокси будет применять служба с правами администратора, и это сообщение больше не появится.",
+      "serviceReadyMessage": "Служба Locus готова, но ядро всё ещё работает как sidecar, поэтому в настройке системного прокси отказано. Переключение в режим службы решает проблему без переустановки.",
       "alternative": "Другой вариант: отключите «требовать пароль администратора для доступа к общесистемным настройкам» в Системных настройках → Конфиденциальность и безопасность → Дополнительно.",
       "later": "Позже",
       "installing": "Устанавливается системная служба. Может потребоваться пароль администратора.",
       "restarting": "Служба установлена. Ядро перезапускается через неё…",
       "applying": "Применяется изменение системного прокси…",
       "tunTitle": "Для режима TUN нужна системная служба",
-      "tunMessage": "Режиму TUN нужна системная служба Clash Verge, чтобы взять сетевой трафик на себя. После установки режим TUN будет включён автоматически."
+      "tunMessage": "Режиму TUN нужна системная служба Locus, чтобы взять сетевой трафик на себя. После установки режим TUN будет включён автоматически."
     }
   },
   "feedback": {

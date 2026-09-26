@@ -1,7 +1,13 @@
-import { Box, Button, CircularProgress, Link, Typography } from '@mui/material'
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Typography,
+  alpha,
+} from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { HUB_URL } from '@/services/hub'
+import { LOCUS_COLORS } from '@/pages/_theme'
 import {
   locusActivate,
   locusCheckCode,
@@ -9,6 +15,7 @@ import {
   type ActivationResult,
   type ValidateCodeResult,
 } from '@/services/locus'
+import { errorDetail } from '@/services/notice-service'
 
 /**
  * First-run activation gate.
@@ -139,7 +146,11 @@ const ActivationScreen = ({ onActivated }: Props) => {
       setPhase('done')
       onActivated(result)
     } catch (err) {
-      setError(String(err))
+      // `errorDetail`, not `String`: a Rust failure arrives as
+      // `CommandFailure { code, detail }`, so `String(err)` renders as
+      // "[object Object]" and throws away the only useful sentence — "this code
+      // is already in use on another device", "the code has expired", and so on.
+      setError(errorDetail(err))
       setPhase('idle')
     }
   }, [input, onActivated])
@@ -158,14 +169,58 @@ const ActivationScreen = ({ onActivated }: Props) => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        bgcolor: 'background.default',
+        // ── The brand, stated explicitly ──────────────────────────────────
+        //
+        // This screen renders OUTSIDE `ThemeModeProvider` (see `main.tsx`): it is
+        // the pre-activation gate, so it cannot read the app theme — it gets a
+        // bare `createTheme()`. Everything here is therefore written from the
+        // Locus constants directly.
+        //
+        // That is not only a styling choice. The document sets
+        // `body { color: var(--text-color) }`, which flips to `#ffffff` under a
+        // dark system scheme, and it once paired that with MUI's white default
+        // background: white text on white, so every label was invisible while
+        // present and correct in the DOM. Stating both colours makes the screen
+        // self-consistent by construction.
+        //
+        // It is also the highest-value surface in the product: it is the first
+        // thing a student sees, and the only screen a person who has not paid
+        // yet will ever look at.
+        color: LOCUS_COLORS.textPrimary,
+        bgcolor: LOCUS_COLORS.background,
+        // A single soft green radial, per the spec's "green-black" identity.
+        // Subtle on purpose: a strong gradient behind a text input hurts
+        // legibility, and this is a screen about typing accurately.
+        backgroundImage: `radial-gradient(ellipse 80% 60% at 50% 0%, ${alpha(LOCUS_COLORS.accent, 0.10)}, transparent 70%)`,
       }}
     >
       <Box sx={{ width: 420, maxWidth: 'calc(100vw - 48px)', textAlign: 'center' }}>
-        <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
+        {/* Brand mark. The spec calls for a 48×48 shield in Locus green beside
+            the wordmark; there is no Locus asset in the repo yet, so the mark is
+            the wordmark alone for now — deliberately, rather than substituting
+            another product's logo. */}
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 700,
+            letterSpacing: '-0.01em',
+            mb: 0.5,
+            color: LOCUS_COLORS.accent,
+          }}
+        >
           Locus
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+        <Typography
+          variant="body2"
+          sx={{ mb: 4, color: LOCUS_COLORS.textSecondary, letterSpacing: '0.01em' }}
+        >
+          Secure school VPN
+        </Typography>
+
+        <Typography
+          variant="body2"
+          sx={{ mb: 2.5, color: LOCUS_COLORS.textPrimary, fontWeight: 500 }}
+        >
           Enter the activation code from your card.
         </Typography>
 
@@ -196,22 +251,34 @@ const ActivationScreen = ({ onActivated }: Props) => {
             textAlign: 'center',
             textTransform: 'uppercase',
             borderRadius: 8,
-            border: `1px solid ${shownError ? '#d32f2f' : localValid ? '#2e7d32' : 'rgba(0,0,0,0.23)'}`,
+            // The verdict colours are Locus's, not MUI's defaults: this screen
+            // is outside the provider, so `theme.palette.divider` would be the
+            // LIGHT theme's divider — nearly invisible on this green-black page.
+            border: `1px solid ${
+              shownError
+                ? LOCUS_COLORS.error
+                : localValid
+                  ? LOCUS_COLORS.success
+                  : LOCUS_COLORS.border
+            }`,
             outline: 'none',
-            background: 'transparent',
-            color: 'inherit',
+            // A filled field rather than a transparent one: on the dark surface
+            // an transparent input reads as a bare underline and looks broken.
+            background: LOCUS_COLORS.surface,
+            color: LOCUS_COLORS.textPrimary,
+            transition: 'border-color 0.15s ease-out',
           }}
         />
 
         {/* Reserved space, so the button does not jump as messages appear. */}
         <Box sx={{ minHeight: 44, mt: 1.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
           {shownError && (
-            <Typography variant="body2" sx={{ color: 'error.main', lineHeight: 1.4 }}>
+            <Typography variant="body2" sx={{ color: LOCUS_COLORS.error, lineHeight: 1.4 }}>
               {shownError}
             </Typography>
           )}
           {!shownError && notice && (
-            <Typography variant="body2" sx={{ color: 'success.main', lineHeight: 1.4 }}>
+            <Typography variant="body2" sx={{ color: LOCUS_COLORS.success, lineHeight: 1.4 }}>
               {notice}
             </Typography>
           )}
@@ -223,21 +290,52 @@ const ActivationScreen = ({ onActivated }: Props) => {
           variant="contained"
           disabled={!canSubmit}
           onClick={() => void submit()}
-          sx={{ mt: 1, py: 1.4 }}
+          sx={{
+            mt: 1,
+            py: 1.4,
+            // The primary action, in Locus green. Stated explicitly because
+            // this screen cannot read the app theme; without it the button
+            // would render in MUI's default blue on every install.
+            bgcolor: LOCUS_COLORS.accent,
+            color: LOCUS_COLORS.background,
+            fontWeight: 600,
+            textTransform: 'none',
+            fontSize: 16,
+            borderRadius: 2,
+            boxShadow: 'none',
+            transition: 'background-color 0.15s ease-out',
+            '&:hover': { bgcolor: LOCUS_COLORS.accentHover },
+            '&.Mui-disabled': {
+              bgcolor: LOCUS_COLORS.accent,
+              opacity: 0.35,
+            },
+          }}
         >
           {busy ? <CircularProgress size={22} color="inherit" /> : 'Activate'}
         </Button>
 
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
+        <Typography
+          variant="caption"
+          sx={{ display: 'block', mt: 3, color: LOCUS_COLORS.textSecondary }}
+        >
           Nothing on your card? The code is 15 characters and never contains{' '}
           <strong>0</strong>, <strong>O</strong>, <strong>1</strong> or <strong>I</strong>.
         </Typography>
 
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          <Link href={HUB_URL} target="_blank" rel="noreferrer" underline="hover">
-            {HUB_URL.replace(/^https?:\/\//, '')}
-          </Link>
-        </Typography>
+        {/* No hub URL here.
+            //
+            // This used to render `HUB_URL` as a visible link. The hub host is
+            // infrastructure — `networkingguides.duckdns.org` is the address the
+            // client *calls*, not a place a student should be pointed at. Showing
+            // it on the one screen a student meets before they have any context
+            // invites them to treat a backend hostname as product surface, and a
+            // hostname is not a support route: it cannot answer "my code says it
+            // is already used".
+            //
+            // The card is the support route: the code is printed on it, beside
+            // whatever contact details the reseller puts there. There is
+            // deliberately nothing here in its place — inventing a placeholder
+            // address would only move the same problem. */}
       </Box>
     </Box>
   )

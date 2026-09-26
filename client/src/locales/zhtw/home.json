@@ -57,7 +57,7 @@
         "autoLaunch": "開機自啟",
         "runningMode": "執行模式",
         "lastCheckUpdate": "最後檢查更新",
-        "vergeVersion": "Verge 版本"
+        "vergeVersion": "版本"
       },
       "actions": {
         "settings": "設定"
@@ -150,6 +150,49 @@
         "rule": "依照規則自動選擇代理。",
         "global": "將所有網路請求轉送至所選代理。",
         "direct": "略過代理，直接連線至網際網路。"
+      }
+    },
+    "connection": {
+      "connect": "連接",
+      "disconnect": "斷開",
+      "connecting": "正在連接…",
+      "disconnecting": "正在斷開…",
+      "checking": "檢查中…",
+      "notConnected": "未連接",
+      "connected": "已連接",
+      "sessionUpload": "本次會話上傳",
+      "sessionDownload": "本次會話下載",
+      "activeConnections": "活動連接數",
+      "speed": "速度",
+      "needsActivation": "此裝置需要啟用碼才能連接。",
+      "account": {
+        "title": "Account",
+        "subscription": "Subscription",
+        "plan": "Plan",
+        "expires": "Expires",
+        "expired": "Expired",
+        "today": "Today",
+        "daysLeft": "{{count}} days",
+        "oneDayLeft": "1 day",
+        "expiresSoon": "Your subscription expires soon. Contact the person who sold you the code to renew.",
+        "noExpiryYet": "Your subscription end date is not available yet. It will appear after this device next contacts Locus.",
+        "activateForExpiry": "Activate this device to see your subscription.",
+        "thisDevice": "This device",
+        "deviceId": "Device ID",
+        "platform": "Platform",
+        "appVersion": "App version",
+        "deviceIdHint": "Quote the device ID if you need support — it identifies this install without revealing anything about you.",
+        "preferences": "Preferences",
+        "language": "Language",
+        "appearance": "Appearance",
+        "themeSystem": "System",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "autoUpdate": "Check for updates automatically",
+        "on": "On",
+        "off": "Off",
+        "refresh": "Refresh",
+        "notActivated": "This device is not activated. Enter the code from your card to connect."
       }
     }
   }

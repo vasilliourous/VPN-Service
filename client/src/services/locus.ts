@@ -17,7 +17,31 @@ export interface LocusStatus {
   deviceId: string
   platform: string | null
   version: string
+  subscription: SubscriptionStatus
 }
+
+/**
+ * The subscription state, already decided by the backend.
+ *
+ * A tagged union rather than an optional date, mirroring the Rust enum. The
+ * important distinction is `unknown` versus `lapsed`: a device that has never
+ * heard from the hub has no expiry, and showing that as "expired" would tell a
+ * brand-new student their subscription had run out.
+ *
+ * `unknown` means render nothing about expiry.
+ */
+export type SubscriptionStatus =
+  | { state: 'unknown' }
+  | { state: 'lapsed' }
+  | {
+      state: 'active'
+      /** Whole days remaining, rounded up. */
+      daysRemaining: number
+      /** Whether this is inside the renewal-warning window. */
+      urgent: boolean
+      /** The hub's own date string, for a tooltip. */
+      expiresAt: string
+    }
 
 export interface ValidateCodeResult {
   valid: boolean

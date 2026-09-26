@@ -99,8 +99,12 @@ export function TrafficGraph({ ref }: { ref?: Ref<TrafficRef> }) {
 
     const { primary, secondary, divider } = palette
     const refLineColor = divider || 'rgba(0, 0, 0, 0.12)'
-    const upLineColor = secondary.main || '#9c27b0'
-    const downLineColor = primary.main || '#5b5c9d'
+    // Fallbacks used only if the palette is missing a colour entirely, which
+    // should not happen — but the previous values were Clash Verge Rev's purple
+    // (`#5b5c9d`) and magenta, so a graph drawn without a palette would have
+    // appeared in another product's colours. Locus's green, and its secondary.
+    const upLineColor = secondary.main || '#46c186'
+    const downLineColor = primary.main || '#2ea86a'
 
     const cancelPendingDraw = () => {
       if (frameTimer !== null) {

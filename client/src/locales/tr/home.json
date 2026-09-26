@@ -57,7 +57,7 @@
         "autoLaunch": "Otomatik Başlatma",
         "runningMode": "Çalışma Modu",
         "lastCheckUpdate": "Son Güncelleme Kontrolü",
-        "vergeVersion": "Verge Sürümü"
+        "vergeVersion": "Sürüm"
       },
       "actions": {
         "settings": "Ayarlar"
@@ -150,6 +150,49 @@
         "rule": "Vekilleri kural kümesine göre otomatik olarak seçer.",
         "global": "Tüm ağ isteklerini seçili vekil üzerinden iletir.",
         "direct": "Vekili atlar ve internete doğrudan bağlanır."
+      }
+    },
+    "connection": {
+      "connect": "Bağlan",
+      "disconnect": "Bağlantıyı Kes",
+      "connecting": "Bağlanıyor…",
+      "disconnecting": "Bağlantı kesiliyor…",
+      "checking": "Kontrol ediliyor…",
+      "notConnected": "Bağlı değil",
+      "connected": "Bağlı",
+      "sessionUpload": "Bu oturumda yüklenen",
+      "sessionDownload": "Bu oturumda indirilen",
+      "activeConnections": "Etkin bağlantılar",
+      "speed": "Hız",
+      "needsActivation": "Bu cihaz için etkinleştirme kodu gerekli.",
+      "account": {
+        "title": "Account",
+        "subscription": "Subscription",
+        "plan": "Plan",
+        "expires": "Expires",
+        "expired": "Expired",
+        "today": "Today",
+        "daysLeft": "{{count}} days",
+        "oneDayLeft": "1 day",
+        "expiresSoon": "Your subscription expires soon. Contact the person who sold you the code to renew.",
+        "noExpiryYet": "Your subscription end date is not available yet. It will appear after this device next contacts Locus.",
+        "activateForExpiry": "Activate this device to see your subscription.",
+        "thisDevice": "This device",
+        "deviceId": "Device ID",
+        "platform": "Platform",
+        "appVersion": "App version",
+        "deviceIdHint": "Quote the device ID if you need support — it identifies this install without revealing anything about you.",
+        "preferences": "Preferences",
+        "language": "Language",
+        "appearance": "Appearance",
+        "themeSystem": "System",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "autoUpdate": "Check for updates automatically",
+        "on": "On",
+        "off": "Off",
+        "refresh": "Refresh",
+        "notActivated": "This device is not activated. Enter the code from your card to connect."
       }
     }
   }

@@ -16,6 +16,7 @@ import {
 import { useI18n } from '@/hooks/use-i18n'
 import { useVerge } from '@/hooks/use-verge'
 import { useWindowDecorations } from '@/hooks/use-window'
+import { LOCUS_COLORS, LOCUS_LIGHT } from '@/pages/_theme'
 import { useThemeMode } from '@/services/states'
 import getSystem from '@/utils/get-system'
 
@@ -83,17 +84,19 @@ const Layout = () => {
   }, [language, switchLanguage])
 
   if (!themeReady) {
+    // The brief window before the custom theme resolves. Must be the same
+    // background as the native window and the document, or this placeholder
+    // itself becomes a flash of a different colour between the two.
     return (
       <div
         style={{
           width: '100vw',
           height: '100vh',
-          background: mode === 'light' ? '#fff' : '#181a1b',
+          background: mode === 'light' ? LOCUS_LIGHT.background : LOCUS_COLORS.background,
           transition: 'background 0.2s',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: mode === 'light' ? '#333' : '#fff',
         }}
       ></div>
     )

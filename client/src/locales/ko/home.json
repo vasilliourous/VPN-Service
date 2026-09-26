@@ -57,7 +57,7 @@
         "autoLaunch": "자동 실행",
         "runningMode": "실행 모드",
         "lastCheckUpdate": "마지막 업데이트 확인",
-        "vergeVersion": "Verge 버전"
+        "vergeVersion": "버전"
       },
       "actions": {
         "settings": "설정"
@@ -150,6 +150,49 @@
         "rule": "규칙 세트에 따라 자동으로 프록시를 선택합니다.",
         "global": "모든 네트워크 요청을 선택한 프록시를 통해 전달합니다.",
         "direct": "프록시를 우회하여 직접 인터넷에 연결합니다."
+      }
+    },
+    "connection": {
+      "connect": "연결",
+      "disconnect": "연결 해제",
+      "connecting": "연결 중…",
+      "disconnecting": "연결 해제 중…",
+      "checking": "확인 중…",
+      "notConnected": "연결되지 않음",
+      "connected": "연결됨",
+      "sessionUpload": "이번 세션 업로드",
+      "sessionDownload": "이번 세션 다운로드",
+      "activeConnections": "활성 연결",
+      "speed": "속도",
+      "needsActivation": "이 기기는 활성화 코드가 필요합니다.",
+      "account": {
+        "title": "Account",
+        "subscription": "Subscription",
+        "plan": "Plan",
+        "expires": "Expires",
+        "expired": "Expired",
+        "today": "Today",
+        "daysLeft": "{{count}} days",
+        "oneDayLeft": "1 day",
+        "expiresSoon": "Your subscription expires soon. Contact the person who sold you the code to renew.",
+        "noExpiryYet": "Your subscription end date is not available yet. It will appear after this device next contacts Locus.",
+        "activateForExpiry": "Activate this device to see your subscription.",
+        "thisDevice": "This device",
+        "deviceId": "Device ID",
+        "platform": "Platform",
+        "appVersion": "App version",
+        "deviceIdHint": "Quote the device ID if you need support — it identifies this install without revealing anything about you.",
+        "preferences": "Preferences",
+        "language": "Language",
+        "appearance": "Appearance",
+        "themeSystem": "System",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "autoUpdate": "Check for updates automatically",
+        "on": "On",
+        "off": "Off",
+        "refresh": "Refresh",
+        "notActivated": "This device is not activated. Enter the code from your card to connect."
       }
     }
   }

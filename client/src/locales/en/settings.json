@@ -157,7 +157,7 @@
   "components": {
     "verge": {
       "basic": {
-        "title": "Verge Basic Setting",
+        "title": "Basic Settings",
         "actions": {
           "browse": "Browse"
         },
@@ -180,7 +180,7 @@
         }
       },
       "advanced": {
-        "title": "Verge Advanced Setting",
+        "title": "Advanced Settings",
         "tooltips": {
           "backupInfo": "Support local or WebDAV backup of configuration files",
           "openConfDir": "If the software runs abnormally, BACKUP and delete all files in this folder then restart the software",
@@ -204,7 +204,7 @@
           "liteModeSettings": "LightWeight Mode Settings",
           "exit": "Exit",
           "exportDiagnostics": "Export Diagnostic Info",
-          "vergeVersion": "Verge Version"
+          "vergeVersion": "Version"
         }
       },
       "theme": {
@@ -665,11 +665,11 @@
         "sidecarFailed": "Failed to continue with Sidecar"
       },
       "sysproxy": {
-        "privilegeRequired": "Cannot set the system proxy: macOS refused the change for lack of privileges. Install the Clash Verge service; an administrator can also turn off the administrator-password requirement for system-wide settings, in the advanced options of System Settings → Privacy & Security.",
+        "privilegeRequired": "Cannot set the system proxy: macOS refused the change for lack of privileges. Install the Locus service; an administrator can also turn off the administrator-password requirement for system-wide settings, in the advanced options of System Settings → Privacy & Security.",
         "directFallback": "Failed to set the system proxy; traffic has been switched back to a direct connection.",
         "guardStopped": "The system proxy guard stopped after failing several times running. The system proxy is no longer being kept in place.",
-        "sidecarWhileServiceReady": "The system proxy could not be set because the core is still running as a Sidecar, although the Clash Verge service is ready. Restart the core to switch to service mode.",
-        "coreNotReady": "The system proxy could not be enabled because the core is not running. Start the core (or install/repair the Clash Verge service) and try again.",
+        "sidecarWhileServiceReady": "The system proxy could not be set because the core is still running as a Sidecar, although the Locus service is ready. Restart the core to switch to service mode.",
+        "coreNotReady": "The system proxy could not be enabled because the core is not running. Start the core (or install/repair the Locus service) and try again.",
         "systemCallFailed": "The system proxy could not be written because a Windows system call failed. This is usually transient, so try again."
       }
     },

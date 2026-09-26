@@ -23,13 +23,13 @@
     "serviceMigration": {
       "locationRefusedMessage": "Hizmetin kurulum yolu veya dizin izinleri güvenlik denetiminden geçemediği için çekirdek başlatılamıyor. Dosyaları ve izinleri geri yüklemek için hizmeti yeniden kurup tekrar deneyin. Windows yönetici onayı isteyebilir.",
       "title": "Hizmet güncellemesi gerekli",
-      "message": "Clash Verge hizmet sürümü, bu uygulamanın gerektirdiği sürümle eşleşmiyor. Mevcut hizmeti kaldırıp gerekli sürümü yüklemek için hizmeti yeniden kurun ya da bu oturumda Sidecar ile devam edin.",
+      "message": "Locus hizmet sürümü, bu uygulamanın gerektirdiği sürümle eşleşmiyor. Mevcut hizmeti kaldırıp gerekli sürümü yüklemek için hizmeti yeniden kurun ya da bu oturumda Sidecar ile devam edin.",
       "checkingMessage": "Sistem hizmetinin durumu ve geçerli çalışma modu denetleniyor. Lütfen bekleyin…",
-      "unavailableMessage": "Gerekli Clash Verge hizmeti kullanılamıyor. Hizmeti kurun veya onarın ya da bu oturumda Sidecar ile devam edin.",
+      "unavailableMessage": "Gerekli Locus hizmeti kullanılamıyor. Hizmeti kurun veya onarın ya da bu oturumda Sidecar ile devam edin.",
       "reinstall": "Hizmeti yeniden kur",
       "repair": "Hizmeti onar",
       "continueSidecar": "Sidecar ile devam et",
-      "success": "Clash Verge hizmeti başarıyla güncellendi",
+      "success": "Locus hizmeti başarıyla güncellendi",
       "errors": {
         "actionFailed": "Hizmet işlemi başarısız oldu",
         "stateRefreshFailed": "Hizmet durumu yenilenemedi",
@@ -40,15 +40,15 @@
     },
     "sysproxyPrivilege": {
       "title": "Sistem proxy'si ayarlanamadı",
-      "message": "macOS bu değişikliği yetersiz yetki nedeniyle reddetti. Clash Verge hizmeti kurulduktan sonra proxy ayarlarını hizmet yönetici olarak uygular ve bu uyarı bir daha görünmez.",
-      "serviceReadyMessage": "Clash Verge hizmeti hazır, ancak çekirdek hâlâ sidecar olarak çalıştığından sistem proxy'si ayarlanamadı. Hizmet moduna geçmek sorunu yeniden kurulum gerekmeden çözer.",
+      "message": "macOS bu değişikliği yetersiz yetki nedeniyle reddetti. Locus hizmeti kurulduktan sonra proxy ayarlarını hizmet yönetici olarak uygular ve bu uyarı bir daha görünmez.",
+      "serviceReadyMessage": "Locus hizmeti hazır, ancak çekirdek hâlâ sidecar olarak çalıştığından sistem proxy'si ayarlanamadı. Hizmet moduna geçmek sorunu yeniden kurulum gerekmeden çözer.",
       "alternative": "Alternatif olarak Sistem Ayarları → Gizlilik ve Güvenlik → Gelişmiş bölümünde sistem genelindeki ayarlar için yönetici parolası isteyen seçeneği kapatın.",
       "later": "Daha sonra",
       "installing": "Sistem hizmeti kuruluyor. Yönetici parolası istenebilir.",
       "restarting": "Hizmet kuruldu. Çekirdek onun üzerinden yeniden başlatılıyor…",
       "applying": "Sistem proxy değişikliğiniz uygulanıyor…",
       "tunTitle": "TUN modu sistem hizmetine ihtiyaç duyar",
-      "tunMessage": "TUN modunun ağ trafiğini üstlenebilmesi için Clash Verge sistem hizmeti gerekir. Kurulum tamamlandığında TUN modu sizin için açılacaktır."
+      "tunMessage": "TUN modunun ağ trafiğini üstlenebilmesi için Locus sistem hizmeti gerekir. Kurulum tamamlandığında TUN modu sizin için açılacaktır."
     }
   },
   "feedback": {

@@ -12,13 +12,21 @@ body {
   -ms-user-select: none;
 }
 
+// Fallback values only — `use-custom-theme` overwrites every one of these on the
+// real document element at runtime.
+//
+// They still matter: this is what paints in the window between the stylesheet
+// loading and the theme hook running, so an upstream colour here is momentarily
+// visible on every launch. These were Clash Verge Rev's (a purple accent,
+// `#5b5c9d`, and grey surfaces); they are now Locus's, matching
+// `src/pages/_theme.tsx`. `tests/theme-colors.test.ts` fails if they drift.
 :root {
-  --primary-main: #5b5c9d;
-  --text-primary: #1f1f1f;
-  --selection-color: #f5f5f5;
-  --scroller-color: #8c8c8c;
-  --background-color: #f5f5f5;
-  --background-color-alpha: rgba(24, 103, 192, 0.1);
+  --primary-main: #2ea86a;
+  --text-primary: #eaf2ec;
+  --selection-color: #0c1711;
+  --scroller-color: #8ca596;
+  --background-color: #06130c;
+  --background-color-alpha: rgba(46, 168, 106, 0.1);
   --border-radius: 8px;
 }
 

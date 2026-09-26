@@ -16,7 +16,6 @@ export const BasePage: React.FC<Props> = (props) => {
   const { title, header, contentStyle, full, children } = props
   const theme = useTheme()
 
-  const isDark = theme.palette.mode === 'dark'
 
   return (
     <BaseErrorBoundary>
@@ -34,11 +33,15 @@ export const BasePage: React.FC<Props> = (props) => {
 
         <div
           className={full ? 'base-container no-padding' : 'base-container'}
-          style={{ backgroundColor: isDark ? '#1e1f27' : '#ffffff' }}
+          // The page surface. Was Verge's `#1e1f27` — a neutral grey that read as
+          // a blue-grey panel behind Locus's green cards. Now the theme's own
+          // background, so it follows the palette (and light/dark) automatically
+          // instead of being a second, hand-maintained copy of it.
+          style={{ backgroundColor: theme.palette.background.default }}
         >
           <section
             style={{
-              backgroundColor: isDark ? '#1e1f27' : 'var(--background-color)',
+              backgroundColor: theme.palette.background.default,
             }}
           >
             <div className="base-content" style={contentStyle}>

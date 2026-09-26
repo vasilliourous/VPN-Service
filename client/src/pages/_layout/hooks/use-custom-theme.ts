@@ -7,7 +7,7 @@ import { Theme as TauriOsTheme } from '@tauri-apps/api/window'
 import { useEffect, useMemo } from 'react'
 
 import { useVerge } from '@/hooks/use-verge'
-import { defaultDarkTheme, defaultTheme } from '@/pages/_theme'
+import { defaultDarkTheme, defaultTheme, LOCUS_COLORS, LOCUS_LIGHT } from '@/pages/_theme'
 import { useSetThemeMode, useThemeMode } from '@/services/states'
 
 const CSS_INJECTION_SCOPE_ROOT = '[data-css-injection-root]'
@@ -201,11 +201,15 @@ export const useCustomTheme = () => {
 
     const rootEle = document.documentElement
     if (rootEle) {
-      const backgroundColor = mode === 'light' ? '#ECECEC' : dt.background_color
-      const selectColor = mode === 'light' ? '#f5f5f5' : '#3E3E3E'
-      const scrollColor = mode === 'light' ? '#90939980' : '#555555'
+      // These were Verge's greys. Every one of them is visible against Locus's
+      // green-black surface (a neutral `#3E3E3E` selection block next to a green
+      // page reads as a rendering bug), so they follow the brand palette while
+      // keeping the same light/dark relationship.
+      const backgroundColor = mode === 'light' ? LOCUS_LIGHT.background : dt.background_color
+      const selectColor = mode === 'light' ? LOCUS_LIGHT.surfaceHover : LOCUS_COLORS.surfaceHover
+      const scrollColor = mode === 'light' ? '#8CA59680' : LOCUS_COLORS.textSecondary
       const dividerColor =
-        mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.06)'
+        mode === 'light' ? 'rgba(11, 31, 20, 0.08)' : 'rgba(234, 242, 236, 0.08)'
       rootEle.style.setProperty('--divider-color', dividerColor)
       rootEle.style.setProperty('--background-color', backgroundColor)
       rootEle.style.setProperty('--selection-color', selectColor)
@@ -217,15 +221,15 @@ export const useCustomTheme = () => {
       )
       rootEle.style.setProperty(
         '--window-border-color',
-        mode === 'light' ? '#cccccc' : '#1E1E1E',
+        mode === 'light' ? LOCUS_LIGHT.border : LOCUS_COLORS.border,
       )
       rootEle.style.setProperty(
         '--scrollbar-bg',
-        mode === 'light' ? '#f1f1f1' : '#2E303D',
+        mode === 'light' ? LOCUS_LIGHT.background : LOCUS_COLORS.surface,
       )
       rootEle.style.setProperty(
         '--scrollbar-thumb',
-        mode === 'light' ? '#c1c1c1' : '#555555',
+        mode === 'light' ? LOCUS_LIGHT.border : LOCUS_COLORS.border,
       )
       rootEle.style.setProperty(
         '--user-background-image',
@@ -269,7 +273,7 @@ export const useCustomTheme = () => {
           border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-          background-color: ${mode === 'light' ? '#a1a1a1' : '#666666'};
+          background-color: ${mode === 'light' ? LOCUS_LIGHT.border : LOCUS_COLORS.textSecondary};
         }
 
         /* 背景图处理 */
@@ -297,7 +301,7 @@ export const useCustomTheme = () => {
 
         /* 确保模态框和对话框也使用暗色主题 */
         .MuiDialog-paper {
-          background-color: ${mode === 'light' ? '#ffffff' : '#2E303D'} !important;
+          background-color: ${mode === 'light' ? LOCUS_LIGHT.surface : LOCUS_COLORS.surface} !important;
         }
 
         /* 移除可能的白色点或线条 */

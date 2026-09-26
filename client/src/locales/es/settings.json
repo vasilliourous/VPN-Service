@@ -157,7 +157,7 @@
   "components": {
     "verge": {
       "basic": {
-        "title": "Ajustes básicos de Verge",
+        "title": "Ajustes básicos",
         "actions": {
           "browse": "Examinar"
         },
@@ -180,7 +180,7 @@
         }
       },
       "advanced": {
-        "title": "Ajustes avanzados de Verge",
+        "title": "Ajustes avanzados",
         "tooltips": {
           "backupInfo": "Soporte para la copia de seguridad de archivos de configuración a través de WebDAV",
           "openConfDir": "Si el software no funciona correctamente, !realice una copia de seguridad! y elimine todos los archivos de esta carpeta, luego reinicie el software.",
@@ -204,7 +204,7 @@
           "liteModeSettings": "Configuración del modo ligero",
           "exit": "Salir",
           "exportDiagnostics": "Exportar información de diagnóstico",
-          "vergeVersion": "Versión de Verge"
+          "vergeVersion": "Versión"
         }
       },
       "theme": {
@@ -665,11 +665,11 @@
         "sidecarFailed": "No se pudo continuar con Sidecar"
       },
       "sysproxy": {
-        "privilegeRequired": "No se puede establecer el proxy del sistema: macOS rechazó el cambio por falta de permisos. Instale el servicio de Clash Verge; si es administrador, también puede desactivar la exigencia de contraseña de administrador para los ajustes de todo el sistema en las opciones avanzadas de Ajustes del Sistema → Privacidad y seguridad.",
+        "privilegeRequired": "No se puede establecer el proxy del sistema: macOS rechazó el cambio por falta de permisos. Instale el servicio de Locus; si es administrador, también puede desactivar la exigencia de contraseña de administrador para los ajustes de todo el sistema en las opciones avanzadas de Ajustes del Sistema → Privacidad y seguridad.",
         "directFallback": "No se pudo establecer el proxy del sistema; el tráfico volvió a una conexión directa.",
         "guardStopped": "El guardián del proxy del sistema se detuvo tras varios fallos seguidos. El proxy del sistema ya no se mantiene automáticamente.",
-        "sidecarWhileServiceReady": "No se pudo establecer el proxy del sistema: el servicio de Clash Verge está listo, pero el núcleo sigue ejecutándose como Sidecar. Reinicie el núcleo para cambiar al modo de servicio.",
-        "coreNotReady": "No se pudo activar el proxy del sistema porque el núcleo no está en ejecución. Inicie el núcleo (o instale/repare el servicio de Clash Verge) e inténtelo de nuevo.",
+        "sidecarWhileServiceReady": "No se pudo establecer el proxy del sistema: el servicio de Locus está listo, pero el núcleo sigue ejecutándose como Sidecar. Reinicie el núcleo para cambiar al modo de servicio.",
+        "coreNotReady": "No se pudo activar el proxy del sistema porque el núcleo no está en ejecución. Inicie el núcleo (o instale/repare el servicio de Locus) e inténtelo de nuevo.",
         "systemCallFailed": "No se pudo escribir el proxy del sistema porque falló una llamada al sistema de Windows. Suele ser transitorio; inténtelo de nuevo."
       }
     },

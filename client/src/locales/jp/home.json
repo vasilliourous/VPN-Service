@@ -57,7 +57,7 @@
         "autoLaunch": "起動時に自動起動",
         "runningMode": "実行モード",
         "lastCheckUpdate": "最後の更新チェック",
-        "vergeVersion": "Vergeバージョン"
+        "vergeVersion": "バージョン"
       },
       "actions": {
         "settings": "設定"
@@ -150,6 +150,49 @@
         "rule": "Automatically choose proxies according to the rule set.",
         "global": "Forward all network requests through the selected proxy.",
         "direct": "Bypass the proxy and connect to the internet directly."
+      }
+    },
+    "connection": {
+      "connect": "接続",
+      "disconnect": "切断",
+      "connecting": "接続中…",
+      "disconnecting": "切断中…",
+      "checking": "確認中…",
+      "notConnected": "未接続",
+      "connected": "接続済み",
+      "sessionUpload": "このセッションの送信",
+      "sessionDownload": "このセッションの受信",
+      "activeConnections": "アクティブ接続",
+      "speed": "速度",
+      "needsActivation": "このデバイスにはアクティベーションコードが必要です。",
+      "account": {
+        "title": "Account",
+        "subscription": "Subscription",
+        "plan": "Plan",
+        "expires": "Expires",
+        "expired": "Expired",
+        "today": "Today",
+        "daysLeft": "{{count}} days",
+        "oneDayLeft": "1 day",
+        "expiresSoon": "Your subscription expires soon. Contact the person who sold you the code to renew.",
+        "noExpiryYet": "Your subscription end date is not available yet. It will appear after this device next contacts Locus.",
+        "activateForExpiry": "Activate this device to see your subscription.",
+        "thisDevice": "This device",
+        "deviceId": "Device ID",
+        "platform": "Platform",
+        "appVersion": "App version",
+        "deviceIdHint": "Quote the device ID if you need support — it identifies this install without revealing anything about you.",
+        "preferences": "Preferences",
+        "language": "Language",
+        "appearance": "Appearance",
+        "themeSystem": "System",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "autoUpdate": "Check for updates automatically",
+        "on": "On",
+        "off": "Off",
+        "refresh": "Refresh",
+        "notActivated": "This device is not activated. Enter the code from your card to connect."
       }
     }
   }

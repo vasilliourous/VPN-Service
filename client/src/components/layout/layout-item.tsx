@@ -51,12 +51,16 @@ export const LayoutItem = (props: Props) => {
               fontWeight: '700',
             },
           },
-          ({ palette: { mode, primary } }) => {
+          ({ palette: { mode, primary, text } }) => {
             const bgcolor =
               mode === 'light'
                 ? alpha(primary.main, 0.15)
                 : alpha(primary.main, 0.35)
-            const color = mode === 'light' ? '#1f1f1f' : '#ffffff'
+            // The selected nav item's label. Verge's `#1f1f1f` / `#ffffff` are
+            // neutral, which on Locus's green surface reads as slightly wrong
+            // grey text beside green accents. Use the theme's own text colour so
+            // it tracks the palette in both modes.
+            const color = text.primary
             return {
               '&.Mui-selected': { bgcolor },
               '&.Mui-selected:hover': { bgcolor },

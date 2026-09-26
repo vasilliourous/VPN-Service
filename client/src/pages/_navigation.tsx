@@ -1,19 +1,13 @@
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
-import SubjectOutlinedIcon from '@mui/icons-material/SubjectOutlined'
-import WifiOutlinedIcon from '@mui/icons-material/WifiOutlined'
 import { type ComponentType, type ReactNode } from 'react'
 
 import HomeSvg from '@/assets/image/itemicon/home.svg?react'
-import LogsSvg from '@/assets/image/itemicon/logs.svg?react'
-import ProxiesSvg from '@/assets/image/itemicon/proxies.svg?react'
 import SettingsSvg from '@/assets/image/itemicon/settings.svg?react'
 
 import { navigationItems } from './_navigation-meta'
-import HomePage from './home'
-import LogsPage from './logs'
-import ProxyPage from './proxies'
-import SettingPage from './settings'
+import AccountPage from './account'
+import ConnectionPage from './connection'
 
 type NavigationItem = {
   label: (typeof navigationItems)[keyof typeof navigationItems]['label']
@@ -22,25 +16,23 @@ type NavigationItem = {
   Component: ComponentType
 }
 
+/**
+ * The navigation, reduced to the two things a student does:
+ * turn the VPN on, and look at their account.
+ *
+ * The removed entries are not hidden — they are gone. `proxies`, `logs` and the
+ * Verge settings screens were deleted with their components; see the commit
+ * that removed them for the shared pieces that were kept deliberately.
+ */
 export const navItems: NavigationItem[] = [
   {
-    ...navigationItems.home,
+    ...navigationItems.connection,
     icon: [<HomeOutlinedIcon key="mui" />, <HomeSvg key="svg" />],
-    Component: HomePage,
+    Component: ConnectionPage,
   },
   {
-    ...navigationItems.proxies,
-    icon: [<WifiOutlinedIcon key="mui" />, <ProxiesSvg key="svg" />],
-    Component: ProxyPage,
-  },
-  {
-    ...navigationItems.logs,
-    icon: [<SubjectOutlinedIcon key="mui" />, <LogsSvg key="svg" />],
-    Component: LogsPage,
-  },
-  {
-    ...navigationItems.settings,
+    ...navigationItems.account,
     icon: [<SettingsOutlinedIcon key="mui" />, <SettingsSvg key="svg" />],
-    Component: SettingPage,
+    Component: AccountPage,
   },
 ]
