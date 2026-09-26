@@ -1,3 +1,90 @@
+## THE BLANK WINDOW, PART 2: THE LOADING OVERLAY COVERED THE ACTIVATION SCREEN (2026-09-26)
+
+The `base: './'` fix below was **necessary but not sufficient**. The window was still
+blank after it, with the WebKit default right-click menu as the only interactive
+thing — the signature of a document that loads fine and shows nothing.
+
+### Root cause
+
+`index.html` ships an opaque full-screen element:
+
+```css
+#initial-loading-overlay { position: fixed; inset: 0; z-index: 9999; }
+```
+
+It is removed only by `hideInitialOverlay()`, and that was called from exactly one
+place: `useLoadingOverlay(themeReady)`, inside `pages/_layout.tsx`. But `Layout` is
+reached through `RouterProvider`, which renders only in the `activated === true`
+branch of the gate in `main.tsx`:
+
+```jsx
+if (activated === null) return <CircularProgress />   // overlay still up
+if (!activated)        return <ActivationScreen />     // overlay still up
+// RouterProvider -> Layout -> useLoadingOverlay  <- the ONLY removal, unreachable
+```
+
+So on an **unactivated device — every fresh install, and the first thing a student
+ever sees** — nothing ever removed the overlay, and it sat permanently over a
+correctly rendered activation screen.
+
+### Why it was so hard to see
+
+Everything that could be checked was correct:
+
+- every asset returned **200**, zero 404s (`index-*.js`, `layout`, `home`,
+  `settings`, `proxies`, `shared` all resolved)
+- the page-load hook reported **`finished`** on `tauri://localhost/`
+- **nothing threw** — no `window.onerror`, no unhandled rejection, no
+  `console.error`
+- `#root` contained the **rendered activation screen** the whole time:
+  `children=1 text="LocusEnter the activation code from your card.Activate…"`
+
+The app was working. It was simply invisible.
+
+### Fix
+
+1. Move the overlay removal to `main.tsx`, into `Shell`, so it runs on first mount
+   whichever branch renders. `useLoadingOverlay` and its hook file are deleted, so
+   there is exactly one owner.
+2. Add a **CSS-only backstop**: an animation that hides the overlay after 5s
+   regardless of whether any script runs. The JS path still removes it earlier on
+   a healthy start, so the animation is only ever the safety net. This matters
+   because the old design made a JS failure present as a blank window rather than
+   as an error — the backstop converts that failure mode into "slow".
+
+### Verified
+
+DOM probes from the window initialization script, before and after:
+
+| | before | after |
+|---|---|---|
+| `t+3s` | `overlay=present` | `overlay=removed` |
+| `t+8s` | `overlay=present` | `overlay=removed` |
+
+### The instrumentation is part of the fix
+
+None of this was diagnosable before, and three additions are kept:
+
+- `on_page_load` now logs the **URL and event** for both `started` and `finished`.
+  A window that loads the wrong origin and one whose scripts all failed were
+  previously indistinguishable.
+- `on_web_resource_request` logs every asset and its **status**, so a 404 is
+  visible. This is what proved asset resolution was fixed and the fault was
+  elsewhere.
+- A **JS→native log bridge** (`locus_js_log` + a window-init-script hook) forwards
+  `window.onerror`, `unhandledrejection` and `console.error` into the native log.
+  It is installed by the initialization script, which runs *before* any
+  application module — deliberate, because the app's own error handlers do not
+  exist yet when the app is what failed.
+
+**The lesson: "renders nothing" and "renders nothing visible" are different bugs,
+and only inspecting the DOM tells them apart.** Every signal available here — HTTP
+status, page-load events, the console — was green while the app was unusable.
+
+---
+
+
+
 ## THE CLIENT RENDERED A BLANK WINDOW — ASSET URLS RESOLVED AGAINST THE PROTOCOL ROOT (2026-09-26)
 
 The 3.0.0 build opened a window containing only the static shell from `index.html`:

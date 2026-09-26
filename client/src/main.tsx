@@ -10,6 +10,7 @@ import { SWRConfig } from 'swr'
 import { MihomoWebSocket } from 'tauri-plugin-mihomo-api'
 
 import { BaseErrorBoundary } from './components/base'
+import { hideInitialOverlay } from './pages/_layout/utils/initial-loading-overlay'
 import { router } from './pages/_routers'
 import ActivationScreen from './pages/activation'
 import { preloadHomePageCards } from './pages/home'
@@ -52,6 +53,25 @@ const initializeApp = (initialThemeMode: 'light' | 'dark') => {
   // is a much easier property to hold than "every page remembers to check".
   const Shell = () => {
     const [activated, setActivated] = useState<boolean | null>(null)
+
+    // Remove the initial loading overlay once this component has painted.
+    //
+    // This MUST live here, not in `Layout`. The overlay is an opaque full-screen
+    // element at `z-index: 9999` (see `index.html`), and it is only removed by
+    // `hideInitialOverlay()`. That used to be called from `useLoadingOverlay`
+    // inside `Layout` — but `Layout` is reached through `RouterProvider`, which
+    // renders only in the `activated === true` branch below. So on an
+    // unactivated device (every fresh install, and the state a student sees
+    // first) the overlay was never removed and covered the activation screen
+    // permanently: a blank window over a working app. The DOM was correct, the
+    // assets all loaded 200, and nothing threw — which is why this presented as
+    // an unexplained empty window rather than as an error.
+    //
+    // The effect is keyed on nothing because it needs to run exactly once, on
+    // first mount, whichever branch then renders.
+    useEffect(() => {
+      hideInitialOverlay()
+    }, [])
 
     useEffect(() => {
       locusStatus()

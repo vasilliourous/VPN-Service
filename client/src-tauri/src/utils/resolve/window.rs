@@ -4,9 +4,7 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Theme, WebviewWindow};
 
 use crate::{config::Config, core::handle, utils::resolve::window_script::build_window_initial_script};
-#[cfg(target_os = "macos")]
-use clash_verge_logging::logging;
-use clash_verge_logging::{Type, logging_error};
+use clash_verge_logging::{Type, logging, logging_error};
 
 const DARK_BACKGROUND_COLOR: Color = Color(46, 48, 61, 255); // #2E303D
 const LIGHT_BACKGROUND_COLOR: Color = Color(245, 245, 245, 255); // #F5F5F5
@@ -81,7 +79,7 @@ pub async fn build_new_window() -> Result<WebviewWindow, String> {
         "main", /* the unique window label */
         tauri::WebviewUrl::App(start_page.into()),
     )
-    .title("Clash Verge")
+    .title("Locus")
     .center()
     .decorations(DEFAULT_DECORATIONS)
     .fullscreen(false)
@@ -90,7 +88,42 @@ pub async fn build_new_window() -> Result<WebviewWindow, String> {
     .visible(false) // 等待主题色准备好后再展示，避免启动色差
     .initialization_script(&initial_script)
     .general_autofill_enabled(false) // 禁用自动填充
+    // Log every asset request and its status.
+    //
+    // A page load reports "finished" even when every script in it failed, so the
+    // page-load hook alone cannot tell "the app mounted" from "the document
+    // loaded and the bundle 404'd". This is the hook that can: it sees the URL
+    // and the status the protocol actually returned for it. A 404 here is the
+    // signature of an asset path that does not resolve under `tauri://localhost`.
+    .on_web_resource_request(|request, response| {
+        let uri = request.uri().to_string();
+        let status = response.status().as_u16();
+        let interesting = status >= 400 || uri.ends_with(".js") || uri.ends_with(".css");
+        if interesting && status >= 400 {
+            logging!(warn, Type::Window, "[Window] asset {status} {uri}");
+        } else if interesting {
+            logging!(debug, Type::Window, "[Window] asset {status} {uri}");
+        }
+    })
     .on_page_load(move |window, payload| {
+        // Log what actually loaded, and whether it succeeded, on BOTH events.
+        //
+        // This exists because a blank window is otherwise undiagnosable from the
+        // log: the old code showed the window on `Finished` and said nothing, so
+        // a document that loaded but whose scripts all failed looked identical to
+        // a healthy start. A URL is the difference between "we served the wrong
+        // origin" and "the origin is right and the app threw".
+        let event = match payload.event() {
+            PageLoadEvent::Started => "started",
+            PageLoadEvent::Finished => "finished",
+        };
+        logging!(
+            info,
+            Type::Window,
+            "[Window] page load {event}: url={}",
+            payload.url()
+        );
+
         if payload.event() != PageLoadEvent::Finished {
             return;
         }

@@ -119,6 +119,7 @@ mod app_init {
             cmd::upgrade_clash_core,
             cmd::get_runtime_state,
             cmd::get_pending_failures,
+            cmd::locus_js_log,
             cmd::entry_lightweight_mode,
             cmd::install_service,
             cmd::uninstall_service,

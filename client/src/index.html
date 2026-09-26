@@ -43,6 +43,33 @@
         background: var(--bg-color);
         z-index: 9999;
         transition: opacity 0.2s ease-out;
+        /* The overlay covers the whole window and is normally removed by
+           `hideInitialOverlay()` once the app has painted. That removal is
+           JavaScript, so a bundle that fails to execute would leave this opaque
+           layer over a working app forever — which is indistinguishable from a
+           blank window, and is exactly how the activation-screen bug presented.
+
+           This animation is the CSS-only backstop: it hides the overlay after a
+           few seconds whether or not any script ever runs. The JS path still
+           removes it earlier on a healthy start, so the animation is only ever
+           the safety net, never the normal route. Do not remove it as redundant:
+           it is the difference between "slow" and "blank" when the bundle
+           breaks. */
+        animation: initial-overlay-backstop 0.2s ease-out 5s forwards;
+      }
+
+      @keyframes initial-overlay-backstop {
+        to {
+          opacity: 0;
+          pointer-events: none;
+          visibility: hidden;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #initial-loading-overlay {
+          animation-duration: 0.01s;
+        }
       }
 
       #initial-loading-overlay[data-hidden='true'] {
