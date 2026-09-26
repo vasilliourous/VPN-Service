@@ -94,67 +94,56 @@ Verified against the **live hub**, not only by unit tests:
    pkexec→sudo escalation and service, but nobody has run it. Linux is ~2% of
    clients and last in priority.
 
-### The `proxies` page is still in the client, node selection and all
+### ~~The `proxies` page is still in the client~~ — REMOVED in 3.1.0 (2026-09-26)
 
-**Not a decision — an unfinished piece of the debloat.**
+Resolved by deletion rather than replacement. `pages/proxies.tsx` and the whole
+`components/proxy/` tree (~4,900 lines) are gone, and `proxies` is no longer a
+navigation entry.
 
-`client/src/pages/proxies.tsx` (~200 lines) plus `components/proxy/` (~4,700 lines)
-survive untouched, and `proxies` is still a navigation entry. It renders a node
-picker, latency tests, chain proxies and delay history.
+The one genuinely useful thing in there — **live latency**, which a student asking
+"is my connection good?" wants — was *not* carried over, and that is the gap this
+section leaves behind. The Connection screen shows live up/down speed and the traffic
+graph, which answer "is it working?" but not "is it fast?". A latency readout is still
+worth adding, and `test_delay` still exists to back it.
 
-With **one server per tier** there is nothing to choose between, so the *selection*
-is meaningless. What is genuinely useful in there is the **live latency**, which a
-student asking "is my connection good?" would want.
+### ~~Deferred: the Verge UI a student still meets~~ — DONE in 3.1.0 (2026-09-26)
 
-The plan was to replace it with a small status panel (tier, server, live latency,
-connection state) reusing the existing `test_delay` command. It was left in place
-rather than half-removed while the client was still being made to work.
+**This entire section is superseded.** It measured the problem — "8 of ~203 front-end
+files mention Locus at all" — and posed four open questions. All four were answered and
+the work is finished:
 
-**Related open decision:** node selection was ruled out product-wise, so the 4,700
-lines of proxy-selection machinery are candidates for removal — but check what the
-remaining pages use first. Some of it is shared.
+| Surface | 3.1.0 state |
+|---|---|
+| Activation gate | Locus, rebranded (`UI-AESTHETICS.md` palette) |
+| Nav | **two tabs: Connection and Account** |
+| Proxies / Logs / Settings | **deleted** — 69 files, ~17,600 lines |
+| Home cards | replaced by the Connection screen |
+| Locale text | zero Verge product-name strings in all 13 languages |
 
-### Deferred: the Verge UI a student still meets (measured 2026-09-26)
+Answers, for the record:
 
-The debloat above was scoped as "remove some pages". The 2026-09-26 review showed the
-real size of it, so recording the measurement here rather than in a chat log:
+1. **Node selection does not exist.** One server per tier, so the ~4,900-line proxy
+   tree went. Nothing was kept "in case".
+2. **Logs was deleted rather than replaced.** A "Report a problem" affordance that
+   gathers what support needs is still the better answer, and is now the *only* gap
+   this section leaves behind — a student with a problem has the Account screen's
+   device ID and nothing to send with it.
+3. **Entitlements vs internals:** TUN-on, sysproxy, core choice, ports and DNS are
+   internals with **no UI at all**. Locus decides them. Only language, theme,
+   update-check and refresh became student-facing, inside Account.
+4. **The home cards did not shrink — they were deleted.** Live speed, the traffic graph
+   and the connection state live on Connection; the session totals live on Account.
 
-**8 of ~203 front-end files mention Locus at all.** Everything else is inherited Clash
-Verge Rev, and reachable from the running app. What a student currently meets, in the
-order they meet it:
+What replaced the connective tissue: `components/connection/use-connection.ts` (the
+tunnel state machine), `use-traffic-summary.ts` (one place the traffic numbers are
+computed) and `tier-badge.tsx`. The backend was not touched — profiles, config
+generation, `enhance`, the service/sidecar decision and `locus::tier` all still drive
+`locus_connect` exactly as before.
 
-| Surface | State | Student sees |
-|---------|-------|--------------|
-| Activation gate | **Locus** | correct (once the white-page fix landed) |
-| Home → "Network Settings" card | **Locus** | the one Connect button, but filed under a Verge card title |
-| Home → current proxy, clash mode, traffic, test, IP info, clash info, system info | Verge | proxy mode switches, node name, "Clash" terminology |
-| Nav → Proxies | Verge | ~4,900 lines, node picker, core-unavailable states |
-| Nav → Logs | Verge | raw core log passthrough |
-| Nav → Settings | Verge | Clash core/TUN/sysproxy/Verge-basic/Verge-advanced sections |
-| Profiles / node import | Verge | subscription URLs — a concept a code-based product does not have |
-
-So the remaining work is a **front-end replacement**, not a rename, and it should be
-planned as one piece rather than page-by-page: the nav itself needs to change, because
-three of the four destinations are things a Locus student should not have.
-
-Open questions to settle before writing code (from `docs/ARCHITECTURE.md` §9):
-
-1. Does node selection exist at all? One server per tier says no, which deletes the
-   Proxies page and its ~4,900 lines.
-2. What replaces Logs? A "Report a problem" affordance that gathers what support needs
-   is more useful to a student than a core log they cannot read.
-3. Which Verge settings are *entitlements* (must go) versus *internals with no UI*
-   (stay, unreachable)? TUN-on, sysproxy and core choice are internals now — Locus
-   decides them.
-4. Do the home cards shrink to the Connect control plus live latency, or is there real
-   value in traffic/IP info for a student on a school network? Undecided; the IP card
-   at least answers "am I actually going through the VPN?".
-
-Deliberately **not** started in the 3.0.3 pass: the 3.0.3 work was connect-path and
-branding, and mixing a page-by-page UI removal into it would have made both harder to
-review. The strings, though, are already done — after 3.0.3 there is **zero** Verge
-product-name text in any of the 13 locales, so when the replacement happens the copy is
-no longer the blocker.
+**Still missing from this area:** there is no Locus logo asset in the repo.
+`src-tauri/icons/*` is the Clash Verge Rev mark; `UI-AESTHETICS.md` §4 asks for a 48×48
+`#2EA86A` shield. The activation screen shows the wordmark alone rather than
+substituting the old logo, deliberately — drawing a brand mark needs a human decision.
 
 ### Fork versioning — RESOLVED (2026-09-26)
 
