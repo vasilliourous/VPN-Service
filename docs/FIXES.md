@@ -1,3 +1,223 @@
+## THE APP NOW LOOKS LIKE LOCUS, NOT LIKE CLASH VERGE REV (2026-09-26)
+
+Every previous entry in this file treated the fork's appearance as a text problem —
+rename the strings, delete the Verge pages. That was necessary and not sufficient:
+the app still *shipped another product's colour scheme*. Buttons were iOS blue
+(`#007AFF`), surfaces were Clash Verge grey (`#2E303D`), and the window flashed that
+grey before painting.
+
+The brand already existed. `docs/archive/UI-AESTHETICS.md` defines it — a green-black
+window, Locus green (`#2EA86A`) as the single accent, tier badges that "sell
+themselves" — but it was written for the retired Wails client and **never ported**.
+So this was not a design exercise; it was implementing a spec the repo already had.
+
+### The palette is now the default, not an override
+
+`src/pages/_theme.tsx` is the single file `use-custom-theme` reads, and it held
+Verge's colours. It now holds Locus's, exported as `LOCUS_COLORS` / `LOCUS_LIGHT`
+alongside the tier colours. The existing per-field override is untouched
+(`setting.X || dt.X`), so anyone who customised a colour keeps it — only the default
+changed, which is what a fresh install and most existing ones see.
+
+**Light mode was not in the spec.** The archived document is dark-only, because the
+retired client shipped dark-only. A light palette is derived here rather than quoted,
+documented as an addition so it is not later mistaken for the original design. The
+light accent is a **darker** green (`#1E7A4A`, ~4.6:1 on white) because `#2EA86A` on
+white is ~3.0:1 — fine for fills and large text, short of the 4.5:1 body-text rule.
+Using one green for both would have meant either failing contrast in light mode or
+dulling the brand in the mode that matters most.
+
+### The white flash had three layers, not one
+
+The spec calls out setting the window background natively so there is no flash. The
+fork had Verge grey in **all three** layers that paint during startup:
+
+| Layer | File | Was | Now |
+|---|---|---|---|
+| Native window (OS-painted, before any content) | `utils/resolve/window.rs` | `#2E303D` / `#F5F5F5` | `#06130C` / `#F4F8F5` |
+| Document (parsed before any bundle runs) | `src/index.html` | `#2e303d` / `#f5f5f5` | `#06130c` / `#f4f8f5` |
+| App theme | `src/pages/_theme.tsx` | Verge palette | Locus palette |
+
+Plus two stragglers inside the theme builder (`#ECECEC`, `#3E3E3E`, `#2E303D`
+dialogs, `#666` scrollbar hovers) that would have left neutral grey furniture on a
+green page.
+
+The layers cannot be merged — layer 2 cannot import the theme module, and layer 1 is
+Rust — so they are **pinned against each other by tests instead**:
+
+- `tests/theme-colors.test.ts` asserts the document's `--bg-color` equals the theme's
+  background, that no Verge grey survives in either, and that the tier colours are the
+  spec values.
+- `window.rs`'s own test module asserts the native colour, and derives the `Color`
+  tuple from the hex string via `parse_hex` so the two cannot drift. (Two independent
+  literals per mode is exactly how a tuple and its hex diverge, and the symptom — a
+  subtly wrong flash colour — is one no other test would catch.)
+
+Those tests found two real things while being written: the palette check was
+comparing a lowercased haystack to uppercase needles (so it would have passed with a
+Verge colour present), and the check was scanning the file's own prose, which names
+the colours it replaced. Both fixed; a "guard on the guard" test now asserts the
+comment-stripping did not become so eager that it strips real code.
+
+### What a student sees now
+
+- **Activation** — Locus wordmark in brand green, "Secure school VPN" subtitle, a
+  green radial wash, a filled code field, and the Activate button in `#2EA86A`. The
+  screen is fully decoupled from MUI's theme (`useTheme` is no longer used there at
+  all), which is the correct end state: it renders outside the theme provider and
+  cannot read the app palette, so every value is now explicit.
+- **Connection** — spec status colours (green connected, amber connecting with a
+  pulse, grey disconnected), the tier as its own **badge** rather than concatenated
+  into the status text, and cards on the spec's surface/border/12px-radius treatment.
+- **Account** — the same card treatment via one shared token module
+  (`src/pages/_surfaces.ts`), so the two screens cannot drift apart.
+
+MUI's shadow scale is disabled app-wide, so cards separate themselves with a border.
+A card relying on `elevation` would be invisible; the shared token is what prevents
+each screen re-deciding that.
+
+### Still outstanding
+
+**There is no Locus logo asset in the repo.** The spec calls for a 48×48 shield in
+`#2EA86A`; the activation screen shows the wordmark alone rather than substituting
+Clash Verge Rev's mark, which is still what the icon files contain. Deliberate, not
+an oversight — drawing a brand mark needs a decision this work did not have.
+
+### Verified
+
+- 8 new front-end tests (palette/layer consistency), 4 new Rust tests (hex derivation).
+- `tsc`, CI lint, `cargo test --lib` (501 passed), `vitest` (26 passed) all green.
+- Built and ran: the activation screen reports `page_bg` and heading colour from
+  computed style, so the palette is confirmed in the running app rather than inferred
+  from source.
+
+---
+## THE STUDENT'S REPORT: "THE APP IS NOT WORKING AND THE REBRANDING IS INCOMPLETE" (2026-09-26)
+
+The client opened, and that was the last thing that worked. The report was specific
+and it was correct on every point: a pure-white activation page, `[object Object]` on
+Connect, "Core temporarily unavailable" on the proxy page, a Sidecar fallback that
+failed with a missing-file error referencing AppData, `networkingguides.duckdns.org`
+visible in two places, "Verge Version" on the system card, and — the headline —
+**"the ui is just clash verge rev"**.
+
+### The framing that was wrong, and why it mattered
+
+Earlier entries in this file treat the client as a product that happens to contain
+some Verge code. It is the other way round: **the client *is* Clash Verge Rev, with a
+thin Locus surface on top.** Measured: 8 of ~203 front-end files mention Locus at all.
+The proxy page, the settings pages, the profiles and node UI, the clash-mode and
+current-proxy cards, the service/sidecar machinery and all their strings are inherited
+and reachable.
+
+That is why "the rebranding broke a lot of stuff" is the right description — the
+rebrand was mostly never *done* — and it is why treating each symptom as a separate
+cosmetic bug would have produced a fifth release that still felt broken.
+
+### 1. The white activation page — a colour-scheme disagreement
+
+`index.html` sets `body { color: var(--text-color) }`, and that variable flips to
+`#ffffff` under `prefers-color-scheme: dark`. But the activation screen renders
+**outside `ThemeModeProvider`** (it is the pre-activation gate), so it receives a bare
+`createTheme()` — a *light* palette, i.e. a white `background.default`.
+
+On a machine in dark mode those two disagree, and the result is white text on a white
+background. Every string was present and correct in the DOM; the only visible marks
+were the input border and the one explicitly-coloured link, which is exactly what the
+report described. Confirmed by probing computed style in the running app, not by
+reading:
+
+    before:  heading_color=rgb(255,255,255)   body_color=rgb(255,255,255)
+    after:   heading_color=rgba(0, 0, 0, 0.87)  body_color=rgb(255,255,255)
+
+**Fix:** the screen states its own `color` (and the input's `color` and resting border)
+from the theme instead of inheriting the document's variable.
+
+### 2. `[object Object]` on Connect — two `String(err)` calls
+
+Rust failures cross the IPC boundary as `CommandFailure { code, detail, operation }` —
+a plain object; the type does not survive serialisation. Both Locus catch sites did
+`String(err)`, which is `"[object Object]"`, discarding the one useful sentence the
+backend had produced. The repo already had the correct helper — `errorDetail()` — used
+by every inherited path; Locus was the only code ignoring it.
+
+### 3. The hub domain was student-visible, twice
+
+The activation page rendered `HUB_URL` as a link, and the home header's `?` button
+opened it. The host is the address the client *calls*, not a destination for users, and
+a hostname cannot answer "my code says it is already used". Both removed. The constant
+stays in `services/hub.ts` — activation, heartbeat and updates genuinely need it; only
+its *display* was wrong.
+
+### 4. "Verge Version", "Verge Basic Setting", and 174 locale values
+
+The version row on the system card is this app's **own** version under another
+product's label. Renamed across all 13 locales ("Verge Version" → "Version",
+"Verge Basic/Advanced Setting" → "Basic/Advanced Settings"), and every
+`Clash Verge` / `Clash-Verge` / bare `Verge` occurrence in a user-visible string
+replaced — including the German hyphenated forms and the Chinese version-copy strings
+that an ASCII-only sweep had missed. Result: **zero** Verge product-name strings remain
+in any locale value. The engine name "Clash" (mihomo is a Clash-compatible core) is a
+different thing and was deliberately left alone — 169 such strings.
+
+Also fixed: `# Generated by Clash Verge` in every generated `config.yaml`, and the
+`[ClashVergeRev]` prefix on every log line (`Type::ClashVergeRev` → `Type::App`).
+
+### 5. Connect forced TUN on, which is what made the core unavailable
+
+This is the root cause of the proxy-page failure, and it is an **ordering** bug.
+
+`locus_connect()` set `enable_tun_mode = true` at *connect time*. Verge's
+`prepare_startup` reads that as `service_required`; with the service `NotInstalled` it
+returns `StartupDecision::Wait`, so **the core never starts** — and the UI reports
+"Core temporarily unavailable", a message about the core for a problem that was never
+the core's.
+
+The app already solves this problem, at the wrong moment: `reconcile_startup_tun_availability`
+runs at startup and turns TUN off *precisely so the core can start on the Sidecar*.
+Connect then set it straight back on, re-arming the condition startup had just cleared.
+The app started cleanly and walked into the wall on the first press of Connect.
+
+**Fix:** `locus_connect()` now consults `RUN_STATE.state().tun_capable()` (the same
+predicate the manager uses: `is_admin || service_usable()`) **before writing anything**,
+and refuses with `LOCUS_TUN_NOT_AVAILABLE` and an actionable sentence when TUN cannot
+start. Nothing is persisted on the refusal path, so a failed Connect no longer leaves
+`enable_tun_mode` flipped on for the next launch to trip over.
+
+TUN remains always-on. This does not make Locus connect without it — it stops the app
+from demanding privileges it does not have and then blaming the core.
+
+### 6. The install prompt reported the wrong thing
+
+The service installer elevates via `pkexec` (falling back to `sudo`); when that fails it
+reports only `elevated installer failed with <status>`, and every distinct cause — no
+polkit agent, dismissed prompt, wrong password — arrives identically. It used to surface
+as a generic install failure, sending support to look for a service problem that did not
+exist. Now classified as `SERVICE_ELEVATION_FAILED` with a sentence naming both routes
+(approve the prompt; or run from a terminal). The classifier matches on upstream's
+message string, which is a real coupling — if that wording changes it degrades to the
+generic code, which is the safe direction.
+
+### Verified
+
+- 5 new Rust tests for the TUN gate (including the in-flight-operation case and an
+  assertion that the message does **not** say "TUN", which is our word, not the
+  student's), 4 for the elevation classifier (including a negative case, so an unrelated
+  failure is never reported as an elevation problem).
+- `cargo test --lib`: **482 passed** (was 474). `version_consistency`: 3 passed.
+- `tsc`, CI's own `pnpm run lint`, `vitest` (20) all green.
+- All 130 locale JSON files parse; the locale diff is 174 insertions / 174 deletions —
+  value-only, no structural change.
+
+### What this does NOT fix, stated plainly
+
+The Verge UI a student sees is untouched. That is the largest remaining piece of the
+report and it is a front-end replacement, not a rename — recorded in "Deferred: the
+Verge UI a student still meets" below. Also unchanged: this was verified on a
+locally-built binary, and the install flow still has never been exercised on real
+hardware, which remains the honest limit on what fix 6 can claim.
+
+---
 ## THE BLANK WINDOW, PART 2: THE LOADING OVERLAY COVERED THE ACTIVATION SCREEN (2026-09-26)
 
 The `base: './'` fix below was **necessary but not sufficient**. The window was still

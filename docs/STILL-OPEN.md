@@ -114,6 +114,48 @@ rather than half-removed while the client was still being made to work.
 lines of proxy-selection machinery are candidates for removal — but check what the
 remaining pages use first. Some of it is shared.
 
+### Deferred: the Verge UI a student still meets (measured 2026-09-26)
+
+The debloat above was scoped as "remove some pages". The 2026-09-26 review showed the
+real size of it, so recording the measurement here rather than in a chat log:
+
+**8 of ~203 front-end files mention Locus at all.** Everything else is inherited Clash
+Verge Rev, and reachable from the running app. What a student currently meets, in the
+order they meet it:
+
+| Surface | State | Student sees |
+|---------|-------|--------------|
+| Activation gate | **Locus** | correct (once the white-page fix landed) |
+| Home → "Network Settings" card | **Locus** | the one Connect button, but filed under a Verge card title |
+| Home → current proxy, clash mode, traffic, test, IP info, clash info, system info | Verge | proxy mode switches, node name, "Clash" terminology |
+| Nav → Proxies | Verge | ~4,900 lines, node picker, core-unavailable states |
+| Nav → Logs | Verge | raw core log passthrough |
+| Nav → Settings | Verge | Clash core/TUN/sysproxy/Verge-basic/Verge-advanced sections |
+| Profiles / node import | Verge | subscription URLs — a concept a code-based product does not have |
+
+So the remaining work is a **front-end replacement**, not a rename, and it should be
+planned as one piece rather than page-by-page: the nav itself needs to change, because
+three of the four destinations are things a Locus student should not have.
+
+Open questions to settle before writing code (from `docs/ARCHITECTURE.md` §9):
+
+1. Does node selection exist at all? One server per tier says no, which deletes the
+   Proxies page and its ~4,900 lines.
+2. What replaces Logs? A "Report a problem" affordance that gathers what support needs
+   is more useful to a student than a core log they cannot read.
+3. Which Verge settings are *entitlements* (must go) versus *internals with no UI*
+   (stay, unreachable)? TUN-on, sysproxy and core choice are internals now — Locus
+   decides them.
+4. Do the home cards shrink to the Connect control plus live latency, or is there real
+   value in traffic/IP info for a student on a school network? Undecided; the IP card
+   at least answers "am I actually going through the VPN?".
+
+Deliberately **not** started in the 3.0.3 pass: the 3.0.3 work was connect-path and
+branding, and mixing a page-by-page UI removal into it would have made both harder to
+review. The strings, though, are already done — after 3.0.3 there is **zero** Verge
+product-name text in any of the 13 locales, so when the replacement happens the copy is
+no longer the blocker.
+
 ### Fork versioning — RESOLVED (2026-09-26)
 
 This was an open decision; it is settled.
