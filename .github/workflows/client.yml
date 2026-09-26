@@ -267,12 +267,31 @@ jobs:
             curl -sSL -o "$RUNNER_TEMP/m.zip" \
               https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip
             unzip -o -q "$RUNNER_TEMP/m.zip" -d "$RUNNER_TEMP/win"
-            # The Windows zip nests the binary under minisign-win64/x86_64/,
-            # unlike the macOS one which has it at the root. Locating it rather
-            # than hardcoding the path means a future repackaging does not break
-            # the release.
-            found=$(find "$RUNNER_TEMP/win" -name 'minisign.exe' -type f | head -1)
-            [ -n "$found" ] || { echo "::error::minisign.exe not found in the release zip"; find "$RUNNER_TEMP/win" -type f; exit 1; }
+            # The Windows zip contains BOTH architectures:
+            #
+            #     minisign-win64/aarch64/minisign.exe
+            #     minisign-win64/x86_64/minisign.exe
+            #
+            # Picking with `find | head -1` selects `aarch64` (alphabetically
+            # first), and an ARM64 binary on an x64 runner fails with
+            #
+            #     This version of ...minisign.exe is not compatible with the
+            #     version of Windows you're running
+            #
+            # which reads like a Windows-version problem rather than the wrong
+            # architecture being unpacked. The architecture is now chosen
+            # explicitly from the runner's own PROCESSOR_ARCHITECTURE.
+            case "${PROCESSOR_ARCHITECTURE:-AMD64}" in
+              ARM64|arm64) ms_arch="aarch64" ;;
+              *)           ms_arch="x86_64" ;;
+            esac
+            found="$RUNNER_TEMP/win/minisign-win64/$ms_arch/minisign.exe"
+            [ -f "$found" ] || {
+              echo "::error::no $ms_arch minisign.exe in the release zip"
+              find "$RUNNER_TEMP/win" -type f
+              exit 1
+            }
+            echo "using the $ms_arch minisign build for ${{ runner.arch }}"
             install -m 755 "$found" "$DEST/minisign.exe"
           fi
 
@@ -293,8 +312,7 @@ jobs:
           #
           # cygpath converts to a real Windows path, so nothing has to be escaped.
           if [ "${{ runner.os }}" = "Windows" ]; then
-            MS=$(cygpath -w "$DEST/minisign.exe")
-            cmd //c "$MS" -v
+            "$DEST/minisign.exe" -v
           else
             "$DEST/minisign" -v
           fi
@@ -315,23 +333,33 @@ jobs:
           printf '%s' "$LOCUS_UPDATE_KEY" > "$RUNNER_TEMP/locus.key"
           chmod 600 "$RUNNER_TEMP/locus.key"
 
-          # Git Bash cannot exec a native .exe by bash-style path on Windows
-          # (it reports "Exec format error" on a valid binary), so Windows goes
-          # through cmd. Paths are converted with cygpath, and the artifact name
-          # contains no spaces, so no quoting gymnastics are needed.
+          # Run minisign through Git Bash directly, and give it WINDOWS paths
+          # for its file arguments.
+          #
+          # Two failures shaped this:
+          #
+          #   1. Executing a native .exe by a path built with `cygpath -w` fails
+          #      with "Exec format error" — bash execs it but the D:\ prefix
+          #      confuses the exec layer. Its own POSIX path ($RUNNER_TEMP/...)
+          #      works, so that is what runs it.
+          #   2. minisign itself is a Windows program and expects Windows paths
+          #      for -s/-m/-x, so THOSE are converted with cygpath. The split is:
+          #      exec with a bash path, pass arguments as Windows paths.
+          #
+          # No cmd.exe is involved anywhere, which removes the whole class of
+          # quoting-and-backslash problems this step kept hitting.
+          MS="$RUNNER_TEMP/minisign/minisign.exe"
+          KEY="$RUNNER_TEMP/locus.key"
+          ART="artifacts/${{ matrix.artifact }}"
+          SIG="artifacts/${{ matrix.artifact }}.sig"
+
           if [ "${{ runner.os }}" = "Windows" ]; then
-            KEY=$(cygpath -w "$RUNNER_TEMP/locus.key")
-            MS=$(cygpath -w "$RUNNER_TEMP/minisign/minisign.exe")
-            ART=$(cygpath -w "artifacts/${{ matrix.artifact }}")
-            SIG=$(cygpath -w "artifacts/${{ matrix.artifact }}.sig")
-            # No quoting: cygpath output and the artifact filenames contain no
-            # spaces, and backslash-escaped quotes are consumed by bash before
-            # cmd sees them (the bug that broke this step's version check).
-            cmd //c "$MS -S -s $KEY -m $ART -x $SIG -t Locus_${{ matrix.label }}"
+            "$MS" -S -s "$(cygpath -w "$KEY")" \
+              -m "$(cygpath -w "$ART")" \
+              -x "$(cygpath -w "$SIG")" \
+              -t "Locus_${{ matrix.label }}"
           else
-            "$RUNNER_TEMP/minisign/minisign" -S -s "$RUNNER_TEMP/locus.key" \
-              -m "artifacts/${{ matrix.artifact }}" \
-              -x "artifacts/${{ matrix.artifact }}.sig" \
+            "$RUNNER_TEMP/minisign/minisign" -S -s "$KEY" -m "$ART" -x "$SIG" \
               -t "Locus ${{ matrix.label }}"
           fi
 
