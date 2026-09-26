@@ -112,6 +112,11 @@ jobs:
     name: Build (${{ matrix.label }})
     needs: verify
     runs-on: ${{ matrix.os }}
+    # A cold Rust release build plus pnpm install is ~15 min per platform; macOS
+    # Intel cross-compiling adds a few more. 45 minutes is generous for all of
+    # them and short enough that a genuinely hung job FAILS rather than sitting
+    # for the default 360 while a release waits on it.
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: client
