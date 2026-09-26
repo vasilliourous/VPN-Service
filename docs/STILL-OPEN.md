@@ -66,6 +66,26 @@ Verified against the **live hub**, not only by unit tests:
    pkexec→sudo escalation and service, but nobody has run it. Linux is ~2% of
    clients and last in priority.
 
+### The `proxies` page is still in the client, node selection and all
+
+**Not a decision — an unfinished piece of the debloat.**
+
+`client/src/pages/proxies.tsx` (~200 lines) plus `components/proxy/` (~4,700 lines)
+survive untouched, and `proxies` is still a navigation entry. It renders a node
+picker, latency tests, chain proxies and delay history.
+
+With **one server per tier** there is nothing to choose between, so the *selection*
+is meaningless. What is genuinely useful in there is the **live latency**, which a
+student asking "is my connection good?" would want.
+
+The plan was to replace it with a small status panel (tier, server, live latency,
+connection state) reusing the existing `test_delay` command. It was left in place
+rather than half-removed while the client was still being made to work.
+
+**Related open decision:** node selection was ruled out product-wise, so the 4,700
+lines of proxy-selection machinery are candidates for removal — but check what the
+remaining pages use first. Some of it is shared.
+
 ### Fork versioning — RESOLVED (2026-09-26)
 
 This was an open decision; it is settled.

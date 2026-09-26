@@ -59,14 +59,24 @@ Counts and paths verified against the tree in `client/`.
 
 **Pages** (`src/pages/`, 3,086 lines total):
 
+> **This table is the PLAN. For what was actually done see `UPSTREAM-CHANGES.md` §3.**
+> Two entries differ from the plan:
+>
+> - `logs.tsx` was **kept** and re-branded. It is the only in-app surface a student
+>   can use to produce a support report, and field debugging depends on it.
+> - `proxies.tsx` is **still present and unchanged**, node selection and all. The
+>   product decision was that with one server per tier there is nothing to choose
+>   between, but the page was left alone rather than half-removed while the client
+>   was still being made to work. Treat it as an open item, not a decision.
+
 | Page | Lines | Fate |
 |---|---|---|
-| `profiles.tsx` | 999 | **cut** |
+| `profiles.tsx` | 999 | **cut** (the UI only — the pipeline it fed is load-bearing, see §6.2) |
 | `unlock.tsx` | 411 | **cut** |
 | `home.tsx` | 398 | keep, rework |
 | `connections.tsx` | 340 | **cut** |
-| `logs.tsx` | 207 | **cut** |
-| `proxies.tsx` | 199 | keep (node selection) |
+| `logs.tsx` | 207 | **kept** (re-branded; the in-app support surface) |
+| `proxies.tsx` | 199 | **still present, untouched** — see the note below |
 | `_layout.tsx` | 179 | keep, rework |
 | `settings.tsx` | 121 | keep, gut |
 | `rules.tsx` | 104 | **cut** |
@@ -145,9 +155,17 @@ exposure, anything that assumes the user understands Clash.
 The most important section. **See `UPDATE-ARCHITECTURE.md`** — it is long enough to
 deserve its own file, and it is the design the rest of the rework depends on.
 
-Summary of the decision: **the Tauri updater plugin is removed, not configured.** Locus's
-existing hub-mediated update path is ported to Rust almost verbatim, because it is
-already the contract every deployed client speaks.
+Summary of the decision: **the Tauri updater's DECISION LAYER is removed, and the
+plugin is kept as the installer.** Locus's hub-mediated update path is ported to
+Rust, because it is already the contract every deployed client speaks — and
+`locus/update/install.rs` still calls `Update::install()`, which is what provides
+NSIS/macOS/Linux installation and the mandatory minisign verification. What is gone
+is `core/updater.rs`, the plugin's Tauri registration, its WebView-facing
+capabilities, and the `@tauri-apps/plugin-updater` frontend surface.
+
+(A correction to `UPDATE-ARCHITECTURE.md`, which said "removed, not configured":
+`Update` also cannot be hand-constructed — `extract_path` and `context` are private
+— so the working route is `check()` against the hub's dynamic manifest.)
 
 ---
 
