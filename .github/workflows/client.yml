@@ -423,7 +423,7 @@ jobs:
               "macos_arm": "locus-darwin-arm64",
           }
 
-          out = {"version": os.environ["VERSION"], "platforms": {}}
+          out = {"version": os.environ["VERSION"].lstrip("v"), "platforms": {}}
           missing = []
 
           for key, filename in platforms.items():
@@ -454,6 +454,12 @@ jobs:
           print(json.dumps(out, indent=2))
           PY
         env:
+          # Strip the leading `v` from the tag: the manifest's version field is
+          # compared against update_config and against the version the client
+          # reports, and neither carries the prefix. Leaving it produced
+          # "version": "v3.0.0" in the published manifest — harmless today
+          # because nothing reads that field yet, but exactly the kind of latent
+          # mismatch that becomes a bug the first time something does.
           VERSION: ${{ github.ref_name }}
 
       - name: Verify every artifact is signed
