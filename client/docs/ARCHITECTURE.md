@@ -359,7 +359,11 @@ the fork can plausibly re-earn:
 5. **TUN on/off in settings vs. always-on.** Verge defaults to system-proxy mode;
    the old client was TUN-only. This changes the failure modes students see.
 6. **Linux support level.** ~2% of clients; the fork builds for it, but is it tested
-   or best-effort?
+   or best-effort? **Note (2026-09-26): elevation is not the open question here.** The
+   fork inherits Verge's Linux path — `pkexec` (sudo fallback) installs a root service
+   that runs mihomo as root, and `runstate::tun_capable()` reports `is_admin ||
+   service_usable()`. Nothing needs to be built; the gap is that nobody has **run** it
+   on real Linux hardware in a non-root session. See `docs/STILL-OPEN.md`.
 
 ---
 

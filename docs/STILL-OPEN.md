@@ -19,12 +19,40 @@ ever been run on a school network. Treat "gaming tier" as design intent until
 someone does that. If you have access to a school network and a game, this is the
 single highest-value thing left.
 
-### Linux TUN elevation (Track A)
+### Linux TUN elevation — **not a gap; only unvalidated** (corrected 2026-09-26)
 
-Unchanged by this work. There is no elevation path on Linux — direct mode is
-forced and the helper binary is not shipped, so TUN cannot be created in a
-non-root session. The gap is now declared honestly instead of surfacing as an
-opaque engine error, but it is not fixed. See `docs/ENGINE-SWAP-ANALYSIS.md`.
+**This section previously said "there is no elevation path on Linux". That was true
+of the retired Wails client and is FALSE of `client/`.** It was carried over from
+`docs/ENGINE-SWAP-ANALYSIS.md` without re-checking the fork — the exact failure mode
+this repo keeps re-learning (`docs/README.md` rule 3: the code wins).
+
+The shipping fork is built on Clash Verge Rev, so it **inherits** Verge's elevation
+path and needs no helper binary of its own. The chain is:
+
+```
+pkexec (sudo fallback)  ->  clash-verge-service-install  ->  root service
+                        ->  service runs mihomo as root   ->  TUN works
+```
+
+- `crates/…/clash_verge_service_ipc` → `management.rs::elevate()` runs the installer
+  under **`pkexec`**, falling back to **`sudo`** when it is absent or exits 127.
+  `utils/help.rs::linux_elevator()` probes for `pkexec`. (macOS: `osascript … with
+  administrator privileges`; Windows: `Start-Process -Verb RunAs`.)
+- `core/service.rs::install_service()` → `invoke_service_install()` →
+  `clash-verge-service-install`; the service stages and runs the core from its own
+  administrator-approved directory (`stage_approved_core`, digest-pinned).
+- `core/runstate/health.rs::tun_capable()` is `self.is_admin || self.service_usable()`,
+  with tests `tun_is_capable_when_elevated_even_with_no_service` and
+  `tun_is_capable_via_a_ready_service_without_elevation`.
+
+This is the same mechanism that made Clash Rev Meta work in the original 2026-08-03
+school test — which is why the project rebuilt on Verge rather than repairing the
+retired client (whose hand-rolled elevation was buggy three times, FIXES #17/#40/#41,
+and is deliberately not ported: `client/docs/LOGIC-INVENTORY.md` §10).
+
+**The only thing open is running it** — nobody has exercised that chain on real Linux
+hardware in a non-root session. See item 4 under "fixable now", which is the same
+finding stated as a to-do.
 
 ---
 

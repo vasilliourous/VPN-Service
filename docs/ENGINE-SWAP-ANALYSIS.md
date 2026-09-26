@@ -1,18 +1,57 @@
 # Engine & TUN Analysis: sing-box → mihomo, and the Linux Elevation Gap
 
-**Status:** analysis only — no code changed
+> **⚠️ HISTORICAL — describes the RETIRED Wails client.** Both tracks are moot for
+> the shipping fork (it bundles mihomo *and* inherits Verge's pkexec → root-service
+> elevation). It has its own correction banner above §1. Nothing here is a task list
+> for `client/`.
+
+**Status:** analysis only — no code changed. **⚠️ Written about the RETIRED Wails client; Track A is now MOOT for the shipping fork — see the banner above §1.**
 **Date:** 2026-08-03 (corrected 2026-08-03 after user context: the school test was on a BYOD Linux device)
 **Trigger:** On the school network, Clash Rev Meta was the only client with consistently working TUN.
 **Scope:** Root-cause analysis + what a fix entails. Two independent tracks: **(A) Linux TUN elevation** (the actual cause of the observed failure) and **(B) engine swap sing-box → mihomo** (optional, Windows-side rationale).
+
+> ## ⚠️ CORRECTION (2026-09-26): Track A describes the RETIRED client and is MOOT
+>
+> Everything below about "Locus has no Linux elevation path" was measured against
+> **`legacy/wails-client/`** — the Go + Wails + sing-box client that did not ship.
+> Those statements are accurate about *that* client and are **false about the
+> shipping fork in `client/`**.
+>
+> `client/` is built on Clash Verge Rev, and **inherits Verge's elevation path
+> intact** — no helper binary of its own is needed:
+>
+> - `crates/…/clash_verge_service_ipc` → `management.rs::elevate()` runs the
+>   installer under **`pkexec`**, falling back to **`sudo`** when `pkexec` is
+>   missing or exits 127. `utils/help.rs::linux_elevator()` probes for `pkexec`.
+>   (macOS: `osascript … with administrator privileges`. Windows: `Start-Process
+>   -Verb RunAs`.)
+> - It installs a **root service** — `core/service.rs::install_service()` →
+>   `clash-verge-service-install` — and the service runs the core from its own
+>   administrator-approved directory (`stage_approved_core`, digest-pinned).
+> - `core/runstate/health.rs::tun_capable()` is
+>   `self.is_admin || self.service_usable()`.
+>
+> So the chain is **pkexec → install root service → service runs mihomo as root →
+> TUN works.** Track A's "fix" is not a piece of work that remains to be done; it
+> is plumbing the fork already has, because upstream's machinery is *used, not
+> replaced* (`client/docs/UPSTREAM-CHANGES.md` §1).
+>
+> **The one thing still genuinely open** is that nobody has **run** that chain on
+> real Linux hardware in a non-root session — see `docs/STILL-OPEN.md` "Linux TUN
+> elevation". That is a validation gap, not a missing feature.
+>
+> Read the rest of this document as **history**: it explains why the 2026-08-03
+> school test failed and why the engine swap was considered. Do not act on its
+> Track A recommendations for `client/`.
 
 ---
 
 ## 1. TL;DR
 
 - The school test was **not** an engine comparison. The user tested on **their own Linux device** (school is BYOD; Wayland session, non-root).
-- TUN on Linux requires **root / CAP_NET_ADMIN**. Clash Rev Meta worked because it **escalates properly**; hiddify failed because it didn't; **Locus has no Linux elevation path at all** — direct mode, helper binary not shipped → TUN is dead on arrival on any non-root Linux session.
-- Fixing the observed failure = **giving the client a Linux TUN elevation mechanism** (pkexec/polkit or a revived privileged helper). This is engine-agnostic.
-- The **sing-box → mihomo swap remains optional**: its rationale is Windows-side (WFP fragility documented in FIXES.md) plus mihomo's external-controller API for real egress checks. It does **not** fix the Linux TUN failure by itself.
+- TUN on Linux requires **root / CAP_NET_ADMIN**. Clash Rev Meta worked because it **escalates properly**; hiddify failed because it didn't; **the retired Wails client had no Linux elevation path at all** — direct mode, helper binary not shipped → TUN was dead on arrival on any non-root Linux session. **The shipping fork does have one** (see the correction above).
+- For the retired client, fixing the observed failure meant **giving it a Linux TUN elevation mechanism** (pkexec/polkit or a revived privileged helper) — engine-agnostic. The fork solved this by inheritance.
+- The **sing-box → mihomo swap remains moot too**: the fork bundles mihomo, so Track B is settled by construction. Its original rationale was Windows-side (WFP fragility documented in FIXES.md) plus mihomo's external-controller API for real egress checks.
 
 ---
 
@@ -34,9 +73,12 @@ User context (2026-08-03):
 |---|---|---|
 | Clash Rev Meta | ✅ worked | Escalates the mihomo core to root properly |
 | hiddify | ❌ failed | Failed to escalate (Wayland session not owned by root) |
-| Locus (ours) | ❌ fails (deterministic) | **No elevation path at all** — see §4 |
+| Locus *(the RETIRED Wails client)* | ❌ fails (deterministic) | **No elevation path at all** — see §4. **The shipping fork is not this client**; it inherits Verge's pkexec → root service and reports `tun_capable() == true` |
 
-### 3.1 What the code shows (the gap is real, not hypothetical)
+### 3.1 What the code shows (the gap was real in the RETIRED client)
+
+> Every bullet below is about `legacy/wails-client/`. None of it describes
+> `client/`.
 
 - `legacy/wails-client/app.go:157` → `a.mgr.SetHelperMode(false)` — **direct mode forced on all platforms**.
 - `startDirect` (process.go) spawns the engine as a plain child of the app process: no pkexec, no sudo, no polkit, no setuid, no CAP_NET_ADMIN delegation.
@@ -47,6 +89,12 @@ User context (2026-08-03):
 ### 3.2 Implication for the engine question
 
 On Linux, **both sing-box and mihomo require root (or CAP_NET_ADMIN) for TUN**. mihomo gained no advantage in the school test — the winning difference was *who escalates the core*, which is application plumbing, not core TUN behavior. Swapping engines would have changed nothing about the observed failure.
+
+**That conclusion is what the fork acted on, and it is the reason this document is
+history.** Rather than repair the retired client's plumbing (Track A) or swap its
+engine (Track B), the project rebuilt on Clash Verge Rev — which supplied both:
+Verge's service/elevation machinery *and* mihomo. The plumbing diagnosis was right;
+the remedy chosen was different.
 
 ---
 
@@ -66,9 +114,14 @@ sing-box's Windows TUN is WFP-heavy; our own FIXES.md trail (Follow-ups 1–10) 
 
 ## 5. Current integration surface (what a fix touches)
 
-### Track A — Linux TUN elevation (the actual fix)
+### Track A — Linux TUN elevation (MOOT for the fork — historical, and never done for the retired client)
 
-| File | Change |
+> **Nothing in this table is a piece of work for `client/`.** It is the change list
+> that *would* have been required for the retired Wails client, which never
+> received it. The fork inherited a working elevation path instead — see the
+> correction banner above §1. Kept because it explains the 2026-08-03 failure.
+
+| File (retired client) | Change that was needed |
 |---|---|
 | `legacy/wails-client/app.go` | Don't force `SetHelperMode(false)` on Linux (or add a Linux-only elevation path for direct mode) |
 | `legacy/wails-client/internal/manager/process.go` | Revive/replace `autoStartHelper` + helper IPC, or add `pkexec` elevation of the engine itself; keep Windows on direct mode |
@@ -76,11 +129,19 @@ sing-box's Windows TUN is WFP-heavy; our own FIXES.md trail (Follow-ups 1–10) 
 | Packaging (`build.yml`, zip contents) | Ship helper binary (+ `.service`/polkit policy file if used) |
 | `process_unix.go` | Guard logic per-OS (unchanged shape) |
 
-Options for the elevation mechanism (see §8 for recommendation):
+The three mechanisms that were considered — and **what the fork actually does**:
 
-1. **pkexec/polkit the engine directly** — `pkexec` spawns the engine as root with a GUI auth prompt (GNOME/KDE standard). Cheap, no helper binary; lifecycle caveat: the engine is no longer a direct child, but pid-based stop still works.
-2. **Revive the privileged helper** — the old architecture's pattern (helper owns TUN + routes, engine stays unprivileged or is spawned by the helper). More moving parts (binary + IPC + packaging) but matches the design V5 was built from.
-3. **systemd service / D-Bus + polkit policy** — the "proper" way Clash GUIs often do it (verge-mihomo service); most robust, most work.
+1. **pkexec/polkit the installer, then run a root service** — ✅ **this is the
+   fork's design.** `management.rs::elevate()` pkexecs the installer (sudo
+   fallback), which registers `clash_verge_service_ipc`; the service runs the core
+   as root. `tun_capable()` is `is_admin || service_usable()`.
+2. **Revive a separate privileged helper with its own IPC** — ❌ not used. This is
+   what the retired client had (and lost); the fork deliberately does not carry a
+   helper binary, because `internal/helper`'s hand-rolled elevation was buggy three
+   separate times (FIXES #17, #40, #41).
+3. **systemd service / D-Bus + polkit policy** — ✅ effectively what option 1
+   becomes: `clash-verge-service-install` registers a system service rather than
+   spawning a transient privileged child.
 
 ### Track B — engine swap (unchanged surface, now optional)
 
@@ -159,7 +220,7 @@ Verified facts: `#PROXY` nameserver suffix exists in mihomo DNS docs (routes DNS
 | Health loop | unchanged | unchanged |
 | Foreign-process guard | `foreignSingBoxRunning` | match `mihomo`, `clash-meta`, `verge-mihomo` |
 | Elevation (Windows) | admin required | admin required — same |
-| Elevation (Linux) | **none today — Track A required** | **none either — Track A required** |
+| Elevation (Linux) | none — the *retired* client had no path (Track A) | none needed: both engines require root, and the fork gets it via pkexec → root service |
 | wintun.dll | bundled in sing-box zip | **verify**: mihomo Windows zip may not include it; fallback = official wintun.net driver (same driver) |
 
 **Phase-2 bonus:** mihomo `external-controller` REST API (`external-controller: 127.0.0.1:9090`) → `GET /proxies/PROXY/delay` gives real egress checks, fixing the known "says Connected but no internet" gap that sing-box cannot offer without log parsing.
@@ -168,16 +229,27 @@ Verified facts: `#PROXY` nameserver suffix exists in mihomo DNS docs (routes DNS
 
 ## 8. Options & recommendation
 
+> **All four options below were written for the retired Wails client.** Neither A
+> nor B is outstanding for `client/`: **A is inherited** (pkexec → root service,
+> see the banner above §1) and **B is settled by construction** (the fork bundles
+> mihomo). The options are kept as the reasoning record. The only live remnant is
+> **validating** the inherited Linux elevation path — §10's checks 1–3, 5 and 8
+> remain a good script for doing that.
+
 - **Option A — Fix Linux TUN elevation (the actual fix, recommended first).** Cheapest robust path: pkexec/polkit the engine spawn on Linux (GUI auth prompt, no helper binary), keep Windows direct mode. Fixes the observed school-network failure regardless of engine. ~0.5–1 day.
 - **Option B — Engine swap to mihomo (optional, later).** Rationale is now Windows-side only (WFP avoidance hypothesis) + external-controller egress checks. Does not help Linux BYOD without Track A. ~1.5–2 days.
 - **Option C — Both.** Do A now (unblocks the user's device today), validate on the school network, then decide B using Windows school-laptop data.
 - **Option D — Do nothing / keep patching sing-box WFP issues on Windows.** Already 10 follow-up fixes; diminishing returns.
 
-**Recommendation: A now, C if Windows data still misbehaves after A.** Keep sing-box code around for rollback either way.
+**Recommendation (historical): A now, C if Windows data still misbehaves after A.** As it turned out, the fork took neither path — it was rebuilt on Clash Verge Rev, which brought both the Verge service and mihomo with it.
 
 ---
 
 ## 9. Effort estimate
+
+> **Historical.** All of this was scoped against the retired client and none of it
+> was done. The fork paid the cost differently: as the work of building a product
+> on top of Verge instead of repairing this client.
 
 | Task | ~Effort |
 |---|---|
@@ -196,6 +268,13 @@ Verified facts: `#PROXY` nameserver suffix exists in mihomo DNS docs (routes DNS
 
 ## 10. Verification plan (school network, BYOD Linux)
 
+> **Retargeted 2026-09-26:** written for the retired client, but checks 1–3, 5 and
+> 8 are still exactly the right script for the one live question — whether
+> `client/`'s **inherited** pkexec → root-service → mihomo-as-root chain actually
+> brings up TUN on a non-root Wayland session. Checks 7 and 9 name sing-box
+> constructs that no longer apply (the fork's engine is mihomo; the foreign-process
+> guard matches `verge-mihomo`).
+
 1. **Elevation UX:** Connect on a non-root Wayland session → polkit prompt appears → auth → TUN comes up (`ip addr show locus0`, `ip route` shows split default). Cancel prompt → clean error, no half-state.
 2. **Repeated connect/disconnect × 20** — no orphaned engine, TUN always cleaned, no polkit prompt spam.
 3. **DNS:** real site resolution (through-tunnel DNS invariant); behavior with school DHCP DNS.
@@ -211,7 +290,8 @@ Verified facts: `#PROXY` nameserver suffix exists in mihomo DNS docs (routes DNS
 ## 11. References
 
 - User context (2026-08-03): school is BYOD; test device = user's Linux laptop, Wayland, non-root; Clash Rev Meta's edge = proper TUN escalation; hiddify failed to escalate.
-- Code evidence: `legacy/wails-client/app.go:157` (`SetHelperMode(false)`), `process.go` (`startDirect`, `autoStartHelper` dead path), `process_unix.go`, `v5/legacy/`.
+- Code evidence (**retired client only**): `legacy/wails-client/app.go:157` (`SetHelperMode(false)`), `process.go` (`startDirect`, `autoStartHelper` dead path), `process_unix.go`, `v5/legacy/`.
+- **Shipping fork's elevation path (read these instead, if that is what you are here for):** `crates/…/clash_verge_service_ipc` `management.rs::elevate()` (pkexec → sudo fallback); `client/src-tauri/src/utils/help.rs::linux_elevator()`; `core/service.rs` (`install_service`, `invoke_service_install`, `stage_approved_core`); `core/runstate/health.rs::tun_capable()`.
 - mihomo TUN docs: https://wiki.metacubex.one/en/config/inbound/tun/
 - mihomo DNS docs: https://wiki.metacubex.one/en/config/dns/
 - mihomo releases: https://github.com/MetaCubeX/mihomo/releases (v1.19.29 latest at analysis time)

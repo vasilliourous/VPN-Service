@@ -1,3 +1,147 @@
+## THE CLIENT RENDERED A BLANK WINDOW — ASSET URLS RESOLVED AGAINST THE PROTOCOL ROOT (2026-09-26)
+
+The 3.0.0 build opened a window containing only the static shell from `index.html`:
+no React, no activation gate, nothing. The WebView was loading a document, and
+every script and stylesheet in it 404'd.
+
+### Root cause
+
+`client/vite.config.mts` never set `base`, so Vite defaulted to `/` and rewrote
+every asset URL to a root-absolute path:
+
+```html
+<script type="module" src="/assets/polyfills-CJXZ-NIF.js"></script>
+<link rel="stylesheet" href="/assets/index-DqUKtJPb.css">
+```
+
+In production Tauri serves `dist/` over the **`tauri://localhost` custom protocol**,
+where `/assets/...` resolves against the *protocol root*, not `dist/assets/`. So
+every module preload, the entry chunk and the stylesheet failed to load, `#root`
+was never populated, and the only thing that could render was the static chrome in
+the document itself — which is why the window looked like "HTML that does not
+exist" while a build and 474 tests were green.
+
+This is invisible to every test we had: the build succeeds, the files exist on
+disk, and `pnpm run web:dev` is unaffected because the dev server *does* serve
+`/assets/...` from the root. Only the packaged app could show it.
+
+### Fix
+
+`base: './'` in `vite.config.mts`. Verified in the built output: **0** absolute
+`/assets/` references, 15 relative `./assets/`, and the compiled binary embeds
+`./assets/shared-B3fm-sXH.js`-style paths.
+
+### Two further defects found while diagnosing it
+
+1. **`createBrowserRouter` under a serverless protocol.** `_routers.tsx` used the
+   HTML5-history router. `tauri://localhost` has no server behind it, so a route
+   like `/proxies` requests a document that nothing serves — navigation and reload
+   broke. Switched to `createHashRouter`, which keeps the route in the fragment.
+2. **Five navigations to a route that no longer exists.** `/profile` was removed
+   with the profiles UI, but `HomeProfileCard` — rendered on the home screen **by
+   default** — plus the proxy empty state and two notice handlers still navigated
+   there, each landing on a blank page. The card was subscription-management UI
+   (import subscription, traffic quota, expiry) with no role in a code-activated
+   client; it and the dead buttons are removed, and the now-unused `navigate`/`t`
+   plumbing through `_layout.tsx` and `notification-handlers.ts` with them.
+
+### Branding leaks fixed in the same pass
+
+The window title said **"Clash Verge"** from two independent places, and the
+second overrode the first on macOS: `index.html`'s `<title>` and
+`lib.rs::handle_ready_resumed`'s `set_title("Clash Verge")`. Both now say Locus,
+as does the startup-failure dialog in `utils/startup.rs`.
+
+**Not fixed, and deliberately:** the icon assets (`logo.svg`, `icon_dark/light.svg`,
+`icon.{png,ico}`, `Assets.car`, the Windows squares) are still the Clash Verge Rev
+mark, and `logo.svg` is a 117×27 "Clash Verge" wordmark. No Locus-branded asset
+exists anywhere in the repository, so replacing them is a design decision rather
+than a bug fix. The documented brand is Locus green `#2EA86A` on `#06130C`
+(`docs/ARCHITECTURE.md`, `docs/archive/UI-AESTHETICS.md`).
+
+### The lesson
+
+**A green build and a full test suite do not prove the packaged app can load its
+own assets.** The tests ran against source, the dev server served from the root,
+and the failure existed only in the artifact that ships. The check that catches
+this class is inspecting the *built* `dist/index.html` for root-absolute paths —
+which `pnpm run web:build` now produces correctly, and which is what the fix was
+verified against.
+
+---
+
+
+
+## "LOCUS HAS NO LINUX ELEVATION PATH" WAS A CLAIM ABOUT THE RETIRED CLIENT, NOT THE FORK (2026-09-26)
+
+Five documents said the client cannot create a TUN device on Linux because it has no
+elevation mechanism. **All five were describing `legacy/wails-client/`** — the Go +
+Wails + sing-box client that does not ship — and the claim was copied into contexts
+that read as if it were about `client/`.
+
+It was stated to the operator as current fact ("there is no Linux elevation path…
+TUN cannot be created in a non-root session"). It is **false for the shipping fork.**
+
+### What is actually true
+
+`client/` is built on Clash Verge Rev and inherits its elevation path unchanged —
+it needs no elevation code of its own:
+
+- `crates/…/clash_verge_service_ipc` → `management.rs::elevate()` runs the installer
+  under **`pkexec`**, falling back to **`sudo`** when `pkexec` is absent or exits 127.
+  (`utils/help.rs::linux_elevator()` probes for `pkexec`; macOS uses
+  `osascript … with administrator privileges`, Windows `Start-Process -Verb RunAs`.)
+- `core/service.rs::install_service()` → `invoke_service_install()` →
+  `clash-verge-service-install` installs a **root service**, which stages and runs
+  the core from its own administrator-approved directory (`stage_approved_core`).
+- `core/runstate/health.rs::tun_capable()` is `self.is_admin || self.service_usable()`,
+  covered by `tun_is_capable_when_elevated_even_with_no_service` and
+  `tun_is_capable_via_a_ready_service_without_elevation`.
+
+So the chain is pkexec → install root service → service runs mihomo as root → TUN
+works. This is the same mechanism that made Clash Rev Meta work in the original
+2026-08-03 school test — which is exactly why the project rebuilt on Verge rather
+than repairing the retired client (`docs/ENGINE-SWAP-ANALYSIS.md`, correction banner).
+
+### Why the claim was wrong to inherit
+
+The retired client's limitation was real *for it*: `legacy/wails-client/app.go:157`
+forces `SetHelperMode(false)`, and its `autoStartHelper` drove a helper binary that
+was never shipped. The architectural rule that replaced it is explicit —
+upstream's machinery is *used, not replaced* (`client/docs/UPSTREAM-CHANGES.md` §1),
+and elevation is deliberately **not** written
+(`client/docs/LOGIC-INVENTORY.md` §10: the old path "was buggy three separate times
+(FIXES #17, #40, #41) and should not be ported in any form").
+
+### What was done
+
+Corrected in all five places, each now saying what is true of the fork:
+
+| File | Was | Now |
+|---|---|---|
+| `docs/STILL-OPEN.md` | "There is no elevation path on Linux" | The fork **has** one (pkexec → root service); only **running** it is open |
+| `docs/ENGINE-SWAP-ANALYSIS.md` | Track A listed as the work to do | ⚠️ correction banner: both tracks describe the retired client; Track A is inherited |
+| `docs/README.md` | "Track B is settled" | Track A is settled too; both describe the retired client |
+| `client/docs/ARCHITECTURE.md` | "Linux support level: is it tested or best-effort?" | Elevation is not the open question — validation is |
+| `docs/archive/README-legacy-v5.md` | "…the Linux TUN elevation gap" | marks both tracks as the retired client's |
+
+Memory files `engine-swap-analysis-mihomo` and `v5-client-architecture` were
+rewritten with status banners; `client-complete` now records the inherited path.
+
+### The lesson worth keeping
+
+**A retired component's limitation is not the live system's limitation, and a
+document that names the product while meaning the component is a trap.** The
+subject of "Locus has no elevation path" was one retired client among three; two
+documents asserted it as a project-level fact, and one memory file still called
+that dead code "current, authoritative".
+
+Two cheap defences, both skipped: check what the claim is *about* before believing
+it, and read the component that actually ships. Long-lived notes need an explicit
+status banner, or they age into traps.
+
+---
+
 ## `/api/hiddify` HAD NEVER WORKED, AND ITS `all=1` LEAK WAS NEVER EXPLOITABLE (2026-09-25)
 
 `hiddify.pb.js` generated Hiddify-compatible `ss://` links for testing a tier

@@ -67,7 +67,7 @@ docs/CONTEXT.md            # Agent/developer context — network analysis, proto
 │   ├── POCKETBASE-SETUP.md    # Collections, hooks, seeding, admin setup
 │   ├── SECRETS-MANAGEMENT.md  # Age-encrypted secrets workflow
 │   ├── CI-CD.md           # GitHub Actions pipeline, build matrix, releases
-│   ├── ENGINE-SWAP-ANALYSIS.md # sing-box→mihomo + the Linux TUN elevation gap
+│   ├── ENGINE-SWAP-ANALYSIS.md # sing-box→mihomo + Linux TUN elevation (both tracks = the retired client; moot for the fork)
 │   ├── UI-AESTHETICS.md   # Visual design spec (colors, layout, icons)
 │   ├── GAMING-UDP.md      # sing-box server + UDP-over-TCP (UoT) for gaming
 │   └── FIXES.md           # Issues discovered & fixes applied (dated log)

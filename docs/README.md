@@ -60,7 +60,7 @@ document the contract the shipping fork must reproduce, not because the code is 
 
 | Document | What it is |
 |---|---|
-| [`ENGINE-SWAP-ANALYSIS.md`](ENGINE-SWAP-ANALYSIS.md) | sing-box → mihomo analysis. **Partly moot by construction**: the fork bundles mihomo, so Track B is settled. Read the correction. |
+| [`ENGINE-SWAP-ANALYSIS.md`](ENGINE-SWAP-ANALYSIS.md) | sing-box → mihomo analysis. **Moot by construction**: the fork bundles mihomo, so Track B is settled — and **Track A is settled too**, because the fork inherits Verge's pkexec → root-service elevation. Both tracks describe the *retired* Wails client. Read the correction banner. |
 | [`GAMING-UDP.md`](GAMING-UDP.md) | The UoT (UDP-over-TCP) work for the gaming tier. Built; the open question is whether it has ever carried a real game session. |
 
 ## History
