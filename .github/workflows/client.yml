@@ -382,6 +382,62 @@ jobs:
             client/artifacts/${{ matrix.artifact }}.sig
           if-no-files-found: error
 
+      # ── Stage the human-facing installer ──
+      #
+      # `tauri build` already produced a real bundle above (NSIS on Windows, .app
+      # + .dmg on macOS, .deb/.rpm on Linux); we were simply throwing it away and
+      # publishing only the bare executable.
+      #
+      # That mattered more than it looked. On Windows the NSIS script contains the
+      # `StartVergeService` / `RemoveVergeService` macros that REGISTER THE SYSTEM
+      # SERVICE, and the service is what makes TUN reachable (`tun_capable` is
+      # `is_admin || service_usable()`). Shipping only the raw .exe meant no
+      # installer ever ran, so the service was never registered, so a Windows
+      # student could never connect through TUN at all.
+      #
+      # The two artifact kinds are kept strictly apart: the updater binaries keep
+      # their exact names (fetch-release.py resolves them from an allowlist, and
+      # handing it an installer would be a silent mis-update), while the
+      # installers get distinct `installer-` names and are published for humans
+      # to download and run.
+      - name: Stage the platform installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="target/${{ matrix.triple }}/release/bundle"
+          mkdir -p installer
+          found=0
+
+          # Collect whatever this platform actually produced. Using a glob rather
+          # than one hardcoded path because the extensions differ per platform and
+          # a silent "nothing matched" is the failure mode that would recreate
+          # the original bug without anyone noticing.
+          for f in \
+            "$bundle"/nsis/*.exe \
+            "$bundle"/dmg/*.dmg \
+            "$bundle"/deb/*.deb \
+            "$bundle"/rpm/*.rpm
+          do
+            [ -f "$f" ] || continue
+            cp "$f" "installer/$(basename "$f")"
+            echo "staged installer: $(basename "$f")"
+            found=$((found + 1))
+          done
+
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no installer bundle found for ${{ matrix.label }} under $bundle"
+            # List what IS there, so a bundle-layout change is diagnosable from
+            # the log instead of requiring a guess.
+            find target -path '*/release/bundle*' -type f 2>/dev/null | head -40
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.label }}
+          path: client/installer/*
+          if-no-files-found: error
+
   # ── Assemble the release ──
   release:
     name: Release
@@ -399,6 +455,48 @@ jobs:
           # per-platform subdirectories. merge-multiple puts them all in one dir.
           merge-multiple: true
           path: release
+
+      # The human-facing installers land in their own directory first, then are
+      # copied in under an `installer-` prefix.
+      #
+      # Two stages rather than downloading straight into `release/` because the
+      # installers carry their upstream filenames (e.g. `Locus_3.0.3_x64-setup.exe`)
+      # and a rename step is the only place we can be certain none of them can
+      # collide with an updater payload name. Collision is the one failure that
+      # would matter: fetch-release.py would find an installer where it expected
+      # a raw binary and publish it as the update.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: installers-raw
+
+      - name: Prefix and stage the installers
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          count=0
+          for f in installers-raw/*; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            # Defensive: refuse anything that looks like an updater payload, so a
+            # future naming change upstream cannot quietly publish an installer
+            # under a name fetch-release.py resolves.
+            case "$base" in
+              locus-*|manifest.json)
+                echo "::error::installer artifact collides with an updater name: $base"
+                exit 1
+                ;;
+            esac
+            cp "$f" "release/installer-$base"
+            echo "staged: installer-$base"
+            count=$((count + 1))
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no installer artifacts were produced by the build jobs"
+            exit 1
+          fi
+          echo "Staged $count installer asset(s)."
 
       - name: List what will be published
         run: ls -la release/
@@ -481,10 +579,18 @@ jobs:
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          # Attach ONLY the updater artifacts. Installers and zips may be added
-          # later as human-facing assets; fetch-release.py resolves by name from
-          # an allowlist, so extra assets neither break the all-or-nothing check
-          # nor risk an installer being handed to the updater as a payload.
+          # Two kinds of asset, deliberately named apart.
+          #
+          # `locus-*` are the UPDATER payloads: raw executables the in-app
+          # updater downloads and replaces itself with. fetch-release.py resolves
+          # exactly these names from an allowlist, so they must not be renamed.
+          #
+          # `installer-*` are the HUMAN payloads: the NSIS setup .exe, .dmg,
+          # .deb and .rpm a person downloads and runs to install Locus. They are
+          # the ones that register the system service on Windows (see the
+          # `StartVergeService` macros in packages/windows/installer.nsi), which
+          # is what makes TUN reachable there. They are never fetched by
+          # fetch-release.py, so their names cannot collide with an update.
           files: |
             release/locus-linux-amd64
             release/locus-linux-amd64.sig
@@ -495,6 +601,7 @@ jobs:
             release/locus-darwin-arm64
             release/locus-darwin-arm64.sig
             release/manifest.json
+            release/installer-*
           draft: false
           # Idempotent: re-running on the same tag replaces assets rather than
           # failing. A half-published release is worse than a re-run.

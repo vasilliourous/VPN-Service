@@ -58,11 +58,26 @@ const fn can_allow_sidecar_for_session(running_mode: &RunningMode, service_statu
         (running_mode, service_status),
         (
             RunningMode::NotRunning,
+            // `SidecarAllowed` included: the session has already accepted a
+            // sidecar, so asking again is not a new decision. Without it the
+            // app re-prompts after a restart even though the student already
+            // said yes, which reads as the app forgetting their answer.
             ServiceStatus::NotInstalled
                 | ServiceStatus::NeedsReinstall
                 | ServiceStatus::InstallRequired
                 | ServiceStatus::Unavailable(_)
-        ) | (RunningMode::Sidecar, ServiceStatus::InstallRequired)
+                | ServiceStatus::SidecarAllowed
+        )
+        // A sidecar that is ALREADY running may stay running when the service
+        // becomes unavailable or was already accepted for this session.
+        //
+        // This arm is the "it was working, then the service went away" path: a
+        // user is connected through the sidecar, the service probe fails or is
+        // uninstalled underneath them, and the old rule (InstallRequired only)
+        // would refuse the allowance and tear down a working tunnel. A tunnel
+        // that is carrying traffic is not the moment to re-litigate how it was
+        // started.
+        | (RunningMode::Sidecar, ServiceStatus::InstallRequired | ServiceStatus::Unavailable(_) | ServiceStatus::SidecarAllowed)
     )
 }
 
@@ -381,7 +396,17 @@ impl CoreManager {
         if matches!(*mode, RunningMode::NotRunning) {
             clash_verge_service_ipc::execution::check_sidecar_available().await?;
         }
-        SERVICE_MANAGER.allow_sidecar_for_session()?;
+        // Only ask when the session has not already settled on Sidecar.
+        //
+        // Now that `can_allow_sidecar_for_session` also matches when the status
+        // is already `SidecarAllowed`, this call is redundant in that case — and
+        // redundant is not harmless: `allow_sidecar_for_session` bumps the run
+        // state and announces it, so re-asking makes observers see a fresh
+        // transition for a decision that was already made, and the UI can flash
+        // the sidecar notice again on every continue.
+        if !matches!(status, ServiceStatus::SidecarAllowed) {
+            SERVICE_MANAGER.allow_sidecar_for_session()?;
+        }
         // Settling on Sidecar is what makes the verdict final, so ask only once it is recorded.
         // Elevation alone carries TUN on Sidecar; a Sidecar that cannot must write it off.
         let prepared = async {
@@ -1474,26 +1499,62 @@ mod tests {
             ServiceStatus::NeedsReinstall,
             ServiceStatus::InstallRequired,
             ServiceStatus::Unavailable("offline".into()),
+            // Already-accepted counts as allowed: re-asking is not a new decision.
+            ServiceStatus::SidecarAllowed,
         ];
         for status in &allowed_statuses {
             assert!(can_allow_sidecar_for_session(&RunningMode::NotRunning, status));
             assert!(!can_allow_sidecar_for_session(&RunningMode::Service, status));
-            if !matches!(status, ServiceStatus::InstallRequired) {
+            // A running sidecar may continue for these, and only these. Every
+            // other status leaves it to the NotRunning rules — which is why the
+            // negation is expressed as an explicit list rather than its absence.
+            if matches!(
+                status,
+                ServiceStatus::InstallRequired
+                    | ServiceStatus::Unavailable(_)
+                    | ServiceStatus::SidecarAllowed
+            ) {
+                assert!(can_allow_sidecar_for_session(&RunningMode::Sidecar, status));
+            } else {
                 assert!(!can_allow_sidecar_for_session(&RunningMode::Sidecar, status));
             }
         }
 
+        // `SidecarAllowed` deliberately left this list: it is now an allowed
+        // state for both running modes, not a rejected one.
         let rejected_statuses = [
             ServiceStatus::Checking,
             ServiceStatus::Ready,
             ServiceStatus::UninstallRequired,
             ServiceStatus::ReinstallRequired,
             ServiceStatus::ForceReinstallRequired,
-            ServiceStatus::SidecarAllowed,
         ];
         for status in &rejected_statuses {
             assert!(!can_allow_sidecar_for_session(&RunningMode::NotRunning, status));
         }
+    }
+
+    /// A sidecar that is already carrying traffic survives the service going away.
+    ///
+    /// This is the specific regression the permissive arm exists to prevent: the
+    /// student is connected through the sidecar, the service probe fails or the
+    /// service is uninstalled underneath them, and the older rule would refuse
+    /// the allowance and tear down a working tunnel. Pinned as its own test
+    /// because it is a user-visible behaviour, not an implementation detail of
+    /// the match.
+    #[test]
+    fn a_running_sidecar_is_not_torn_down_when_the_service_disappears() {
+        assert!(
+            can_allow_sidecar_for_session(
+                &RunningMode::Sidecar,
+                &ServiceStatus::Unavailable("probe failed".into())
+            ),
+            "a connected sidecar must survive an unavailable service"
+        );
+        assert!(
+            can_allow_sidecar_for_session(&RunningMode::Sidecar, &ServiceStatus::SidecarAllowed),
+            "an already-accepted sidecar must not be re-litigated"
+        );
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 [package]
 name = "locus"
-version = "3.0.2"
+version = "3.1.0"
 description = "Locus VPN client"
 authors = ["Locus"]
 license = "UNLICENSED"
@@ -97,7 +97,7 @@ tracing = { workspace = true }
 tauri-plugin-devtools = { version = "2.2.1", optional = true }
 tauri-plugin-mihomo = { git = "https://github.com/clash-verge-rev/tauri-plugin-mihomo", rev = "17c7757389ca73d29882753ecf7a160de29aabbe" }
 async-trait = "0.1.92"
-clash_verge_service_ipc = { git = "https://github.com/clash-verge-rev/clash-verge-service-ipc.git", tag = "v2.7.3", version = "2.7.3", features = [
+clash_verge_service_ipc = { git = "https://github.com/clash-verge-rev/clash-verge-service-ipc.git", tag = "v2.7.4", version = "2.7.4", features = [
   "client",
 ] }
 arc-swap = "1.9.2"

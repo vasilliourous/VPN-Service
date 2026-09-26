@@ -1121,8 +1121,8 @@ dependencies = [
 
 [[package]]
 name = "clash_verge_service_ipc"
-version = "2.7.3"
-source = "git+https://github.com/clash-verge-rev/clash-verge-service-ipc.git?tag=v2.7.3#29251d968e1a38fac1de0ebe9d6d69402bea83b4"
+version = "2.7.4"
+source = "git+https://github.com/clash-verge-rev/clash-verge-service-ipc.git?tag=v2.7.4#b4f66bd5a365875562a622065d189e3514654b7f"
 dependencies = [
  "anyhow",
  "kode-bridge",
@@ -3906,7 +3906,7 @@ dependencies = [
 
 [[package]]
 name = "locus"
-version = "3.0.2"
+version = "3.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
